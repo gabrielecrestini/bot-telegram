@@ -1,0 +1,24 @@
+# --- SICUREZZA (NON TOCCARE) ---
+.env
+*.pem
+*.key
+wallet.json
+
+# --- DATABASE ---
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.bak
+
+# --- RUST BUILD (Pesanti e inutili online) ---
+/target
+Cargo.lock
+
+# --- BINARI COMPILATI ---
+god_sniper
+god_sniper_bin
+
+# --- SISTEMA ---
+.DS_Store
+Thumbs.db

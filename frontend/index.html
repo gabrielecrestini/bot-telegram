@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>God Sniper Ultimate</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --bg: #050505;
+            --surface: #121212;
+            --surface-highlight: #1E1E1E;
+            --gold: #FFD700;
+            --green: #00FFA3;
+            --red: #FF4D4D;
+        }
+        
+        body { background-color: var(--bg); color: #fff; font-family: 'Manrope', sans-serif; padding-bottom: 90px; user-select: none; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* Card Glass */
+        .glass {
+            background: rgba(20, 20, 20, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 20px;
+        }
+
+        /* Token Logo */
+        .token-img { width: 40px; height: 40px; border-radius: 50%; background: #222; border: 1px solid #333; object-fit: cover; }
+
+        /* Action Sheet (Pannello Trading) */
+        .sheet {
+            position: fixed; bottom: -100%; left: 0; right: 0;
+            background: #161616;
+            border-radius: 30px 30px 0 0;
+            padding: 24px;
+            z-index: 100;
+            transition: bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border-top: 1px solid #333;
+            box-shadow: 0 -10px 50px rgba(0,0,0,0.5);
+        }
+        .sheet.open { bottom: 0; }
+        .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 90; display: none; backdrop-filter: blur(4px); }
+        .overlay.open { display: block; }
+
+        /* Tabs */
+        .page { display: none; animation: fadeIn 0.3s; }
+        .page.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Toast */
+        #toast { transform: translateY(-150%); transition: transform 0.3s; z-index: 200; }
+        #toast.show { transform: translateY(0); }
+    </style>
+</head>
+<body>
+
+    <script>
+        // ⚠️ CONFIGURAZIONE ⚠️
+        // Se usi Cloudflare: "https://api.domisia.it"
+        // Se usi IP diretto: "http://3.77.118.239:3000" (ma su netlify serve https)
+        const API_BASE = "https://api.domisia.it"; 
+    </script>
+
+    <div id="toast" class="fixed top-4 left-4 right-4">
+        <div class="glass p-4 flex items-center gap-4 shadow-2xl border-l-4 border-[#FFD700]">
+            <i data-lucide="info" id="toastIcon" class="text-[#FFD700]"></i>
+            <div>
+                <h4 class="font-bold text-sm" id="toastTitle">Info</h4>
+                <p class="text-xs text-gray-400" id="toastMsg">...</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="overlay" class="overlay" onclick="closeAll()"></div>
+
+    <header class="px-6 pt-8 pb-2 flex justify-between items-center sticky top-0 z-40 bg-[#050505]/90 backdrop-blur">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-yellow-400 to-orange-500 flex items-center justify-center shadow-lg shadow-yellow-500/20">
+                <i data-lucide="zap" class="w-6 h-6 text-black fill-current"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg tracking-wide leading-none">GOD SNIPER</h1>
+                <div class="flex items-center gap-1.5 mt-1">
+                    <div id="statusDot" class="w-1.5 h-1.5 rounded-full bg-red-500"></div>
+                    <span id="statusText" class="text-[10px] font-bold text-gray-500 tracking-wider">CONNECTING</span>
+                </div>
+            </div>
+        </div>
+        <div class="bg-[#1E1E1E] p-2 rounded-full border border-[#333]">
+            <i data-lucide="user" class="w-5 h-5 text-gray-400"></i>
+        </div>
+    </header>
+
+    <section id="p-wallet" class="page active px-4 pt-4">
+        <div class="glass p-6 mb-6 bg-gradient-to-br from-[#1E1E1E] to-black relative overflow-hidden">
+            <div class="absolute top-0 right-0 w-48 h-48 bg-[#FFD700]/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
+            
+            <div class="relative z-10">
+                <p class="text-gray-500 text-xs font-bold uppercase tracking-widest mb-1">Asset Totali</p>
+                <h2 class="text-5xl font-bold font-mono mb-2 tracking-tight" id="balance">0.00 <span class="text-2xl text-[#FFD700]">SOL</span></h2>
+                
+                <div class="flex items-center gap-2 mb-8 opacity-70 hover:opacity-100 cursor-pointer" onclick="copyAddr()">
+                    <span class="text-xs font-mono bg-[#222] px-2 py-1 rounded border border-[#333]" id="walletAddr">Loading...</span>
+                    <i data-lucide="copy" class="w-3 h-3 text-[#FFD700]"></i>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <button onclick="openDeposit()" class="bg-[#FFD700] text-black font-bold py-3.5 rounded-xl shadow-lg shadow-yellow-500/20 active:scale-95 transition-transform text-sm flex items-center justify-center gap-2">
+                        <i data-lucide="arrow-down" class="w-4 h-4"></i> DEPOSITA
+                    </button>
+                    <button onclick="openWithdraw()" class="bg-[#222] text-white font-bold py-3.5 rounded-xl border border-[#333] active:scale-95 transition-transform text-sm flex items-center justify-center gap-2">
+                        <i data-lucide="arrow-up" class="w-4 h-4"></i> PRELEVA
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 mb-6">
+            <div class="glass p-4 flex flex-col justify-between h-24">
+                <i data-lucide="activity" class="w-5 h-5 text-[#00FFA3]"></i>
+                <div>
+                    <p class="text-lg font-bold font-mono text-white" id="tradesCount">0</p>
+                    <p class="text-[10px] text-gray-500 font-bold uppercase">Posizioni Attive</p>
+                </div>
+            </div>
+            <div class="glass p-4 flex flex-col justify-between h-24">
+                <i data-lucide="shield-check" class="w-5 h-5 text-blue-400"></i>
+                <div>
+                    <p class="text-lg font-bold font-mono text-white">PRO</p>
+                    <p class="text-[10px] text-gray-500 font-bold uppercase">Strategia</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="p-trade" class="page px-4 pt-4">
+        <div class="flex justify-between items-end mb-4 px-1">
+            <h2 class="text-2xl font-bold">Mercato Live</h2>
+            <div class="flex items-center gap-2">
+                <span class="text-[10px] bg-[#00FFA3]/10 text-[#00FFA3] px-2 py-1 rounded font-bold">AI SCANNER ACTIVE</span>
+            </div>
+        </div>
+
+        <div id="marketList" class="space-y-3 pb-24">
+            <div class="text-center py-12 text-gray-600 text-xs">Scansione in corso...</div>
+        </div>
+    </section>
+
+    <div id="tradeSheet" class="sheet">
+        <div class="flex justify-between items-start mb-6">
+            <div class="flex items-center gap-4">
+                <img src="" id="tsImg" class="w-12 h-12 rounded-full bg-[#222]">
+                <div>
+                    <h2 class="text-2xl font-bold text-white" id="tsSymbol">TOKEN</h2>
+                    <div class="flex items-center gap-2">
+                        <p class="text-xs text-gray-400 font-mono" id="tsAddr">...</p>
+                        <span class="text-[10px] bg-[#00FFA3]/10 text-[#00FFA3] px-1.5 rounded font-bold">SAFE</span>
+                    </div>
+                </div>
+            </div>
+            <button onclick="closeAll()" class="bg-[#222] p-2 rounded-full"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+
+        <div class="bg-[#0A0A0A] p-4 rounded-xl mb-6 border border-[#222] flex justify-between items-center">
+            <span class="text-gray-500 text-xs font-bold uppercase">Prezzo Attuale</span>
+            <span class="text-xl font-bold font-mono text-white" id="tsPrice">$0.00</span>
+        </div>
+
+        <div class="flex bg-[#1E1E1E] p-1 rounded-xl mb-4">
+            <button class="flex-1 py-3 rounded-lg font-bold text-sm bg-[#00FFA3] text-black" id="btnBuyMode" onclick="setMode('BUY')">COMPRA</button>
+            <button class="flex-1 py-3 rounded-lg font-bold text-sm text-gray-500" id="btnSellMode" onclick="setMode('SELL')">VENDI</button>
+        </div>
+
+        <div class="mb-6">
+            <label class="text-xs text-gray-500 font-bold ml-1 mb-1 block">Quantità (SOL)</label>
+            <div class="relative">
+                <input type="number" id="tradeAmt" placeholder="0.0" class="w-full bg-[#0A0A0A] border border-[#333] rounded-xl p-4 text-xl font-mono outline-none focus:border-[#FFD700] text-white">
+                <div class="absolute right-3 top-3 flex gap-1">
+                    <button onclick="setPct(0.5)" class="bg-[#222] text-xs px-2 py-1 rounded text-gray-400">50%</button>
+                    <button onclick="setPct(1.0)" class="bg-[#222] text-xs px-2 py-1 rounded text-[#FFD700]">MAX</button>
+                </div>
+            </div>
+            <p class="text-right text-xs text-gray-500 mt-1">Disponibile: <span id="availBal">0.00</span> SOL</p>
+        </div>
+
+        <button onclick="sendTrade()" class="w-full bg-[#FFD700] text-black font-bold py-4 rounded-xl text-lg shadow-lg shadow-yellow-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+            <i data-lucide="zap" class="w-5 h-5"></i> <span id="btnActionText">CONFERMA ORDINE</span>
+        </button>
+    </div>
+
+    <div id="depositSheet" class="sheet text-center">
+        <h3 class="text-xl font-bold mb-2">Deposita Solana</h3>
+        <p class="text-xs text-gray-400 mb-6">Invia solo SOL su rete Solana.</p>
+        <div id="qr" class="bg-white p-3 rounded-xl mx-auto w-fit mb-6"></div>
+        <div class="bg-[#222] p-3 rounded-xl border border-[#333] flex justify-between items-center mb-6" onclick="copyAddr()">
+            <span class="text-xs font-mono text-gray-300 truncate w-48" id="depAddr">...</span>
+            <i data-lucide="copy" class="w-4 h-4 text-[#FFD700]"></i>
+        </div>
+    </div>
+
+    <div id="withdrawSheet" class="sheet">
+        <h3 class="text-xl font-bold mb-6">Preleva Fondi</h3>
+        <input id="wAddr" placeholder="Indirizzo Destinazione (SOL)" class="w-full bg-[#0A0A0A] border border-[#333] rounded-xl p-4 text-sm mb-4 text-white outline-none focus:border-[#FFD700]">
+        <input id="wAmt" type="number" placeholder="Importo" class="w-full bg-[#0A0A0A] border border-[#333] rounded-xl p-4 text-sm mb-6 text-white outline-none focus:border-[#FFD700]">
+        <button onclick="doWithdraw()" class="w-full bg-[#222] text-white font-bold py-4 rounded-xl border border-[#333]">INVIA PRELIEVO</button>
+    </div>
+
+    <div class="fixed bottom-0 w-full bg-[#080808] border-t border-[#222] h-20 flex justify-around items-start pt-4 z-50">
+        <button onclick="nav('wallet', this)" class="nav-btn active text-[#FFD700] flex flex-col items-center gap-1 w-16"><i data-lucide="wallet" class="w-6 h-6"></i><span class="text-[10px] font-bold">Wallet</span></button>
+        <button onclick="nav('trade', this)" class="nav-btn text-gray-600 flex flex-col items-center gap-1 w-16"><i data-lucide="radar" class="w-6 h-6"></i><span class="text-[10px] font-medium">Sniper</span></button>
+        <button class="nav-btn text-gray-600 flex flex-col items-center gap-1 w-16"><i data-lucide="settings" class="w-6 h-6"></i><span class="text-[10px] font-medium">Setup</span></button>
+    </div>
+
+    <script>
+        lucide.createIcons();
+        let balance = 0;
+        let address = "";
+        let currentToken = null;
+        let mode = 'BUY';
+
+        // --- UI HELPERS ---
+        function nav(p, btn) {
+            document.querySelectorAll('.page').forEach(e => e.classList.remove('active'));
+            document.getElementById('p-'+p).classList.add('active');
+            document.querySelectorAll('.nav-btn').forEach(e => { e.style.color='#666'; e.querySelector('span').classList.remove('font-bold'); });
+            btn.style.color='#FFD700'; btn.querySelector('span').classList.add('font-bold');
+        }
+
+        function openDeposit() {
+            document.getElementById('overlay').classList.add('open');
+            document.getElementById('depositSheet').classList.add('open');
+            document.getElementById('qr').innerHTML = "";
+            new QRCode(document.getElementById("qr"), { text: address, width: 160, height: 160 });
+            document.getElementById('depAddr').innerText = address;
+        }
+
+        function openWithdraw() {
+            document.getElementById('overlay').classList.add('open');
+            document.getElementById('withdrawSheet').classList.add('open');
+        }
+
+        function closeAll() {
+            document.getElementById('overlay').classList.remove('open');
+            document.querySelectorAll('.sheet').forEach(e => e.classList.remove('open'));
+        }
+
+        function openToken(t, s, p) {
+            currentToken = { t, s, p };
+            document.getElementById('overlay').classList.add('open');
+            document.getElementById('tradeSheet').classList.add('open');
+            
+            document.getElementById('tsSymbol').innerText = s;
+            document.getElementById('tsAddr').innerText = t.substring(0,6)+"..."+t.substring(t.length-4);
+            document.getElementById('tsPrice').innerText = "$" + p.toFixed(6);
+            document.getElementById('tsImg').src = `https://img.jup.ag/v6/${t}/logo`;
+            document.getElementById('availBal').innerText = balance.toFixed(4);
+            
+            // Default Image Error Handler
+            document.getElementById('tsImg').onerror = function() { this.src = 'https://via.placeholder.com/50/333/FFF?text=' + s.substring(0,1); };
+
+            setMode('BUY');
+        }
+
+        function setMode(m) {
+            mode = m;
+            const bBuy = document.getElementById('btnBuyMode');
+            const bSell = document.getElementById('btnSellMode');
+            const bAct = document.getElementById('btnActionText');
+            
+            if(m === 'BUY') {
+                bBuy.className = "flex-1 py-2 rounded-lg font-bold text-sm bg-[#00FFA3] text-black transition-all";
+                bSell.className = "flex-1 py-2 rounded-lg font-bold text-sm text-gray-500 transition-all";
+                bAct.innerText = "COMPRA " + currentToken.s;
+                bAct.parentElement.className = "w-full bg-[#FFD700] text-black font-bold py-4 rounded-xl text-lg shadow-lg shadow-yellow-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform";
+            } else {
+                bBuy.className = "flex-1 py-2 rounded-lg font-bold text-sm text-gray-500 transition-all";
+                bSell.className = "flex-1 py-2 rounded-lg font-bold text-sm bg-[#FF4D4D] text-white transition-all";
+                bAct.innerText = "VENDI " + currentToken.s;
+                bAct.parentElement.className = "w-full bg-[#FF4D4D] text-white font-bold py-4 rounded-xl text-lg shadow-lg shadow-red-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform";
+            }
+        }
+
+        function setPct(pct) {
+            const safe = Math.max(0, balance - 0.002);
+            document.getElementById('tradeAmount').value = (safe * pct).toFixed(4);
+        }
+
+        function toast(t, m, err=false) {
+            const el = document.getElementById('toast');
+            document.getElementById('toastTitle').innerText = t;
+            document.getElementById('toastMsg').innerText = m;
+            const c = err ? '#FF4D4D' : '#FFD700';
+            el.querySelector('.card').style.borderColor = c;
+            document.getElementById('toastIcon').style.color = c;
+            el.classList.add('show');
+            setTimeout(() => el.classList.remove('show'), 3000);
+        }
+
+        function copyAddr() { navigator.clipboard.writeText(address); toast("Copiato", "Indirizzo salvato"); }
+
+        // --- BACKEND LOGIC ---
+        async function sync() {
+            try {
+                const res = await fetch(`${API_BASE}/status`);
+                const data = await res.json();
+                
+                balance = data.balance_sol;
+                address = data.wallet_address;
+                
+                document.getElementById('statusDot').className = "w-1.5 h-1.5 rounded-full bg-[#00FFA3] shadow-[0_0_5px_#00FFA3]";
+                document.getElementById('statusText').innerText = "ONLINE";
+                document.getElementById('statusText').classList.replace("text-gray-500", "text-[#00FFA3]");
+
+                document.getElementById('balance').innerHTML = `${balance.toFixed(4)} <span class="text-2xl text-[#FFD700]">SOL</span>`;
+                document.getElementById('walletAddr').innerText = address;
+                document.getElementById('tradesCount').innerText = data.active_trades_count;
+
+                // LISTA GEMME
+                const list = document.getElementById('marketList');
+                if(data.gems_feed.length > 0) {
+                    list.innerHTML = data.gems_feed.map(g => `
+                        <div class="glass p-4 mb-3 flex justify-between items-center border-l-2 border-[#00FFA3] active:scale-95 transition-transform" onclick="openToken('${g.token}', '${g.symbol}', ${g.price})">
+                            <div class="flex items-center gap-4">
+                                <img src="https://img.jup.ag/v6/${g.token}/logo" class="token-img" onerror="this.src='https://via.placeholder.com/40/333/FFF?text=${g.symbol[0]}'">
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <h4 class="font-bold text-sm text-white">${g.symbol}</h4>
+                                        <span class="text-[9px] font-bold bg-[#00FFA3]/10 text-[#00FFA3] px-1.5 rounded">SAFE</span>
+                                    </div>
+                                    <p class="text-[10px] text-gray-400 font-mono mt-0.5">$${g.price.toFixed(6)}</p>
+                                </div>
+                            </div>
+                            <button class="bg-[#1A1A1A] border border-[#333] text-white px-4 py-2 rounded-lg text-xs font-bold">TRADE</button>
+                        </div>
+                    `).join('');
+                }
+            } catch {
+                document.getElementById('statusDot').className = "w-1.5 h-1.5 rounded-full bg-red-500";
+                document.getElementById('statusText').innerText = "RECONNECTING...";
+                document.getElementById('statusText').classList.replace("text-[#00FFA3]", "text-gray-500");
+            }
+        }
+
+        async function sendTrade() {
+            const amt = parseFloat(document.getElementById('tradeAmount').value);
+            if(!amt || amt <= 0) return toast("Errore", "Inserisci importo", true);
+            if(mode === 'BUY' && amt > balance) return toast("Errore", "Fondi insufficienti", true);
+
+            toast("Invio...", "Ordine trasmesso alla chain");
+            closeAll();
+
+            try {
+                const res = await fetch(`${API_BASE}/trade`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ action: mode, token: currentToken.t, amount_sol: amt })
+                });
+                const d = await res.json();
+                if(d.success) { toast("Eseguito!", "Transazione confermata"); sync(); }
+                else toast("Fallito", d.message, true);
+            } catch { toast("Errore", "Server offline", true); }
+        }
+
+        async function doWithdraw() {
+            const addr = document.getElementById('wAddr').value;
+            const amt = parseFloat(document.getElementById('wAmt').value);
+            if(!addr || !amt) return toast("Errore", "Dati mancanti", true);
+            if(amt > balance) return toast("Errore", "Fondi insufficienti", true);
+
+            toast("Invio...", "Prelievo in corso");
+            try {
+                const res = await fetch(`${API_BASE}/withdraw`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ amount: amt, token: "SOL", destination_address: addr })
+                });
+                const d = await res.json();
+                if(d.success) { toast("Successo", "Fondi inviati!"); closeAll(); sync(); }
+                else toast("Errore", d.message, true);
+            } catch { toast("Errore", "Rete", true); }
+        }
+
+        setInterval(sync, 2000);
+        sync();
+    </script>
+</body>
+</html>
