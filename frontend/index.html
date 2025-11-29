@@ -114,6 +114,17 @@
         </div>
     </header>
 
+    <section class="px-4 pt-4">
+        <div class="glass p-4 flex flex-col gap-2">
+            <label class="text-xs text-gray-400 font-bold uppercase tracking-widest">Il tuo ID personale</label>
+            <div class="flex gap-2">
+                <input id="userIdInput" placeholder="telegram id o email" class="flex-1 bg-[#0A0A0A] border border-[#333] rounded-xl p-3 text-sm text-white outline-none focus:border-[#FFD700]">
+                <button onclick="saveUserId()" class="bg-[#FFD700] text-black font-bold px-4 rounded-xl text-sm">Salva</button>
+            </div>
+            <p class="text-[10px] text-gray-500">Devi usare lo stesso ID su bot e sito per vedere il tuo wallet.</p>
+        </div>
+    </section>
+
     <section id="p-wallet" class="page active px-4 pt-4">
         <div class="glass p-6 mb-6 bg-gradient-to-br from-[#1E1E1E] to-black relative overflow-hidden">
             <div class="absolute top-0 right-0 w-48 h-48 bg-[#FFD700]/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
@@ -236,6 +247,7 @@
 
     <script>
         const doc = document;
+        const USER_ID_STORAGE_KEY = 'gs_user_id';
         const DOM = {
             pages: Array.from(doc.querySelectorAll('.page')),
             navButtons: Array.from(doc.querySelectorAll('.nav-btn')),
@@ -265,7 +277,8 @@
             tsImg: doc.getElementById('tsImg'),
             btnBuyMode: doc.getElementById('btnBuyMode'),
             btnSellMode: doc.getElementById('btnSellMode'),
-            btnActionText: doc.getElementById('btnActionText')
+            btnActionText: doc.getElementById('btnActionText'),
+            userIdInput: doc.getElementById('userIdInput')
         };
         const state = {
             balance: 0,
@@ -275,12 +288,23 @@
             gemsHash: '',
             syncTimer: null,
             syncInFlight: false,
-            abortController: null
+            abortController: null,
+            userId: localStorage.getItem(USER_ID_STORAGE_KEY) || ''
         };
         const DEFAULT_SYNC_MS = 4500;
         const MARKET_LIMIT = 25;
         const solFmt = new Intl.NumberFormat('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
         const tokenFmt = new Intl.NumberFormat('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+
+        if (DOM.userIdInput) {
+            DOM.userIdInput.value = state.userId;
+            DOM.userIdInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    saveUserId();
+                }
+            });
+        }
 
         function nav(page, btn) {
             DOM.pages.forEach(el => el.classList.toggle('active', el.id === `p-${page}`));
@@ -289,6 +313,47 @@
                 el.style.color = isActive ? '#FFD700' : '#666';
                 el.querySelector('span').classList.toggle('font-bold', isActive);
             });
+        }
+
+        function hasUserId() {
+            return Boolean(state.userId && state.userId.trim().length > 0);
+        }
+
+        function syncUserIdInput() {
+            if (DOM.userIdInput) {
+                DOM.userIdInput.value = state.userId;
+            }
+        }
+
+        function setUserId(value) {
+            state.userId = (value || '').trim();
+            if (state.userId) {
+                localStorage.setItem(USER_ID_STORAGE_KEY, state.userId);
+            } else {
+                localStorage.removeItem(USER_ID_STORAGE_KEY);
+            }
+            syncUserIdInput();
+            if (!state.userId) {
+                resetDashboard();
+                return;
+            }
+            runSync();
+        }
+
+        function saveUserId() {
+            const value = DOM.userIdInput ? DOM.userIdInput.value : '';
+            setUserId(value);
+        }
+
+        function requireUserId() {
+            if (hasUserId()) { return true; }
+            toast("ID richiesto", "Inserisci il tuo ID personale", true);
+            DOM.userIdInput?.focus();
+            return false;
+        }
+
+        function authHeaders(extra = {}) {
+            return hasUserId() ? { ...extra, 'x-user-id': state.userId } : extra;
         }
 
         function toggleOverlay(open, sheet) {
@@ -477,6 +542,18 @@
             DOM.statusText.classList.toggle('text-gray-500', !isOnline);
         }
 
+        function resetDashboard() {
+            state.balance = 0;
+            state.address = '';
+            state.gemsHash = '';
+            DOM.balance.innerHTML = `${solFmt.format(0)} <span class="text-2xl text-[#FFD700]">SOL</span>`;
+            DOM.walletAddr.innerText = '---';
+            DOM.tradesCount.innerText = '0';
+            DOM.availBal.innerText = solFmt.format(0);
+            renderMarketList([]);
+            setOnlineStatus(false);
+        }
+
         function updateDashboard(data) {
             state.balance = Number(data.balance_sol) || 0;
             state.address = data.wallet_address || '';
@@ -492,6 +569,10 @@
         }
 
         async function runSync() {
+            if (!hasUserId()) {
+                resetDashboard();
+                return;
+            }
             if (state.syncInFlight) return;
             state.syncInFlight = true;
             if (state.abortController) {
@@ -501,7 +582,7 @@
             state.abortController = controller;
 
             try {
-                const res = await fetch(`${API_BASE}/status`, { signal: controller.signal, cache: 'no-store' });
+                const res = await fetch(`${API_BASE}/status`, { signal: controller.signal, cache: 'no-store', headers: authHeaders() });
                 if (!res.ok) throw new Error('status');
                 const data = await res.json();
                 updateDashboard(data);
@@ -516,6 +597,7 @@
         }
 
         async function sendTrade() {
+            if (!requireUserId()) return;
             const amount = parseFloat(DOM.tradeInput?.value);
             if (!state.currentToken) return toast("Errore", "Seleziona un token", true);
             if (!amount || amount <= 0) return toast("Errore", "Inserisci importo", true);
@@ -527,7 +609,7 @@
             try {
                 const res = await fetch(`${API_BASE}/trade`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: authHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ action: state.mode, token: state.currentToken.token, amount_sol: amount })
                 });
                 const data = await res.json();
@@ -543,6 +625,7 @@
         }
 
         async function doWithdraw() {
+            if (!requireUserId()) return;
             const addr = document.getElementById('wAddr').value;
             const amt = parseFloat(document.getElementById('wAmt').value);
             if (!addr || !amt) return toast("Errore", "Dati mancanti", true);
@@ -552,7 +635,7 @@
             try {
                 const res = await fetch(`${API_BASE}/withdraw`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: authHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ amount: amt, token: "SOL", destination_address: addr })
                 });
                 const data = await res.json();
@@ -569,7 +652,7 @@
         }
 
         document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) {
+            if (!document.hidden && hasUserId()) {
                 runSync();
             }
         });

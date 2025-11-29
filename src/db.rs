@@ -222,3 +222,14 @@ pub async fn get_open_trades(pool: &SqlitePool) -> Result<Vec<(i32, String, u64,
     }
     Ok(results)
 }
+
+/// Conta i trade aperti per un utente specifico
+pub async fn count_open_trades(pool: &SqlitePool, tg_id: &str) -> Result<usize, sqlx::Error> {
+    let row = sqlx::query("SELECT COUNT(1) as cnt FROM trades WHERE user_id = ? AND status = 'OPEN'")
+        .bind(tg_id)
+        .fetch_one(pool)
+        .await?;
+
+    let count: i64 = row.get("cnt");
+    Ok(count as usize)
+}
