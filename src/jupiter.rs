@@ -518,6 +518,140 @@ pub async fn get_token_info(mint: &str) -> Result<(f64, String), Box<dyn Error +
     Ok((data.price, data.symbol))
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALTCOIN AFFERMATE - Token con alta capitalizzazione e storico
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Lista dei token più importanti su Solana con alta market cap
+/// Questi sono token verificati, listati su exchange, con liquidità alta
+const TOP_SOLANA_TOKENS: &[(&str, &str)] = &[
+    // TIER 1 - Blue Chips (MCap > $1B)
+    ("JUPyiwrYJFskUPiHa7hkeR1b1GdpBFq64bwMZQvvVAGMv", "JUP"),      // Jupiter
+    ("EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "WIF"),       // dogwifhat
+    ("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "BONK"),      // Bonk
+    ("HZ1JovNiVvGrGNiiYv3XW5KKge5Wbtf2dqsfYfFq5pump", "PYTH"),     // Pyth
+    ("jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL", "JTO"),        // Jito
+    ("rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof", "RENDER"),     // Render
+    
+    // TIER 2 - DeFi Leaders (MCap $100M-$1B)
+    ("4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "RAY"),       // Raydium
+    ("orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE", "ORCA"),       // Orca
+    ("mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So", "mSOL"),       // Marinade
+    ("7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs", "ETH"),       // Wormhole ETH
+    ("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "USDC"),      // USDC
+    
+    // TIER 3 - Meme con volume (MCap $50M-$500M)
+    ("A3eME5CetyZPBoWbRUwY3tSe25S6tb18ba9ZPbWk9eFJ", "PENG"),      // Peng
+    ("7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", "POPCAT"),    // Popcat  
+    ("ukHH6c7mMyiWCf1b9pnWe25TSpkDDt3H5pQZgZ74J82", "BOME"),       // Book of Meme
+    
+    // TIER 4 - AI & Gaming
+    ("nosXBVoaCTtYdLvKY6Csb4AC8JCdQKKAaWYtx2ZMoo7", "NOS"),        // Nosana
+    ("SHDWyBxihqiCj6YekG2GUr7wqKLeLAMK1gHZck9pL6y", "SHDW"),       // Shadow
+];
+
+/// Recupera i dati delle altcoin più importanti ordinate per market cap
+pub async fn get_top_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn Error + Send + Sync>> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    
+    let mut tokens: Vec<TokenMarketData> = Vec::new();
+    
+    info!("📊 Recupero dati top altcoin Solana...");
+    
+    for (address, symbol) in TOP_SOLANA_TOKENS {
+        match get_token_market_data(address).await {
+            Ok(mut data) => {
+                // Verifica che abbia dati validi
+                if data.price > 0.0 && data.liquidity_usd > 10_000.0 {
+                    // Usa il simbolo corretto dalla nostra lista
+                    if data.symbol == "UNK" {
+                        data.symbol = symbol.to_string();
+                        data.name = symbol.to_string();
+                    }
+                    tokens.push(data);
+                }
+            },
+            Err(e) => {
+                warn!("⚠️ Errore recupero {}: {}", symbol, e);
+            }
+        }
+        
+        // Piccola pausa per non sovraccaricare l'API
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    
+    // Ordina per market cap decrescente
+    tokens.sort_by(|a, b| {
+        b.market_cap.partial_cmp(&a.market_cap).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    
+    info!("📊 Recuperate {} altcoin con dati validi", tokens.len());
+    
+    Ok(tokens)
+}
+
+/// Trova altcoin con momentum positivo (potenziale profitto)
+pub async fn find_profitable_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn Error + Send + Sync>> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?;
+    
+    let mut profitable: Vec<TokenMarketData> = Vec::new();
+    
+    // 1. Recupera top altcoin dalla nostra lista
+    let top_coins = get_top_altcoins().await?;
+    
+    for coin in top_coins {
+        // Filtra solo quelle con momentum positivo
+        if coin.change_1h > 0.0 || coin.change_24h > 2.0 {
+            profitable.push(coin);
+        }
+    }
+    
+    // 2. Cerca anche su DexScreener i token Solana con più volume
+    let volume_url = "https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112";
+    if let Ok(resp) = client.get(volume_url).send().await {
+        if let Ok(data) = resp.json::<DexResponse>().await {
+            if let Some(pairs) = data.pairs {
+                for pair in pairs.iter().take(30) {
+                    if let Some(token_data) = process_pair(&pair) {
+                        // Solo token con alta capitalizzazione e momentum positivo
+                        if token_data.market_cap > 10_000_000.0 
+                           && token_data.liquidity_usd > 100_000.0
+                           && (token_data.change_1h > 1.0 || token_data.change_24h > 5.0)
+                           && !profitable.iter().any(|t| t.address == token_data.address)
+                        {
+                            profitable.push(token_data);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 3. Ordina per combinazione di market cap e momentum
+    profitable.sort_by(|a, b| {
+        // Score = market_cap * (1 + change_24h/100)
+        let score_a = a.market_cap * (1.0 + a.change_24h.max(0.0) / 100.0);
+        let score_b = b.market_cap * (1.0 + b.change_24h.max(0.0) / 100.0);
+        score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    
+    // Limita a 20
+    profitable.truncate(20);
+    
+    info!("💰 Trovate {} altcoin con potenziale profitto", profitable.len());
+    
+    for (i, coin) in profitable.iter().take(5).enumerate() {
+        info!("  #{} {} | MCap: ${:.1}M | 1h: {:+.1}% | 24h: {:+.1}%",
+            i+1, coin.symbol, coin.market_cap/1_000_000.0, coin.change_1h, coin.change_24h);
+    }
+    
+    Ok(profitable)
+}
+
 pub async fn get_jupiter_swap_tx(user_pubkey: &str, input_mint: &str, output_mint: &str, amount_lamports: u64, slippage_bps: u16) -> Result<Transaction, Box<dyn Error + Send + Sync>> {
     let client = reqwest::Client::new();
     let quote_url = format!("{}?inputMint={}&outputMint={}&amount={}&slippageBps={}", JUP_QUOTE_API, input_mint, output_mint, amount_lamports, slippage_bps);

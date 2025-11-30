@@ -439,8 +439,16 @@
                 <p class="mono font-bold text-green-400" id="tsChange">+0%</p>
             </div>
             <div class="card p-3">
+                <p class="text-xs text-zinc-500">Market Cap</p>
+                <p class="mono font-bold text-sm" id="tsMcap">$0</p>
+            </div>
+            <div class="card p-3">
                 <p class="text-xs text-zinc-500">Liquidità</p>
                 <p class="mono font-bold text-sm" id="tsLiq">$0</p>
+            </div>
+            <div class="card p-3">
+                <p class="text-xs text-zinc-500">Volume 24h</p>
+                <p class="mono font-bold text-sm" id="tsVol">$0</p>
             </div>
             <div class="card p-3">
                 <p class="text-xs text-zinc-500">Score</p>
@@ -548,14 +556,16 @@
             openSheet('tradeSheet');
             document.getElementById('tsSymbol').innerText = token.symbol;
             document.getElementById('tsName').innerText = token.name;
-            document.getElementById('tsPrice').innerText = '$' + token.price.toFixed(6);
-            document.getElementById('tsChange').innerText = (token.change_24h >= 0 ? '+' : '') + token.change_24h.toFixed(1) + '%';
-            document.getElementById('tsChange').className = 'mono font-bold ' + (token.change_24h >= 0 ? 'text-green-400' : 'text-red-400');
-            document.getElementById('tsLiq').innerText = '$' + formatNum(token.liquidity_usd);
-            document.getElementById('tsScore').innerText = token.safety_score + '/100';
+            document.getElementById('tsPrice').innerText = formatPrice(token.price);
+            document.getElementById('tsChange').innerText = (token.change_24h >= 0 ? '+' : '') + (token.change_24h || 0).toFixed(1) + '%';
+            document.getElementById('tsChange').className = 'mono font-bold ' + ((token.change_24h || 0) >= 0 ? 'text-green-400' : 'text-red-400');
+            document.getElementById('tsMcap').innerText = formatMcap(token.market_cap);
+            document.getElementById('tsLiq').innerText = formatMcap(token.liquidity_usd);
+            document.getElementById('tsVol').innerText = formatMcap(token.volume_24h);
+            document.getElementById('tsScore').innerText = (token.safety_score || 0) + '/100';
             document.getElementById('tsMax').innerText = (state.balance - 0.005).toFixed(4);
             document.getElementById('tsImg').src = token.image_url || `https://img.jup.ag/v6/${token.token}/logo`;
-            document.getElementById('tsImg').onerror = function() { this.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect fill="%2327272a" width="40" height="40" rx="20"/><text x="20" y="26" text-anchor="middle" fill="white" font-size="16">' + token.symbol[0] + '</text></svg>'; };
+            document.getElementById('tsImg').onerror = function() { this.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect fill="%2327272a" width="40" height="40" rx="20"/><text x="20" y="26" text-anchor="middle" fill="white" font-size="16">' + (token.symbol ? token.symbol[0] : '?') + '</text></svg>'; };
         }
 
         function setTradePct(pct) {
@@ -837,16 +847,22 @@
                 const list = document.getElementById('tokenList');
                 if (state.gems.length > 0) {
                     list.innerHTML = state.gems.map(g => {
-                        const safeJson = JSON.stringify(g).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+                        const mcapStr = formatMcap(g.market_cap);
+                        const isAltcoin = g.source === 'ALTCOIN' || g.market_cap > 10000000;
                         return `
                         <div class="token-row" onclick='openToken(JSON.parse(this.dataset.token))' data-token='${JSON.stringify(g)}'>
                             <img src="${g.image_url || `https://img.jup.ag/v6/${g.token}/logo`}" class="w-10 h-10 rounded-full bg-zinc-800" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%2327272a%22 width=%2240%22 height=%2240%22 rx=%2220%22/><text x=%2220%22 y=%2226%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2216%22>${g.symbol ? g.symbol[0] : '?'}</text></svg>'">
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2">
                                     <span class="font-semibold">${g.symbol}</span>
+                                    ${isAltcoin ? '<span class="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded">TOP</span>' : ''}
                                     <span class="score-badge ${getScoreClass(g.safety_score)}">${g.safety_score}%</span>
                                 </div>
-                                <p class="text-xs text-zinc-500 truncate">${g.name || g.symbol}</p>
+                                <div class="flex items-center gap-2 text-xs text-zinc-500">
+                                    <span class="truncate">${g.name || g.symbol}</span>
+                                    <span>•</span>
+                                    <span class="text-zinc-400 font-medium">${mcapStr}</span>
+                                </div>
                             </div>
                             <div class="text-right">
                                 <p class="mono text-sm">${formatPrice(g.price)}</p>
@@ -877,6 +893,14 @@
             if (p < 0.01) return '$' + p.toFixed(6);
             if (p < 1) return '$' + p.toFixed(4);
             return '$' + p.toFixed(2);
+        }
+        
+        function formatMcap(mcap) {
+            if (!mcap || mcap === 0) return '-';
+            if (mcap >= 1_000_000_000) return '$' + (mcap / 1_000_000_000).toFixed(2) + 'B';
+            if (mcap >= 1_000_000) return '$' + (mcap / 1_000_000).toFixed(1) + 'M';
+            if (mcap >= 1_000) return '$' + (mcap / 1_000).toFixed(0) + 'K';
+            return '$' + mcap.toFixed(0);
         }
 
         // Init

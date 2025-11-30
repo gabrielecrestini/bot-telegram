@@ -305,56 +305,114 @@ async fn monitor_open_positions(pool: &sqlx::SqlitePool, net: &Arc<network::Netw
 // --- GEM DISCOVERY (Trova token promettenti) ---
 async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient>) {
     info!("💎 Gem Discovery Task avviato");
+    
+    let mut cycle = 0u32;
+    
     loop {
-        match jupiter::discover_trending_gems().await {
-            Ok(gems) => {
-                info!("💎 Scoperte {} gemme dal mercato", gems.len());
-                let mut verified_gems: Vec<GemData> = Vec::new();
-                
-                // Prima verifica tutte le gemme (FUORI dal lock)
-                for gem in gems {
-                    if let Ok(pk) = Pubkey::from_str(&gem.address) {
-                        if let Ok(report) = safety::check_token_safety(&net, &pk).await {
-                            if report.is_safe && gem.score >= 50 {
-                                verified_gems.push(GemData {
-                                    token: gem.address.clone(),
-                                    symbol: gem.symbol.clone(),
-                                    name: gem.name.clone(),
-                                    price: gem.price,
-                                    safety_score: gem.score,
-                                    liquidity_usd: gem.liquidity_usd,
-                                    market_cap: gem.market_cap,
-                                    volume_24h: gem.volume_24h,
-                                    change_1h: gem.change_1h,
-                                    change_24h: gem.change_24h,
-                                    image_url: gem.image_url.clone(),
-                                    timestamp: chrono::Utc::now().timestamp(),
-                                    source: "DISCOVERY".into(),
-                                });
+        let mut all_gems: Vec<GemData> = Vec::new();
+        
+        // ═══════════════════════════════════════════════════════════════
+        // PARTE 1: ALTCOIN AFFERMATE (ogni ciclo)
+        // Token con alta capitalizzazione e storico
+        // ═══════════════════════════════════════════════════════════════
+        match jupiter::find_profitable_altcoins().await {
+            Ok(altcoins) => {
+                info!("📊 Trovate {} altcoin affermate con momentum", altcoins.len());
+                for coin in altcoins {
+                    all_gems.push(GemData {
+                        token: coin.address.clone(),
+                        symbol: coin.symbol.clone(),
+                        name: coin.name.clone(),
+                        price: coin.price,
+                        safety_score: coin.score.max(70), // Altcoin affermate hanno score minimo 70
+                        liquidity_usd: coin.liquidity_usd,
+                        market_cap: coin.market_cap,
+                        volume_24h: coin.volume_24h,
+                        change_1h: coin.change_1h,
+                        change_24h: coin.change_24h,
+                        image_url: coin.image_url.clone(),
+                        timestamp: chrono::Utc::now().timestamp(),
+                        source: "ALTCOIN".into(),
+                    });
+                }
+            },
+            Err(e) => warn!("⚠️ Errore recupero altcoin: {}", e),
+        }
+        
+        // ═══════════════════════════════════════════════════════════════
+        // PARTE 2: NUOVE GEMME (ogni 3 cicli per non sovraccaricare)
+        // Token nuovi/emergenti con potenziale
+        // ═══════════════════════════════════════════════════════════════
+        if cycle % 3 == 0 {
+            match jupiter::discover_trending_gems().await {
+                Ok(gems) => {
+                    info!("💎 Scoperte {} nuove gemme emergenti", gems.len());
+                    
+                    for gem in gems {
+                        // Verifica sicurezza per i token nuovi
+                        if let Ok(pk) = Pubkey::from_str(&gem.address) {
+                            if let Ok(report) = safety::check_token_safety(&net, &pk).await {
+                                if report.is_safe && gem.score >= 45 {
+                                    // Evita duplicati
+                                    if !all_gems.iter().any(|g| g.token == gem.address) {
+                                        all_gems.push(GemData {
+                                            token: gem.address.clone(),
+                                            symbol: gem.symbol.clone(),
+                                            name: gem.name.clone(),
+                                            price: gem.price,
+                                            safety_score: gem.score,
+                                            liquidity_usd: gem.liquidity_usd,
+                                            market_cap: gem.market_cap,
+                                            volume_24h: gem.volume_24h,
+                                            change_1h: gem.change_1h,
+                                            change_24h: gem.change_24h,
+                                            image_url: gem.image_url.clone(),
+                                            timestamp: chrono::Utc::now().timestamp(),
+                                            source: "DISCOVERY".into(),
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
-                }
-                
-                // Poi aggiorna lo state (lock breve)
-                if !verified_gems.is_empty() {
-                    let mut found = state.found_gems.lock().unwrap();
-                    for gem in verified_gems {
-                        if !found.iter().any(|g| g.token == gem.token) {
-                            found.push(gem);
-                        }
-                    }
-                    found.sort_by(|a, b| b.safety_score.cmp(&a.safety_score));
-                    found.truncate(20);
-                }
-            },
-            Err(e) => {
-                warn!("⚠️ Errore gem discovery: {}", e);
+                },
+                Err(e) => warn!("⚠️ Errore gem discovery: {}", e),
             }
         }
         
-        // Scansiona ogni 60 secondi
-        sleep(Duration::from_secs(60)).await;
+        // ═══════════════════════════════════════════════════════════════
+        // AGGIORNA STATO
+        // Ordina per: 1) Market Cap (altcoin prime), 2) Score
+        // ═══════════════════════════════════════════════════════════════
+        if !all_gems.is_empty() {
+            // Ordina: prima per market cap (alto), poi per score
+            all_gems.sort_by(|a, b| {
+                // Priorità: market cap > $10M in cima
+                let a_priority = if a.market_cap > 10_000_000.0 { 1 } else { 0 };
+                let b_priority = if b.market_cap > 10_000_000.0 { 1 } else { 0 };
+                
+                match b_priority.cmp(&a_priority) {
+                    std::cmp::Ordering::Equal => {
+                        // Se stesso tier, ordina per score
+                        b.safety_score.cmp(&a.safety_score)
+                    },
+                    other => other
+                }
+            });
+            
+            // Limita e aggiorna state
+            all_gems.truncate(25);
+            
+            let mut found = state.found_gems.lock().unwrap();
+            *found = all_gems;
+            
+            info!("✅ Lista gemme aggiornata: {} token (altcoin + nuove)", found.len());
+        }
+        
+        cycle = cycle.wrapping_add(1);
+        
+        // Scansiona ogni 45 secondi
+        sleep(Duration::from_secs(45)).await;
     }
 }
 
