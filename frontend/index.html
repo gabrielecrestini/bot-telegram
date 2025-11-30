@@ -5,9 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>God Sniper Ultimate</title>
     
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <script src="https://cdn.tailwindcss.com" defer></script>
+    <script src="https://unpkg.com/lucide@latest" defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 
     <style>
@@ -48,6 +49,21 @@
         .sheet.open { bottom: 0; }
         .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 90; display: none; backdrop-filter: blur(4px); }
         .overlay.open { display: block; }
+
+        .market-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            padding: 1rem;
+            border-left: 2px solid #00FFA3;
+            border-radius: 1rem;
+            transition: transform 0.2s ease;
+        }
+        .market-card:active { transform: scale(0.97); }
+        .market-card:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+        .nav-btn { transition: color 0.2s ease; }
 
         /* Tabs */
         .page { display: none; animation: fadeIn 0.3s; }
@@ -97,6 +113,17 @@
             <i data-lucide="user" class="w-5 h-5 text-gray-400"></i>
         </div>
     </header>
+
+    <section class="px-4 pt-4">
+        <div class="glass p-4 flex flex-col gap-2">
+            <label class="text-xs text-gray-400 font-bold uppercase tracking-widest">Il tuo ID personale</label>
+            <div class="flex gap-2">
+                <input id="userIdInput" placeholder="telegram id o email" class="flex-1 bg-[#0A0A0A] border border-[#333] rounded-xl p-3 text-sm text-white outline-none focus:border-[#FFD700]">
+                <button onclick="saveUserId()" class="bg-[#FFD700] text-black font-bold px-4 rounded-xl text-sm">Salva</button>
+            </div>
+            <p class="text-[10px] text-gray-500">Devi usare lo stesso ID su bot e sito per vedere il tuo wallet.</p>
+        </div>
+    </section>
 
     <section id="p-wallet" class="page active px-4 pt-4">
         <div class="glass p-6 mb-6 bg-gradient-to-br from-[#1E1E1E] to-black relative overflow-hidden">
@@ -219,139 +246,362 @@
     </div>
 
     <script>
-        lucide.createIcons();
-        let balance = 0;
-        let address = "";
-        let currentToken = null;
-        let mode = 'BUY';
+        const doc = document;
+        const USER_ID_STORAGE_KEY = 'gs_user_id';
+        const DOM = {
+            pages: Array.from(doc.querySelectorAll('.page')),
+            navButtons: Array.from(doc.querySelectorAll('.nav-btn')),
+            toast: doc.getElementById('toast'),
+            toastTitle: doc.getElementById('toastTitle'),
+            toastMsg: doc.getElementById('toastMsg'),
+            toastIcon: doc.getElementById('toastIcon'),
+            toastCard: doc.querySelector('#toast .glass'),
+            statusDot: doc.getElementById('statusDot'),
+            statusText: doc.getElementById('statusText'),
+            balance: doc.getElementById('balance'),
+            walletAddr: doc.getElementById('walletAddr'),
+            tradesCount: doc.getElementById('tradesCount'),
+            overlay: doc.getElementById('overlay'),
+            sheets: Array.from(doc.querySelectorAll('.sheet')),
+            tradeSheet: doc.getElementById('tradeSheet'),
+            depositSheet: doc.getElementById('depositSheet'),
+            withdrawSheet: doc.getElementById('withdrawSheet'),
+            qr: doc.getElementById('qr'),
+            depAddr: doc.getElementById('depAddr'),
+            marketList: doc.getElementById('marketList'),
+            tradeInput: doc.getElementById('tradeAmt'),
+            availBal: doc.getElementById('availBal'),
+            tsSymbol: doc.getElementById('tsSymbol'),
+            tsAddr: doc.getElementById('tsAddr'),
+            tsPrice: doc.getElementById('tsPrice'),
+            tsImg: doc.getElementById('tsImg'),
+            btnBuyMode: doc.getElementById('btnBuyMode'),
+            btnSellMode: doc.getElementById('btnSellMode'),
+            btnActionText: doc.getElementById('btnActionText'),
+            userIdInput: doc.getElementById('userIdInput')
+        };
+        const state = {
+            balance: 0,
+            address: '',
+            currentToken: null,
+            mode: 'BUY',
+            gemsHash: '',
+            syncTimer: null,
+            syncInFlight: false,
+            abortController: null,
+            userId: localStorage.getItem(USER_ID_STORAGE_KEY) || ''
+        };
+        const DEFAULT_SYNC_MS = 4500;
+        const MARKET_LIMIT = 25;
+        const solFmt = new Intl.NumberFormat('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+        const tokenFmt = new Intl.NumberFormat('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 });
 
-        // --- UI HELPERS ---
-        function nav(p, btn) {
-            document.querySelectorAll('.page').forEach(e => e.classList.remove('active'));
-            document.getElementById('p-'+p).classList.add('active');
-            document.querySelectorAll('.nav-btn').forEach(e => { e.style.color='#666'; e.querySelector('span').classList.remove('font-bold'); });
-            btn.style.color='#FFD700'; btn.querySelector('span').classList.add('font-bold');
+        if (DOM.userIdInput) {
+            DOM.userIdInput.value = state.userId;
+            DOM.userIdInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    saveUserId();
+                }
+            });
         }
 
+        function nav(page, btn) {
+            DOM.pages.forEach(el => el.classList.toggle('active', el.id === `p-${page}`));
+            DOM.navButtons.forEach(el => {
+                const isActive = el === btn;
+                el.style.color = isActive ? '#FFD700' : '#666';
+                el.querySelector('span').classList.toggle('font-bold', isActive);
+            });
+        }
+
+        function hasUserId() {
+            return Boolean(state.userId && state.userId.trim().length > 0);
+        }
+
+        function syncUserIdInput() {
+            if (DOM.userIdInput) {
+                DOM.userIdInput.value = state.userId;
+            }
+        }
+
+        function setUserId(value) {
+            state.userId = (value || '').trim();
+            if (state.userId) {
+                localStorage.setItem(USER_ID_STORAGE_KEY, state.userId);
+            } else {
+                localStorage.removeItem(USER_ID_STORAGE_KEY);
+            }
+            syncUserIdInput();
+            if (!state.userId) {
+                resetDashboard();
+                return;
+            }
+            runSync();
+        }
+
+        function saveUserId() {
+            const value = DOM.userIdInput ? DOM.userIdInput.value : '';
+            setUserId(value);
+        }
+
+        function requireUserId() {
+            if (hasUserId()) { return true; }
+            toast("ID richiesto", "Inserisci il tuo ID personale", true);
+            DOM.userIdInput?.focus();
+            return false;
+        }
+
+        function authHeaders(extra = {}) {
+            return hasUserId() ? { ...extra, 'x-user-id': state.userId } : extra;
+        }
+
+        function toggleOverlay(open, sheet) {
+            if (open) {
+                DOM.overlay.classList.add('open');
+                if (sheet) { sheet.classList.add('open'); }
+            } else {
+                DOM.overlay.classList.remove('open');
+                DOM.sheets.forEach(s => s.classList.remove('open'));
+            }
+        }
+
+        const loadQrLib = (() => {
+            let loader;
+            return () => {
+                if (window.QRCode) return Promise.resolve();
+                if (!loader) {
+                    loader = new Promise((resolve, reject) => {
+                        const script = document.createElement('script');
+                        script.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+                        script.async = true;
+                        script.onload = resolve;
+                        script.onerror = () => reject(new Error('QR library failed to load'));
+                        document.head.appendChild(script);
+                    });
+                }
+                return loader;
+            };
+        })();
+
         function openDeposit() {
-            document.getElementById('overlay').classList.add('open');
-            document.getElementById('depositSheet').classList.add('open');
-            document.getElementById('qr').innerHTML = "";
-            new QRCode(document.getElementById("qr"), { text: address, width: 160, height: 160 });
-            document.getElementById('depAddr').innerText = address;
+            toggleOverlay(true, DOM.depositSheet);
+            DOM.qr.innerHTML = "";
+            if (!state.address) {
+                DOM.depAddr.innerText = '---';
+                DOM.qr.innerHTML = '<p class="text-xs text-yellow-400">Indirizzo non sincronizzato</p>';
+                return;
+            }
+            DOM.depAddr.innerText = state.address;
+            loadQrLib()
+                .then(() => {
+                    DOM.qr.innerHTML = "";
+                    new QRCode(DOM.qr, { text: state.address, width: 160, height: 160 });
+                })
+                .catch(() => {
+                    DOM.qr.innerHTML = '<p class="text-xs text-red-400">QR non disponibile</p>';
+                });
         }
 
         function openWithdraw() {
-            document.getElementById('overlay').classList.add('open');
-            document.getElementById('withdrawSheet').classList.add('open');
+            toggleOverlay(true, DOM.withdrawSheet);
         }
 
         function closeAll() {
-            document.getElementById('overlay').classList.remove('open');
-            document.querySelectorAll('.sheet').forEach(e => e.classList.remove('open'));
+            toggleOverlay(false);
         }
 
-        function openToken(t, s, p) {
-            currentToken = { t, s, p };
-            document.getElementById('overlay').classList.add('open');
-            document.getElementById('tradeSheet').classList.add('open');
-            
-            document.getElementById('tsSymbol').innerText = s;
-            document.getElementById('tsAddr').innerText = t.substring(0,6)+"..."+t.substring(t.length-4);
-            document.getElementById('tsPrice').innerText = "$" + p.toFixed(6);
-            document.getElementById('tsImg').src = `https://img.jup.ag/v6/${t}/logo`;
-            document.getElementById('availBal').innerText = balance.toFixed(4);
-            
-            // Default Image Error Handler
-            document.getElementById('tsImg').onerror = function() { this.src = 'https://via.placeholder.com/50/333/FFF?text=' + s.substring(0,1); };
+        function openToken(token, symbol, price) {
+            const safeToken = token || '';
+            const safeSymbol = symbol || 'TOKEN';
+            const safePrice = Number(price) || 0;
+            state.currentToken = { token: safeToken, symbol: safeSymbol, price: safePrice };
+            toggleOverlay(true, DOM.tradeSheet);
+
+            DOM.tsSymbol.innerText = safeSymbol;
+            DOM.tsAddr.innerText = safeToken.length > 10 ? `${safeToken.substring(0, 6)}...${safeToken.substring(safeToken.length - 4)}` : safeToken;
+            DOM.tsPrice.innerText = `$${tokenFmt.format(safePrice)}`;
+            DOM.tsImg.loading = 'lazy';
+            DOM.tsImg.decoding = 'async';
+            DOM.tsImg.src = `https://img.jup.ag/v6/${safeToken}/logo`;
+            DOM.tsImg.onerror = function () { this.src = `https://via.placeholder.com/50/333/FFF?text=${safeSymbol.substring(0, 1)}`; };
+            DOM.availBal.innerText = solFmt.format(state.balance);
 
             setMode('BUY');
         }
 
-        function setMode(m) {
-            mode = m;
-            const bBuy = document.getElementById('btnBuyMode');
-            const bSell = document.getElementById('btnSellMode');
-            const bAct = document.getElementById('btnActionText');
-            
-            if(m === 'BUY') {
-                bBuy.className = "flex-1 py-2 rounded-lg font-bold text-sm bg-[#00FFA3] text-black transition-all";
-                bSell.className = "flex-1 py-2 rounded-lg font-bold text-sm text-gray-500 transition-all";
-                bAct.innerText = "COMPRA " + currentToken.s;
-                bAct.parentElement.className = "w-full bg-[#FFD700] text-black font-bold py-4 rounded-xl text-lg shadow-lg shadow-yellow-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform";
+        function setMode(nextMode) {
+            state.mode = nextMode;
+            const token = state.currentToken;
+            if (!token) return;
+
+            if (nextMode === 'BUY') {
+                DOM.btnBuyMode.className = "flex-1 py-2 rounded-lg font-bold text-sm bg-[#00FFA3] text-black transition-all";
+                DOM.btnSellMode.className = "flex-1 py-2 rounded-lg font-bold text-sm text-gray-500 transition-all";
+                DOM.btnActionText.innerText = `COMPRA ${token.symbol}`;
+                DOM.btnActionText.parentElement.className = "w-full bg-[#FFD700] text-black font-bold py-4 rounded-xl text-lg shadow-lg shadow-yellow-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform";
             } else {
-                bBuy.className = "flex-1 py-2 rounded-lg font-bold text-sm text-gray-500 transition-all";
-                bSell.className = "flex-1 py-2 rounded-lg font-bold text-sm bg-[#FF4D4D] text-white transition-all";
-                bAct.innerText = "VENDI " + currentToken.s;
-                bAct.parentElement.className = "w-full bg-[#FF4D4D] text-white font-bold py-4 rounded-xl text-lg shadow-lg shadow-red-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform";
+                DOM.btnBuyMode.className = "flex-1 py-2 rounded-lg font-bold text-sm text-gray-500 transition-all";
+                DOM.btnSellMode.className = "flex-1 py-2 rounded-lg font-bold text-sm bg-[#FF4D4D] text-white transition-all";
+                DOM.btnActionText.innerText = `VENDI ${token.symbol}`;
+                DOM.btnActionText.parentElement.className = "w-full bg-[#FF4D4D] text-white font-bold py-4 rounded-xl text-lg shadow-lg shadow-red-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform";
             }
         }
 
         function setPct(pct) {
-            const safe = Math.max(0, balance - 0.002);
-            document.getElementById('tradeAmount').value = (safe * pct).toFixed(4);
+            const safe = Math.max(0, state.balance - 0.002);
+            if (DOM.tradeInput) {
+                DOM.tradeInput.value = (safe * pct).toFixed(4);
+            }
         }
 
-        function toast(t, m, err=false) {
-            const el = document.getElementById('toast');
-            document.getElementById('toastTitle').innerText = t;
-            document.getElementById('toastMsg').innerText = m;
-            const c = err ? '#FF4D4D' : '#FFD700';
-            el.querySelector('.card').style.borderColor = c;
-            document.getElementById('toastIcon').style.color = c;
-            el.classList.add('show');
-            setTimeout(() => el.classList.remove('show'), 3000);
+        function toast(title, message, isError = false) {
+            DOM.toastTitle.innerText = title;
+            DOM.toastMsg.innerText = message;
+            const color = isError ? '#FF4D4D' : '#FFD700';
+            if (DOM.toastCard) {
+                DOM.toastCard.style.borderLeftColor = color;
+            }
+            if (DOM.toastIcon) {
+                DOM.toastIcon.style.color = color;
+            }
+            DOM.toast.classList.add('show');
+            setTimeout(() => DOM.toast.classList.remove('show'), 3000);
         }
 
-        function copyAddr() { navigator.clipboard.writeText(address); toast("Copiato", "Indirizzo salvato"); }
+        function copyAddr() {
+            if (!state.address) return;
+            navigator.clipboard?.writeText(state.address);
+            toast("Copiato", "Indirizzo salvato");
+        }
 
-        // --- BACKEND LOGIC ---
-        async function sync() {
+        function buildMarketCard(gem) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = "market-card glass mb-3 bg-[#151515]";
+            btn.addEventListener('click', () => openToken(gem.token, gem.symbol, gem.price));
+
+            const left = document.createElement('div');
+            left.className = "flex items-center gap-4";
+
+            const img = document.createElement('img');
+            img.className = "token-img";
+            img.loading = "lazy";
+            img.decoding = "async";
+            img.src = `https://img.jup.ag/v6/${gem.token}/logo`;
+            img.onerror = function () { this.src = `https://via.placeholder.com/40/333/FFF?text=${(gem.symbol || '?').substring(0, 1)}`; };
+
+            const infoWrap = document.createElement('div');
+            const titleRow = document.createElement('div');
+            titleRow.className = "flex items-center gap-2";
+            const title = document.createElement('h4');
+            title.className = "font-bold text-sm text-white";
+            title.textContent = gem.symbol || 'TOKEN';
+            const badge = document.createElement('span');
+            badge.className = "text-[9px] font-bold bg-[#00FFA3]/10 text-[#00FFA3] px-1.5 rounded";
+            badge.textContent = "SAFE";
+            titleRow.append(title, badge);
+
+            const price = document.createElement('p');
+            price.className = "text-[10px] text-gray-400 font-mono mt-0.5";
+            price.textContent = `$${tokenFmt.format(gem.price || 0)}`;
+
+            infoWrap.append(titleRow, price);
+            left.append(img, infoWrap);
+
+            const pill = document.createElement('span');
+            pill.className = "bg-[#1A1A1A] border border-[#333] text-white px-4 py-2 rounded-lg text-xs font-bold";
+            pill.textContent = "TRADE";
+
+            btn.append(left, pill);
+            return btn;
+        }
+
+        function renderMarketList(gems) {
+            if (!DOM.marketList) return;
+            if (!Array.isArray(gems) || gems.length === 0) {
+                DOM.marketList.innerHTML = '<div class="text-center py-12 text-gray-600 text-xs">Scansione in corso...</div>';
+                state.gemsHash = '';
+                return;
+            }
+            const nextHash = gems.slice(0, MARKET_LIMIT).map(g => `${g.token}:${g.price}`).join('|');
+            if (nextHash === state.gemsHash) return;
+            state.gemsHash = nextHash;
+
+            const frag = document.createDocumentFragment();
+            gems.slice(0, MARKET_LIMIT).forEach(g => frag.appendChild(buildMarketCard(g)));
+            DOM.marketList.replaceChildren(frag);
+        }
+
+        function setOnlineStatus(isOnline) {
+            DOM.statusDot.className = isOnline
+                ? "w-1.5 h-1.5 rounded-full bg-[#00FFA3] shadow-[0_0_5px_#00FFA3]"
+                : "w-1.5 h-1.5 rounded-full bg-red-500";
+            DOM.statusText.innerText = isOnline ? "ONLINE" : "RECONNECTING...";
+            DOM.statusText.classList.toggle('text-[#00FFA3]', isOnline);
+            DOM.statusText.classList.toggle('text-gray-500', !isOnline);
+        }
+
+        function resetDashboard() {
+            state.balance = 0;
+            state.address = '';
+            state.gemsHash = '';
+            DOM.balance.innerHTML = `${solFmt.format(0)} <span class="text-2xl text-[#FFD700]">SOL</span>`;
+            DOM.walletAddr.innerText = '---';
+            DOM.tradesCount.innerText = '0';
+            DOM.availBal.innerText = solFmt.format(0);
+            renderMarketList([]);
+            setOnlineStatus(false);
+        }
+
+        function updateDashboard(data) {
+            state.balance = Number(data.balance_sol) || 0;
+            state.address = data.wallet_address || '';
+
+            DOM.balance.innerHTML = `${solFmt.format(state.balance)} <span class="text-2xl text-[#FFD700]">SOL</span>`;
+            DOM.walletAddr.innerText = state.address || '---';
+            DOM.tradesCount.innerText = data.active_trades_count ?? 0;
+        }
+
+        function scheduleSync(delay = DEFAULT_SYNC_MS) {
+            clearTimeout(state.syncTimer);
+            state.syncTimer = setTimeout(runSync, delay);
+        }
+
+        async function runSync() {
+            if (!hasUserId()) {
+                resetDashboard();
+                return;
+            }
+            if (state.syncInFlight) return;
+            state.syncInFlight = true;
+            if (state.abortController) {
+                state.abortController.abort();
+            }
+            const controller = new AbortController();
+            state.abortController = controller;
+
             try {
-                const res = await fetch(`${API_BASE}/status`);
+                const res = await fetch(`${API_BASE}/status`, { signal: controller.signal, cache: 'no-store', headers: authHeaders() });
+                if (!res.ok) throw new Error('status');
                 const data = await res.json();
-                
-                balance = data.balance_sol;
-                address = data.wallet_address;
-                
-                document.getElementById('statusDot').className = "w-1.5 h-1.5 rounded-full bg-[#00FFA3] shadow-[0_0_5px_#00FFA3]";
-                document.getElementById('statusText').innerText = "ONLINE";
-                document.getElementById('statusText').classList.replace("text-gray-500", "text-[#00FFA3]");
-
-                document.getElementById('balance').innerHTML = `${balance.toFixed(4)} <span class="text-2xl text-[#FFD700]">SOL</span>`;
-                document.getElementById('walletAddr').innerText = address;
-                document.getElementById('tradesCount').innerText = data.active_trades_count;
-
-                // LISTA GEMME
-                const list = document.getElementById('marketList');
-                if(data.gems_feed.length > 0) {
-                    list.innerHTML = data.gems_feed.map(g => `
-                        <div class="glass p-4 mb-3 flex justify-between items-center border-l-2 border-[#00FFA3] active:scale-95 transition-transform" onclick="openToken('${g.token}', '${g.symbol}', ${g.price})">
-                            <div class="flex items-center gap-4">
-                                <img src="https://img.jup.ag/v6/${g.token}/logo" class="token-img" onerror="this.src='https://via.placeholder.com/40/333/FFF?text=${g.symbol[0]}'">
-                                <div>
-                                    <div class="flex items-center gap-2">
-                                        <h4 class="font-bold text-sm text-white">${g.symbol}</h4>
-                                        <span class="text-[9px] font-bold bg-[#00FFA3]/10 text-[#00FFA3] px-1.5 rounded">SAFE</span>
-                                    </div>
-                                    <p class="text-[10px] text-gray-400 font-mono mt-0.5">$${g.price.toFixed(6)}</p>
-                                </div>
-                            </div>
-                            <button class="bg-[#1A1A1A] border border-[#333] text-white px-4 py-2 rounded-lg text-xs font-bold">TRADE</button>
-                        </div>
-                    `).join('');
-                }
-            } catch {
-                document.getElementById('statusDot').className = "w-1.5 h-1.5 rounded-full bg-red-500";
-                document.getElementById('statusText').innerText = "RECONNECTING...";
-                document.getElementById('statusText').classList.replace("text-[#00FFA3]", "text-gray-500");
+                updateDashboard(data);
+                renderMarketList(data.gems_feed || []);
+                setOnlineStatus(true);
+            } catch (err) {
+                setOnlineStatus(false);
+            } finally {
+                state.syncInFlight = false;
+                scheduleSync();
             }
         }
 
         async function sendTrade() {
-            const amt = parseFloat(document.getElementById('tradeAmount').value);
-            if(!amt || amt <= 0) return toast("Errore", "Inserisci importo", true);
-            if(mode === 'BUY' && amt > balance) return toast("Errore", "Fondi insufficienti", true);
+            if (!requireUserId()) return;
+            const amount = parseFloat(DOM.tradeInput?.value);
+            if (!state.currentToken) return toast("Errore", "Seleziona un token", true);
+            if (!amount || amount <= 0) return toast("Errore", "Inserisci importo", true);
+            if (state.mode === 'BUY' && amount > state.balance) return toast("Errore", "Fondi insufficienti", true);
 
             toast("Invio...", "Ordine trasmesso alla chain");
             closeAll();
@@ -359,36 +609,58 @@
             try {
                 const res = await fetch(`${API_BASE}/trade`, {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ action: mode, token: currentToken.t, amount_sol: amt })
+                    headers: authHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ action: state.mode, token: state.currentToken.token, amount_sol: amount })
                 });
-                const d = await res.json();
-                if(d.success) { toast("Eseguito!", "Transazione confermata"); sync(); }
-                else toast("Fallito", d.message, true);
-            } catch { toast("Errore", "Server offline", true); }
+                const data = await res.json();
+                if (data.success) {
+                    toast("Eseguito!", "Transazione confermata");
+                    runSync();
+                } else {
+                    toast("Fallito", data.message, true);
+                }
+            } catch {
+                toast("Errore", "Server offline", true);
+            }
         }
 
         async function doWithdraw() {
+            if (!requireUserId()) return;
             const addr = document.getElementById('wAddr').value;
             const amt = parseFloat(document.getElementById('wAmt').value);
-            if(!addr || !amt) return toast("Errore", "Dati mancanti", true);
-            if(amt > balance) return toast("Errore", "Fondi insufficienti", true);
+            if (!addr || !amt) return toast("Errore", "Dati mancanti", true);
+            if (amt > state.balance) return toast("Errore", "Fondi insufficienti", true);
 
             toast("Invio...", "Prelievo in corso");
             try {
                 const res = await fetch(`${API_BASE}/withdraw`, {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: authHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ amount: amt, token: "SOL", destination_address: addr })
                 });
-                const d = await res.json();
-                if(d.success) { toast("Successo", "Fondi inviati!"); closeAll(); sync(); }
-                else toast("Errore", d.message, true);
-            } catch { toast("Errore", "Rete", true); }
+                const data = await res.json();
+                if (data.success) {
+                    toast("Successo", "Fondi inviati!");
+                    closeAll();
+                    runSync();
+                } else {
+                    toast("Errore", data.message, true);
+                }
+            } catch {
+                toast("Errore", "Rete", true);
+            }
         }
 
-        setInterval(sync, 2000);
-        sync();
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && hasUserId()) {
+                runSync();
+            }
+        });
+
+        if (window.lucide?.createIcons) {
+            window.lucide.createIcons();
+        }
+        runSync();
     </script>
 </body>
 </html>
