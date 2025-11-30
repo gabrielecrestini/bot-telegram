@@ -102,9 +102,16 @@ pub async fn start_server(pool: sqlx::SqlitePool, net: Arc<network::NetworkClien
         .and_then(handle_withdraw);
 
     let cors = warp::cors()
-        .allow_any_origin()
+        .allow_origins(vec![
+            "https://cryptostarstudiobot.netlify.app",
+            "https://god-sniper-pro.netlify.app",
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:3000",
+        ])
         .allow_methods(vec!["GET", "POST", "OPTIONS"])
-        .allow_headers(vec!["content-type", "x-user-id"]);
+        .allow_headers(vec!["content-type", "x-user-id", "authorization"])
+        .allow_credentials(true);
 
     let routes = status.or(trade).or(withdraw).with(cors);
 
