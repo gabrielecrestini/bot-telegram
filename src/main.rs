@@ -39,8 +39,15 @@ const WATCHLIST: &[&str] = &[
 pub struct GemData {
     pub token: String,
     pub symbol: String, 
+    pub name: String,
     pub price: f64,     
     pub safety_score: u8,
+    pub liquidity_usd: f64,
+    pub market_cap: f64,
+    pub volume_24h: f64,
+    pub change_1h: f64,
+    pub change_24h: f64,
+    pub image_url: String,
     pub timestamp: i64,
     pub source: String, 
 }
@@ -247,11 +254,27 @@ async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppSta
                                                             if let Ok(mkt) = jupiter::get_token_market_data(&mint).await {
                                                                 // 3. FILTRO QUALITÀ RIGIDO
                                                                 if mkt.liquidity_usd > 5000.0 && mkt.price > 0.0 {
-                                                                    info!("💎 GEMMA NUOVA: {} (${:.6}) Liq: ${:.0}", mkt.symbol, mkt.price, mkt.liquidity_usd);
+                                                                    info!("💎 GEMMA NUOVA: {} (${:.6}) Liq: ${:.0} Score: {}", mkt.symbol, mkt.price, mkt.liquidity_usd, mkt.score);
                                                                     
                                                                     if let Ok(mut g) = s_an.found_gems.lock() {
-                                                                        g.insert(0, GemData { token: mint.clone(), symbol: mkt.symbol, price: mkt.price, safety_score: 90, timestamp: chrono::Utc::now().timestamp(), source: "SNIPER".into() });
-                                                                        if g.len() > 50 { g.pop(); }
+                                                                        g.insert(0, GemData { 
+                                                                            token: mint.clone(), 
+                                                                            symbol: mkt.symbol.clone(), 
+                                                                            name: mkt.name,
+                                                                            price: mkt.price, 
+                                                                            safety_score: mkt.score, 
+                                                                            liquidity_usd: mkt.liquidity_usd,
+                                                                            market_cap: mkt.market_cap,
+                                                                            volume_24h: mkt.volume_24h,
+                                                                            change_1h: mkt.change_1h,
+                                                                            change_24h: mkt.change_24h,
+                                                                            image_url: mkt.image_url,
+                                                                            timestamp: chrono::Utc::now().timestamp(), 
+                                                                            source: "SNIPER".into() 
+                                                                        });
+                                                                        // Ordina per score decrescente
+                                                                        g.sort_by(|a, b| b.safety_score.cmp(&a.safety_score));
+                                                                        if g.len() > 30 { g.pop(); }
                                                                     }
                                                                     
                                                                     execute_smart_auto_buy(&p_an, &n_an, &s_an, &pk).await;
@@ -277,6 +300,62 @@ async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppSta
 
 async fn monitor_open_positions(pool: &sqlx::SqlitePool, net: &Arc<network::NetworkClient>) {
     // ... (Codice identico a prima, ma assicurati di chiamare execute_sell se serve)
+}
+
+// --- GEM DISCOVERY (Trova token promettenti) ---
+async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient>) {
+    info!("💎 Gem Discovery Task avviato");
+    loop {
+        match jupiter::discover_trending_gems().await {
+            Ok(gems) => {
+                info!("💎 Scoperte {} gemme dal mercato", gems.len());
+                let mut verified_gems: Vec<GemData> = Vec::new();
+                
+                // Prima verifica tutte le gemme (FUORI dal lock)
+                for gem in gems {
+                    if let Ok(pk) = Pubkey::from_str(&gem.address) {
+                        if let Ok(report) = safety::check_token_safety(&net, &pk).await {
+                            if report.is_safe && gem.score >= 50 {
+                                verified_gems.push(GemData {
+                                    token: gem.address.clone(),
+                                    symbol: gem.symbol.clone(),
+                                    name: gem.name.clone(),
+                                    price: gem.price,
+                                    safety_score: gem.score,
+                                    liquidity_usd: gem.liquidity_usd,
+                                    market_cap: gem.market_cap,
+                                    volume_24h: gem.volume_24h,
+                                    change_1h: gem.change_1h,
+                                    change_24h: gem.change_24h,
+                                    image_url: gem.image_url.clone(),
+                                    timestamp: chrono::Utc::now().timestamp(),
+                                    source: "DISCOVERY".into(),
+                                });
+                            }
+                        }
+                    }
+                }
+                
+                // Poi aggiorna lo state (lock breve)
+                if !verified_gems.is_empty() {
+                    let mut found = state.found_gems.lock().unwrap();
+                    for gem in verified_gems {
+                        if !found.iter().any(|g| g.token == gem.token) {
+                            found.push(gem);
+                        }
+                    }
+                    found.sort_by(|a, b| b.safety_score.cmp(&a.safety_score));
+                    found.truncate(20);
+                }
+            },
+            Err(e) => {
+                warn!("⚠️ Errore gem discovery: {}", e);
+            }
+        }
+        
+        // Scansiona ogni 60 secondi
+        sleep(Duration::from_secs(60)).await;
+    }
 }
 
 #[tokio::main]
@@ -312,8 +391,12 @@ async fn main() {
     let p4=pool.clone(); let n4=net.clone(); let s4=state.clone();
     tokio::spawn(async move { run_sniper_listener(n4, s4, p4).await; });
 
-    // let p5=pool.clone(); let n5=net.clone();
-    // tokio::spawn(async move { run_position_manager(p5, n5).await; }); // Attiva se hai il modulo completo
+    // Gem Discovery Task - Scansiona il mercato per token promettenti
+    let n5=net.clone(); let s5=state.clone();
+    tokio::spawn(async move { run_gem_discovery(s5, n5).await; });
+
+    // let p6=pool.clone(); let n6=net.clone();
+    // tokio::spawn(async move { run_position_manager(p6, n6).await; }); // Attiva se hai il modulo completo
 
     match tokio::signal::ctrl_c().await {
         Ok(()) => info!("🛑 Chiusura sicura."),

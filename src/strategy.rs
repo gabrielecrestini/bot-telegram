@@ -120,13 +120,83 @@ fn check_volume_spike(candles: &VecDeque<Candle>) -> bool {
     current_vol > (avg_vol * 2.0)
 }
 
-// --- 3. MONEY MANAGEMENT ---
+// --- 3. MONEY MANAGEMENT INTELLIGENTE ---
+
+/// Determina se l'utente è "povero", "medio" o "ricco" e adatta la strategia
+/// Povero: < 0.06 SOL (~12€)
+/// Medio: 0.06 - 1.1 SOL (~12-200€)  
+/// Ricco: > 1.1 SOL (~200€+)
+pub enum WealthLevel {
+    Poor,   // Strategia conservativa, micro-trade
+    Medium, // Strategia bilanciata
+    Rich,   // Strategia aggressiva, diversificazione
+}
+
+pub fn get_wealth_level(balance_sol: f64) -> WealthLevel {
+    if balance_sol < 0.06 { WealthLevel::Poor }
+    else if balance_sol < 1.1 { WealthLevel::Medium }
+    else { WealthLevel::Rich }
+}
+
+/// Calcola importo da investire basato sul livello di ricchezza
+/// Il bot NON usa stop loss fissi - decide autonomamente quando vendere
+/// basandosi su RSI overbought e trailing stop dinamico
 pub fn calculate_investment_amount(wallet_balance_sol: f64) -> f64 {
-    let safe_balance = (wallet_balance_sol - 0.02).max(0.0); 
-    if safe_balance < 1.0 { return safe_balance * 0.90; } 
-    if safe_balance < 10.0 { return safe_balance * 0.40; } 
-    let amount = safe_balance * 0.10; 
-    if amount > 5.0 { 5.0 } else { amount }
+    let safe_balance = (wallet_balance_sol - 0.005).max(0.0); // Riserva fee minima
+    
+    match get_wealth_level(wallet_balance_sol) {
+        WealthLevel::Poor => {
+            // Povero: investi tutto ciò che hai (YOLO mode, massimo rischio/reward)
+            // Ma mai più del 90% per avere sempre fee per vendere
+            (safe_balance * 0.90).min(0.05)
+        },
+        WealthLevel::Medium => {
+            // Medio: investi 30-50% del capitale per singolo trade
+            let pct = if safe_balance < 0.3 { 0.50 } else { 0.30 };
+            (safe_balance * pct).min(0.5)
+        },
+        WealthLevel::Rich => {
+            // Ricco: investi 10-20% per diversificare
+            // Mai più di 2 SOL per singolo trade
+            let pct = if safe_balance < 5.0 { 0.20 } else { 0.10 };
+            (safe_balance * pct).min(2.0)
+        }
+    }
+}
+
+/// Calcola investimento per importo specifico impostato dall'utente
+pub fn calculate_user_set_investment(wallet_balance_sol: f64, user_amount_sol: f64) -> f64 {
+    let safe_balance = (wallet_balance_sol - 0.005).max(0.0);
+    
+    // Non permettere di investire più del 95% del saldo disponibile
+    let max_allowed = safe_balance * 0.95;
+    
+    user_amount_sol.min(max_allowed).max(0.0)
+}
+
+/// Il bot determina automaticamente quando vendere (NO stop loss fisso)
+/// Ritorna la percentuale di stop dinamica basata sul profitto raggiunto
+pub fn calculate_dynamic_stop(entry_price: f64, current_price: f64, highest_price: f64) -> f64 {
+    let profit_from_entry = ((current_price - entry_price) / entry_price) * 100.0;
+    let drop_from_high = ((highest_price - current_price) / highest_price) * 100.0;
+    
+    // Se siamo in profitto, trailing stop più stretto
+    if profit_from_entry > 100.0 {
+        // +100% profit -> stop a -5% dal massimo
+        5.0
+    } else if profit_from_entry > 50.0 {
+        // +50% profit -> stop a -8% dal massimo
+        8.0
+    } else if profit_from_entry > 20.0 {
+        // +20% profit -> stop a -12% dal massimo
+        12.0
+    } else if profit_from_entry > 0.0 {
+        // In leggero profitto -> stop a -15%
+        15.0
+    } else {
+        // In perdita -> stop a -25% (lascia spazio per recupero)
+        25.0
+    }
 }
 
 // --- 4. ENGINE DECISIONALE (Volume + Prezzo) ---

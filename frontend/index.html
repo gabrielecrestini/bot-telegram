@@ -3,505 +3,288 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>GOD SNIPER PRO | Smart Trading Wallet</title>
+    <title>GOD SNIPER PRO</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <style>
-        * { -webkit-tap-highlight-color: transparent; }
-        :root {
-            --bg-primary: #0a0a0f;
-            --bg-secondary: #12121a;
-            --bg-tertiary: #1a1a25;
-            --accent: #8b5cf6;
-            --accent-light: #a78bfa;
-            --green: #10b981;
-            --red: #ef4444;
-            --gold: #f59e0b;
-            --text-primary: #ffffff;
-            --text-secondary: #9ca3af;
-            --border: #2a2a3a;
-        }
-        
-        body { 
-            background: linear-gradient(180deg, var(--bg-primary) 0%, #0d0d15 100%);
-            color: var(--text-primary); 
-            font-family: 'Inter', sans-serif; 
-            min-height: 100vh;
-            padding-bottom: 100px;
-        }
-        
-        .font-mono { font-family: 'JetBrains Mono', monospace; }
-        
-        /* Glass Cards */
-        .card {
-            background: linear-gradient(135deg, rgba(26, 26, 37, 0.9) 0%, rgba(18, 18, 26, 0.95) 100%);
-            border: 1px solid var(--border);
-            border-radius: 20px;
-            backdrop-filter: blur(20px);
-        }
-        
-        .card-glow {
-            box-shadow: 0 0 40px rgba(139, 92, 246, 0.1), inset 0 1px 0 rgba(255,255,255,0.05);
-        }
-
-        /* Gradient Text */
-        .gradient-text {
-            background: linear-gradient(135deg, #8b5cf6 0%, #06b6d4 50%, #10b981 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        /* Buttons */
-        .btn-primary {
-            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
-            box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
-        }
-        .btn-primary:active { transform: scale(0.98); }
-        
-        .btn-success {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
-        }
-        
-        .btn-danger {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-            box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
-        }
-
-        /* Sheets */
-        .sheet {
-            position: fixed; bottom: -100%; left: 0; right: 0;
-            background: var(--bg-secondary);
-            border-radius: 24px 24px 0 0;
-            padding: 24px;
-            z-index: 100;
-            transition: bottom 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-            border-top: 1px solid var(--border);
-            max-height: 90vh;
-            overflow-y: auto;
-        }
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+        :root { --accent: #6366f1; --green: #22c55e; --red: #ef4444; }
+        body { background: #09090b; color: #fff; font-family: 'Space Grotesk', sans-serif; min-height: 100vh; padding-bottom: 90px; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .card { background: #18181b; border: 1px solid #27272a; border-radius: 16px; }
+        .sheet { position: fixed; bottom: -100%; left: 0; right: 0; background: #18181b; border-radius: 24px 24px 0 0; padding: 24px; z-index: 100; transition: bottom 0.3s ease; max-height: 90vh; overflow-y: auto; }
         .sheet.open { bottom: 0; }
-        .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 90; opacity: 0; visibility: hidden; transition: all 0.3s; backdrop-filter: blur(4px); }
+        .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 90; opacity: 0; visibility: hidden; transition: all 0.2s; }
         .overlay.open { opacity: 1; visibility: visible; }
-
-        /* Pages */
-        .page { display: none; animation: pageIn 0.3s ease; }
-        .page.active { display: block; }
-        @keyframes pageIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-
-        /* Toast */
-        #toast { transform: translateY(-150%); transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1); z-index: 300; }
+        .page { display: none; }
+        .page.active { display: block; animation: fadeIn 0.2s ease; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        #toast { transform: translateY(-150%); transition: transform 0.3s; z-index: 200; }
         #toast.show { transform: translateY(0); }
-
-        /* Switch Toggle */
-        .switch { position: relative; width: 52px; height: 28px; }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; inset: 0; background: var(--bg-tertiary); border-radius: 28px; transition: 0.3s; border: 1px solid var(--border); }
-        .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 4px; bottom: 3px; background: white; border-radius: 50%; transition: 0.3s; }
-        input:checked + .slider { background: var(--accent); border-color: var(--accent); }
-        input:checked + .slider:before { transform: translateX(24px); }
-
-        /* Pulse */
-        @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 50% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } }
-        .pulse-green { animation: pulse-glow 2s infinite; }
-
-        /* Token Card Hover */
-        .token-card { transition: all 0.2s ease; }
-        .token-card:active { transform: scale(0.98); background: var(--bg-tertiary); }
-
-        /* Scrollbar */
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-
-        /* Loading Skeleton */
-        .skeleton { background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-secondary) 50%, var(--bg-tertiary) 75%); background-size: 200% 100%; animation: skeleton 1.5s infinite; }
-        @keyframes skeleton { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-
-        /* Nav Icons */
-        .nav-item { transition: all 0.2s; }
-        .nav-item.active { color: var(--accent); }
-        .nav-item.active .nav-indicator { transform: scaleX(1); }
-        .nav-indicator { transform: scaleX(0); transition: transform 0.2s; }
+        .btn { padding: 14px 24px; border-radius: 12px; font-weight: 600; transition: all 0.15s; }
+        .btn:active { transform: scale(0.97); }
+        .btn-primary { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; }
+        .btn-green { background: #22c55e; color: white; }
+        .btn-red { background: #ef4444; color: white; }
+        .switch { width: 52px; height: 28px; background: #27272a; border-radius: 14px; position: relative; cursor: pointer; transition: background 0.2s; }
+        .switch.on { background: #22c55e; }
+        .switch::after { content: ''; width: 22px; height: 22px; background: white; border-radius: 50%; position: absolute; top: 3px; left: 3px; transition: transform 0.2s; }
+        .switch.on::after { transform: translateX(24px); }
+        input[type="number"], input[type="text"] { background: #09090b; border: 1px solid #27272a; border-radius: 12px; padding: 14px 16px; color: white; width: 100%; outline: none; font-size: 16px; }
+        input:focus { border-color: #6366f1; }
+        .token-row { display: flex; align-items: center; padding: 16px; gap: 12px; border-bottom: 1px solid #27272a; cursor: pointer; transition: background 0.15s; }
+        .token-row:active { background: #27272a; }
+        .token-row:last-child { border-bottom: none; }
+        .score-badge { padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+        .score-high { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+        .score-mid { background: rgba(234, 179, 8, 0.2); color: #eab308; }
+        .score-low { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
     </style>
 </head>
 <body>
 
     <script>
-        const API_BASE = "https://api.domisia.it";
-        const SOLSCAN_TX = "https://solscan.io/tx/";
+        const API = "https://api.domisia.it";
+        const SOLSCAN = "https://solscan.io/tx/";
         const SOLSCAN_ADDR = "https://solscan.io/account/";
     </script>
 
     <!-- Toast -->
     <div id="toast" class="fixed top-4 left-4 right-4">
-        <div class="card p-4 flex items-center gap-4 border-l-4" id="toastCard" style="border-left-color: var(--accent);">
-            <div class="w-10 h-10 rounded-full flex items-center justify-center" id="toastIconBg" style="background: rgba(139, 92, 246, 0.2);">
-                <i data-lucide="info" id="toastIcon" class="w-5 h-5" style="color: var(--accent);"></i>
-            </div>
+        <div class="card p-4 flex items-center gap-3 border-l-4 border-indigo-500">
+            <i data-lucide="info" class="w-5 h-5 text-indigo-400"></i>
             <div class="flex-1">
-                <h4 class="font-semibold text-sm" id="toastTitle">Notifica</h4>
-                <p class="text-xs text-gray-400" id="toastMsg">Messaggio</p>
+                <p class="font-semibold text-sm" id="toastTitle">Info</p>
+                <p class="text-xs text-zinc-400" id="toastMsg">...</p>
             </div>
-            <a id="toastLink" href="#" target="_blank" class="hidden btn-primary px-3 py-1.5 rounded-lg text-xs font-semibold text-white">
-                Vedi TX →
-            </a>
         </div>
     </div>
 
     <div id="overlay" class="overlay" onclick="closeAll()"></div>
 
-    <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- HEADER -->
-    <!-- ═══════════════════════════════════════════════════════════════ -->
-    <header class="px-5 pt-6 pb-4 flex justify-between items-center sticky top-0 z-40 bg-[#0a0a0f]/95 backdrop-blur-xl">
+    <!-- Header -->
+    <header class="p-4 flex items-center justify-between sticky top-0 z-40 bg-[#09090b]/95 backdrop-blur">
         <div class="flex items-center gap-3">
-            <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
-                <i data-lucide="zap" class="w-6 h-6 text-white"></i>
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+                <i data-lucide="zap" class="w-5 h-5 text-white"></i>
             </div>
             <div>
-                <h1 class="font-bold text-lg tracking-tight">GOD SNIPER</h1>
-                <div class="flex items-center gap-2">
-                    <div id="statusDot" class="w-2 h-2 rounded-full bg-gray-500"></div>
-                    <span id="statusText" class="text-[11px] font-medium text-gray-500">Connessione...</span>
+                <h1 class="font-bold">GOD SNIPER</h1>
+                <div class="flex items-center gap-1.5">
+                    <div id="statusDot" class="w-2 h-2 rounded-full bg-zinc-500"></div>
+                    <span id="statusText" class="text-[10px] text-zinc-500">Connessione...</span>
                 </div>
             </div>
         </div>
-        <div class="flex items-center gap-2">
-            <button onclick="sync()" class="w-10 h-10 rounded-xl bg-[#1a1a25] border border-[#2a2a3a] flex items-center justify-center active:scale-95 transition-transform">
-                <i data-lucide="refresh-cw" class="w-4 h-4 text-gray-400" id="syncIcon"></i>
-            </button>
-            <button onclick="showNotifications()" class="w-10 h-10 rounded-xl bg-[#1a1a25] border border-[#2a2a3a] flex items-center justify-center active:scale-95 transition-transform relative">
-                <i data-lucide="bell" class="w-4 h-4 text-gray-400"></i>
-                <div id="notifBadge" class="hidden absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold flex items-center justify-center">0</div>
-            </button>
-        </div>
+        <button onclick="sync()" class="p-2 rounded-lg bg-zinc-800 active:scale-95">
+            <i data-lucide="refresh-cw" class="w-5 h-5 text-zinc-400" id="syncIcon"></i>
+        </button>
     </header>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- PAGE: WALLET -->
+    <!-- WALLET PAGE -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <section id="p-wallet" class="page active px-4 pt-2">
+    <section id="p-wallet" class="page active p-4">
         <!-- Balance Card -->
-        <div class="card card-glow p-6 mb-5 relative overflow-hidden">
-            <div class="absolute -top-20 -right-20 w-48 h-48 bg-violet-500/10 rounded-full blur-3xl"></div>
-            <div class="absolute -bottom-20 -left-20 w-48 h-48 bg-cyan-500/10 rounded-full blur-3xl"></div>
+        <div class="card p-6 mb-4">
+            <p class="text-zinc-500 text-sm mb-1">Saldo Totale</p>
+            <div class="flex items-baseline gap-2 mb-1">
+                <span class="text-4xl font-bold mono" id="balanceSOL">0.0000</span>
+                <span class="text-xl text-indigo-400">SOL</span>
+            </div>
+            <p class="text-zinc-500 text-sm mono" id="balanceUSD">≈ $0.00</p>
             
-            <div class="relative">
-                <div class="flex items-center justify-between mb-4">
-                    <span class="text-sm text-gray-400 font-medium">Saldo Totale</span>
-                    <div class="flex items-center gap-2 bg-green-500/10 px-2 py-1 rounded-full">
-                        <div class="w-1.5 h-1.5 rounded-full bg-green-500 pulse-green"></div>
-                        <span class="text-[10px] font-semibold text-green-400">LIVE</span>
-                    </div>
-                </div>
-                
-                <div class="flex items-end gap-3 mb-1">
-                    <h2 class="text-5xl font-bold font-mono tracking-tight" id="balanceSOL">0.0000</h2>
-                    <span class="text-xl font-semibold text-violet-400 mb-1">SOL</span>
-                </div>
-                <p class="text-gray-500 text-sm font-mono mb-6" id="balanceUSD">≈ $0.00 USD</p>
-                
-                <!-- Wallet Address -->
-                <div class="bg-[#0d0d15] rounded-xl p-4 border border-[#2a2a3a]">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-xs text-gray-500 font-medium">Indirizzo Wallet</span>
-                        <a id="solscanAddrLink" href="#" target="_blank" class="text-xs text-violet-400 flex items-center gap-1 hover:underline">
-                            Solscan <i data-lucide="external-link" class="w-3 h-3"></i>
-                        </a>
-                    </div>
-                    <div class="flex items-center gap-3">
-                        <p class="font-mono text-sm text-white truncate flex-1" id="walletAddr">Caricamento...</p>
-                        <button onclick="copyAddr()" class="shrink-0 w-9 h-9 rounded-lg bg-violet-500/20 flex items-center justify-center active:scale-95 transition-all hover:bg-violet-500/30">
-                            <i data-lucide="copy" class="w-4 h-4 text-violet-400" id="copyIcon"></i>
-                        </button>
-                    </div>
-                </div>
+            <!-- Wealth Level Indicator -->
+            <div class="mt-4 p-3 rounded-lg bg-zinc-900 flex items-center justify-between">
+                <span class="text-xs text-zinc-400">Livello</span>
+                <span class="text-sm font-semibold" id="wealthLevel">-</span>
             </div>
         </div>
 
-        <!-- Action Buttons -->
-        <div class="grid grid-cols-3 gap-3 mb-6">
-            <button onclick="openDeposit()" class="card p-4 flex flex-col items-center gap-2 active:scale-95 transition-transform">
-                <div class="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center">
-                    <i data-lucide="arrow-down-left" class="w-5 h-5 text-green-400"></i>
-                </div>
-                <span class="text-xs font-semibold text-gray-300">Deposita</span>
-            </button>
-            <button onclick="openWithdraw()" class="card p-4 flex flex-col items-center gap-2 active:scale-95 transition-transform">
-                <div class="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center">
-                    <i data-lucide="arrow-up-right" class="w-5 h-5 text-orange-400"></i>
-                </div>
-                <span class="text-xs font-semibold text-gray-300">Preleva</span>
-            </button>
-            <button onclick="openSwap()" class="card p-4 flex flex-col items-center gap-2 active:scale-95 transition-transform">
-                <div class="w-12 h-12 rounded-xl bg-violet-500/20 flex items-center justify-center">
-                    <i data-lucide="repeat" class="w-5 h-5 text-violet-400"></i>
-                </div>
-                <span class="text-xs font-semibold text-gray-300">Swap</span>
-            </button>
+        <!-- Wallet Address -->
+        <div class="card p-4 mb-4">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs text-zinc-500">Il tuo wallet</span>
+                <a id="addrLink" href="#" target="_blank" class="text-xs text-indigo-400">Solscan →</a>
+            </div>
+            <div class="flex items-center gap-2" onclick="copyAddr()">
+                <p class="mono text-sm truncate flex-1" id="walletAddr">Caricamento...</p>
+                <button class="p-2 rounded-lg bg-zinc-800 active:scale-95">
+                    <i data-lucide="copy" class="w-4 h-4 text-indigo-400"></i>
+                </button>
+            </div>
         </div>
 
-        <!-- Stats Grid -->
+        <!-- Actions -->
         <div class="grid grid-cols-2 gap-3 mb-6">
-            <div class="card p-4">
-                <div class="flex items-center gap-2 mb-2">
-                    <i data-lucide="trending-up" class="w-4 h-4 text-green-400"></i>
-                    <span class="text-xs text-gray-500">Profitto 24h</span>
-                </div>
-                <p class="text-xl font-bold font-mono text-green-400" id="profit24h">+0.00%</p>
-            </div>
-            <div class="card p-4">
-                <div class="flex items-center gap-2 mb-2">
-                    <i data-lucide="activity" class="w-4 h-4 text-violet-400"></i>
-                    <span class="text-xs text-gray-500">Trade Attivi</span>
-                </div>
-                <p class="text-xl font-bold font-mono" id="tradesCount">0</p>
-            </div>
+            <button onclick="openDeposit()" class="btn btn-green flex items-center justify-center gap-2">
+                <i data-lucide="arrow-down" class="w-4 h-4"></i> Deposita
+            </button>
+            <button onclick="openWithdraw()" class="btn bg-zinc-800 flex items-center justify-center gap-2">
+                <i data-lucide="arrow-up" class="w-4 h-4"></i> Preleva
+            </button>
         </div>
 
-        <!-- Recent Activity -->
-        <div class="mb-4">
-            <div class="flex items-center justify-between mb-3 px-1">
-                <h3 class="font-semibold text-gray-300">Attività Recente</h3>
-                <button class="text-xs text-violet-400 font-medium">Vedi tutto →</button>
+        <!-- Stats -->
+        <div class="grid grid-cols-2 gap-3">
+            <div class="card p-4">
+                <p class="text-xs text-zinc-500 mb-1">Trade Attivi</p>
+                <p class="text-2xl font-bold mono" id="tradesCount">0</p>
             </div>
-            <div id="activityList" class="space-y-2">
-                <div class="card p-4 text-center text-gray-500 text-sm">
-                    Nessuna attività recente
-                </div>
+            <div class="card p-4">
+                <p class="text-xs text-zinc-500 mb-1">Oggi</p>
+                <p class="text-2xl font-bold mono text-green-400" id="todayPnl">+0%</p>
             </div>
         </div>
     </section>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- PAGE: TRADING -->
+    <!-- TRADING PAGE - Lista semplice ordinata per score -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <section id="p-trade" class="page px-4 pt-2">
-        <!-- Market Overview -->
+    <section id="p-trade" class="page p-4">
         <div class="flex items-center justify-between mb-4">
             <h2 class="text-xl font-bold">Mercato</h2>
-            <div class="flex items-center gap-2">
-                <span class="text-[10px] bg-green-500/20 text-green-400 px-2 py-1 rounded-full font-semibold flex items-center gap-1">
-                    <div class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></div>
-                    LIVE
-                </span>
-            </div>
+            <span class="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded-full flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span> LIVE
+            </span>
         </div>
 
-        <!-- Search Bar -->
-        <div class="relative mb-4">
-            <i data-lucide="search" class="w-4 h-4 text-gray-500 absolute left-4 top-1/2 -translate-y-1/2"></i>
-            <input type="text" id="searchToken" placeholder="Cerca token..." class="w-full bg-[#1a1a25] border border-[#2a2a3a] rounded-xl py-3 pl-11 pr-4 text-sm outline-none focus:border-violet-500/50 transition-colors">
-        </div>
+        <p class="text-xs text-zinc-500 mb-3">Ordinati per potenziale (score più alto = migliore)</p>
 
-        <!-- Hot Tokens -->
-        <div class="mb-4">
-            <h4 class="text-sm font-semibold text-gray-400 mb-3 px-1">🔥 Token Trovati dallo Sniper</h4>
-            <div id="hotTokensList" class="space-y-2">
-                <div class="card p-4 text-center">
-                    <div class="skeleton h-4 w-32 mx-auto rounded mb-2"></div>
-                    <p class="text-xs text-gray-500">Scansione in corso...</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Signals from Strategy -->
-        <div class="mb-4">
-            <h4 class="text-sm font-semibold text-gray-400 mb-3 px-1">📊 Segnali Matematici</h4>
-            <div id="signalsList" class="space-y-2">
-                <div class="card p-4 text-center text-gray-500 text-sm">
-                    Analisi in corso...
-                </div>
+        <div id="tokenList" class="card overflow-hidden">
+            <div class="p-8 text-center text-zinc-500">
+                <i data-lucide="loader" class="w-6 h-6 mx-auto mb-2 animate-spin"></i>
+                <p class="text-sm">Scansione mercato...</p>
             </div>
         </div>
     </section>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- PAGE: BOT -->
+    <!-- BOT PAGE -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <section id="p-bot" class="page px-4 pt-2">
-        <!-- Bot Status Hero -->
-        <div class="card card-glow p-6 mb-5 relative overflow-hidden">
-            <div class="absolute -top-10 -right-10 w-32 h-32 bg-violet-500/20 rounded-full blur-2xl" id="botGlow"></div>
-            
+    <section id="p-bot" class="page p-4">
+        <!-- Bot Status -->
+        <div class="card p-6 mb-4">
             <div class="flex items-center justify-between mb-4">
                 <div class="flex items-center gap-3">
-                    <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center" id="botIconBg">
-                        <i data-lucide="bot" class="w-7 h-7 text-white" id="botIcon"></i>
+                    <div class="w-12 h-12 rounded-xl bg-indigo-500/20 flex items-center justify-center" id="botIconBox">
+                        <i data-lucide="bot" class="w-6 h-6 text-indigo-400" id="botIcon"></i>
                     </div>
                     <div>
-                        <h3 class="font-bold text-lg">Auto-Trading Bot</h3>
-                        <p class="text-sm text-gray-400" id="botStatusText">Inattivo</p>
+                        <h3 class="font-bold">Auto-Trading</h3>
+                        <p class="text-sm text-zinc-400" id="botStatus">Disattivato</p>
                     </div>
                 </div>
-                <label class="switch">
-                    <input type="checkbox" id="botToggle" onchange="toggleBot()">
-                    <span class="slider"></span>
-                </label>
+                <div class="switch" id="botSwitch" onclick="toggleBot()"></div>
             </div>
 
-            <div class="bg-[#0d0d15] rounded-xl p-4 border border-[#2a2a3a]" id="botInfo">
-                <p class="text-sm text-gray-400 text-center">
-                    Attiva il bot per iniziare il trading automatico basato sulla strategia matematica RSI + Bollinger + Volume
-                </p>
-            </div>
-        </div>
-
-        <!-- Bot Stats (shown when active) -->
-        <div id="botStatsContainer" class="hidden">
-            <div class="grid grid-cols-2 gap-3 mb-5">
-                <div class="card p-4">
-                    <p class="text-xs text-gray-500 mb-1">Profitto Sessione</p>
-                    <p class="text-2xl font-bold font-mono text-green-400" id="botProfit">+0.00 SOL</p>
-                </div>
-                <div class="card p-4">
-                    <p class="text-xs text-gray-500 mb-1">Trade Eseguiti</p>
-                    <p class="text-2xl font-bold font-mono" id="botTrades">0</p>
-                </div>
-            </div>
-
-            <div class="card p-4 mb-5">
-                <div class="flex items-center justify-between mb-3">
-                    <span class="text-sm font-semibold text-gray-300">Tempo Rimanente Ciclo</span>
-                    <span class="text-sm font-mono text-violet-400" id="botTimeLeft">23:59:59</span>
-                </div>
-                <div class="h-2 bg-[#2a2a3a] rounded-full overflow-hidden">
-                    <div class="h-full bg-gradient-to-r from-violet-500 to-purple-500 rounded-full transition-all" id="botProgress" style="width: 0%"></div>
-                </div>
+            <div class="bg-zinc-900 rounded-lg p-4 text-sm text-zinc-400" id="botInfo">
+                Il bot analizza il mercato con RSI + Bollinger + Volume e investe automaticamente.
+                <strong class="text-white">Nessuno stop loss fisso</strong> - il bot decide da solo quando vendere basandosi sul profitto.
             </div>
         </div>
 
         <!-- Bot Settings -->
-        <div class="card p-5 mb-5">
-            <h4 class="font-semibold text-gray-300 mb-4 flex items-center gap-2">
-                <i data-lucide="settings" class="w-4 h-4 text-violet-400"></i>
-                Impostazioni Bot
+        <div class="card p-4 mb-4">
+            <h4 class="font-semibold mb-4 flex items-center gap-2">
+                <i data-lucide="sliders" class="w-4 h-4 text-indigo-400"></i>
+                Impostazioni
             </h4>
             
             <div class="space-y-4">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <p class="text-sm font-medium">Max Investimento per Trade</p>
-                        <p class="text-xs text-gray-500">Limite per singola operazione</p>
-                    </div>
-                    <div class="bg-[#1a1a25] px-3 py-2 rounded-lg border border-[#2a2a3a]">
-                        <span class="font-mono text-sm">0.5 SOL</span>
-                    </div>
+                <div>
+                    <label class="text-xs text-zinc-500 mb-2 block">Importo per Trade (SOL)</label>
+                    <input type="number" id="botAmount" placeholder="0.1" step="0.01" value="0.1" class="mono">
+                    <p class="text-[10px] text-zinc-600 mt-1">Lascia 0 per auto (il bot decide in base al saldo)</p>
                 </div>
+
                 <div class="flex items-center justify-between">
                     <div>
-                        <p class="text-sm font-medium">Take Profit</p>
-                        <p class="text-xs text-gray-500">Chiudi automaticamente</p>
+                        <p class="text-sm font-medium">Reinvesti Profitti</p>
+                        <p class="text-xs text-zinc-500">Usa i guadagni per nuovi trade</p>
                     </div>
-                    <div class="bg-[#1a1a25] px-3 py-2 rounded-lg border border-[#2a2a3a]">
-                        <span class="font-mono text-sm text-green-400">+50%</span>
-                    </div>
-                </div>
-                <div class="flex items-center justify-between">
-                    <div>
-                        <p class="text-sm font-medium">Trailing Stop</p>
-                        <p class="text-xs text-gray-500">Proteggi i profitti</p>
-                    </div>
-                    <div class="bg-[#1a1a25] px-3 py-2 rounded-lg border border-[#2a2a3a]">
-                        <span class="font-mono text-sm text-red-400">-10%</span>
-                    </div>
+                    <div class="switch on" id="reinvestSwitch" onclick="toggleReinvest()"></div>
                 </div>
             </div>
         </div>
 
-        <!-- Bot Trade History -->
-        <div class="mb-4">
-            <h4 class="font-semibold text-gray-300 mb-3 flex items-center gap-2">
-                <i data-lucide="history" class="w-4 h-4 text-violet-400"></i>
-                Storico Bot (Oggi)
-            </h4>
-            <div id="botHistory" class="space-y-2">
-                <div class="card p-4 text-center text-gray-500 text-sm">
-                    Nessun trade automatico oggi
+        <!-- Bot Stats -->
+        <div id="botStats" class="hidden">
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <div class="card p-4">
+                    <p class="text-xs text-zinc-500">Profitto Sessione</p>
+                    <p class="text-xl font-bold mono text-green-400" id="botProfit">+0.00 SOL</p>
+                </div>
+                <div class="card p-4">
+                    <p class="text-xs text-zinc-500">Trade Eseguiti</p>
+                    <p class="text-xl font-bold mono" id="botTradesCount">0</p>
                 </div>
             </div>
+
+            <div class="card p-4 mb-4">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-sm">Ciclo 24h</span>
+                    <span class="text-sm mono text-indigo-400" id="botTimer">23:59:59</span>
+                </div>
+                <div class="h-2 bg-zinc-800 rounded-full overflow-hidden">
+                    <div class="h-full bg-indigo-500 rounded-full" id="botProgress" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Strategy Info -->
+        <div class="card p-4">
+            <h4 class="font-semibold mb-3 flex items-center gap-2">
+                <i data-lucide="brain" class="w-4 h-4 text-indigo-400"></i>
+                Come Funziona
+            </h4>
+            <ul class="text-sm text-zinc-400 space-y-2">
+                <li class="flex items-start gap-2">
+                    <span class="text-green-400">•</span>
+                    <span><strong>Povero (&lt;€12):</strong> Investe 90% del saldo, massimo rischio/reward</span>
+                </li>
+                <li class="flex items-start gap-2">
+                    <span class="text-yellow-400">•</span>
+                    <span><strong>Medio (€12-200):</strong> Investe 30-50%, bilanciato</span>
+                </li>
+                <li class="flex items-start gap-2">
+                    <span class="text-blue-400">•</span>
+                    <span><strong>Ricco (&gt;€200):</strong> Investe 10-20%, diversifica</span>
+                </li>
+            </ul>
         </div>
     </section>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- PAGE: SETTINGS -->
+    <!-- SETTINGS PAGE -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <section id="p-settings" class="page px-4 pt-2">
+    <section id="p-settings" class="page p-4">
         <h2 class="text-xl font-bold mb-4">Impostazioni</h2>
 
         <div class="space-y-3">
             <div class="card p-4 flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-violet-500/20 flex items-center justify-center">
-                        <i data-lucide="bell" class="w-5 h-5 text-violet-400"></i>
-                    </div>
-                    <div>
-                        <p class="font-medium">Notifiche Push</p>
-                        <p class="text-xs text-gray-500">Ricevi alert sui trade</p>
-                    </div>
+                <div>
+                    <p class="font-medium">Notifiche Trade</p>
+                    <p class="text-xs text-zinc-500">Ricevi alert quando il bot compra/vende</p>
                 </div>
-                <label class="switch">
-                    <input type="checkbox" checked>
-                    <span class="slider"></span>
-                </label>
+                <div class="switch on"></div>
             </div>
-
             <div class="card p-4 flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center">
-                        <i data-lucide="file-text" class="w-5 h-5 text-orange-400"></i>
-                    </div>
-                    <div>
-                        <p class="font-medium">Report Giornaliero</p>
-                        <p class="text-xs text-gray-500">Ricevi riepilogo ogni sera</p>
-                    </div>
+                <div>
+                    <p class="font-medium">Report Serale</p>
+                    <p class="text-xs text-zinc-500">Riepilogo guadagni ogni sera</p>
                 </div>
-                <label class="switch">
-                    <input type="checkbox" checked>
-                    <span class="slider"></span>
-                </label>
+                <div class="switch on"></div>
             </div>
-
-            <div class="card p-4 flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center">
-                        <i data-lucide="shield" class="w-5 h-5 text-cyan-400"></i>
-                    </div>
-                    <div>
-                        <p class="font-medium">Modalità Sicura</p>
-                        <p class="text-xs text-gray-500">Solo token verificati</p>
-                    </div>
-                </div>
-                <label class="switch">
-                    <input type="checkbox" checked>
-                    <span class="slider"></span>
-                </label>
-            </div>
-
-            <a href="#" class="card p-4 flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-gray-500/20 flex items-center justify-center">
-                        <i data-lucide="help-circle" class="w-5 h-5 text-gray-400"></i>
-                    </div>
-                    <div>
-                        <p class="font-medium">Supporto</p>
-                        <p class="text-xs text-gray-500">Contattaci su Telegram</p>
-                    </div>
-                </div>
-                <i data-lucide="chevron-right" class="w-5 h-5 text-gray-500"></i>
-            </a>
         </div>
 
-        <div class="mt-8 text-center">
-            <p class="text-xs text-gray-600">GOD SNIPER PRO v2.0</p>
-            <p class="text-xs text-gray-600">Powered by Solana</p>
+        <div class="mt-8 text-center text-zinc-600 text-xs">
+            <p>GOD SNIPER PRO v2.1</p>
+            <p>Powered by Solana</p>
         </div>
     </section>
 
@@ -512,30 +295,29 @@
     <!-- Deposit Sheet -->
     <div id="depositSheet" class="sheet">
         <div class="flex items-center justify-between mb-6">
-            <h3 class="text-xl font-bold">Deposita SOL</h3>
-            <button onclick="closeAll()" class="w-9 h-9 rounded-full bg-[#2a2a3a] flex items-center justify-center">
+            <h3 class="text-xl font-bold">Deposita</h3>
+            <button onclick="closeAll()" class="p-2 rounded-full bg-zinc-800">
                 <i data-lucide="x" class="w-5 h-5"></i>
             </button>
         </div>
 
-        <div class="bg-[#0d0d15] rounded-2xl p-6 mb-6 border border-[#2a2a3a] text-center">
-            <div id="qrCode" class="mx-auto mb-4 rounded-xl overflow-hidden bg-white p-3 w-fit"></div>
-            <p class="text-xs text-gray-500 mb-2">Scansiona per depositare</p>
+        <div class="bg-white p-4 rounded-2xl mx-auto w-fit mb-6">
+            <div id="qrCode"></div>
         </div>
 
-        <div class="bg-[#1a1a25] rounded-xl p-4 border border-[#2a2a3a] mb-4">
-            <p class="text-xs text-gray-500 mb-2">Indirizzo Wallet</p>
-            <div class="flex items-center gap-2">
-                <p class="font-mono text-sm text-white break-all flex-1" id="depAddr">...</p>
-                <button onclick="copyAddr()" class="shrink-0 btn-primary w-9 h-9 rounded-lg flex items-center justify-center">
-                    <i data-lucide="copy" class="w-4 h-4"></i>
+        <div class="card p-4 mb-4">
+            <p class="text-xs text-zinc-500 mb-2">Indirizzo</p>
+            <div class="flex items-center gap-2" onclick="copyAddr()">
+                <p class="mono text-sm break-all flex-1" id="depAddr">...</p>
+                <button class="p-2 rounded-lg bg-zinc-800">
+                    <i data-lucide="copy" class="w-4 h-4 text-indigo-400"></i>
                 </button>
             </div>
         </div>
 
-        <div class="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 flex items-start gap-3">
-            <i data-lucide="alert-triangle" class="w-5 h-5 text-yellow-500 shrink-0 mt-0.5"></i>
-            <p class="text-xs text-yellow-200/80">Invia <strong>solo SOL</strong> su rete Solana. Altre crypto o reti diverse andranno perse.</p>
+        <div class="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 flex gap-3">
+            <i data-lucide="alert-triangle" class="w-5 h-5 text-yellow-500 shrink-0"></i>
+            <p class="text-xs text-yellow-200">Invia solo <strong>SOL</strong> su rete Solana</p>
         </div>
     </div>
 
@@ -543,44 +325,38 @@
     <div id="withdrawSheet" class="sheet">
         <div class="flex items-center justify-between mb-6">
             <h3 class="text-xl font-bold">Preleva</h3>
-            <button onclick="closeAll()" class="w-9 h-9 rounded-full bg-[#2a2a3a] flex items-center justify-center">
+            <button onclick="closeAll()" class="p-2 rounded-full bg-zinc-800">
                 <i data-lucide="x" class="w-5 h-5"></i>
             </button>
         </div>
 
-        <div class="bg-[#1a1a25] rounded-xl p-4 border border-[#2a2a3a] mb-4 flex justify-between items-center">
-            <span class="text-sm text-gray-400">Disponibile</span>
-            <span class="font-mono font-bold text-lg" id="wAvail">0.0000 SOL</span>
+        <div class="card p-4 mb-4 flex justify-between">
+            <span class="text-zinc-400">Disponibile</span>
+            <span class="mono font-bold" id="wAvail">0 SOL</span>
         </div>
 
         <div class="mb-4">
-            <label class="text-xs text-gray-400 font-medium mb-2 block">Indirizzo Destinazione</label>
-            <input id="wAddr" type="text" placeholder="Inserisci indirizzo Solana..." class="w-full bg-[#0d0d15] border border-[#2a2a3a] rounded-xl p-4 font-mono text-sm outline-none focus:border-violet-500/50 transition-colors">
+            <label class="text-xs text-zinc-500 mb-2 block">Indirizzo Destinazione</label>
+            <input type="text" id="wAddr" placeholder="Indirizzo Solana..." class="mono">
         </div>
 
         <div class="mb-6">
-            <label class="text-xs text-gray-400 font-medium mb-2 block">Importo</label>
+            <label class="text-xs text-zinc-500 mb-2 block">Importo</label>
             <div class="relative">
-                <input id="wAmt" type="number" step="0.0001" placeholder="0.0000" class="w-full bg-[#0d0d15] border border-[#2a2a3a] rounded-xl p-4 pr-20 font-mono text-sm outline-none focus:border-violet-500/50 transition-colors">
-                <button onclick="setWMax()" class="absolute right-2 top-1/2 -translate-y-1/2 bg-violet-500/20 text-violet-400 px-3 py-1.5 rounded-lg text-xs font-semibold">MAX</button>
+                <input type="number" id="wAmt" placeholder="0.0" step="0.0001" class="mono pr-16">
+                <button onclick="setWMax()" class="absolute right-2 top-1/2 -translate-y-1/2 bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded text-xs">MAX</button>
             </div>
         </div>
 
-        <button onclick="doWithdraw()" id="btnWithdraw" class="w-full btn-danger py-4 rounded-xl font-bold text-white flex items-center justify-center gap-2">
-            <i data-lucide="send" class="w-5 h-5"></i>
-            Invia Prelievo
+        <button onclick="doWithdraw()" id="btnWithdraw" class="btn btn-red w-full flex items-center justify-center gap-2">
+            <i data-lucide="send" class="w-4 h-4"></i> Invia
         </button>
 
-        <div id="withdrawResult" class="hidden mt-4 bg-green-500/10 border border-green-500/30 rounded-xl p-4">
-            <div class="flex items-center gap-2 mb-3">
-                <i data-lucide="check-circle" class="w-5 h-5 text-green-400"></i>
-                <span class="font-semibold text-green-400">Prelievo Inviato!</span>
-            </div>
-            <p class="text-xs text-gray-400 mb-1">TX Hash:</p>
-            <p class="font-mono text-xs text-white break-all mb-3" id="wTxHash">...</p>
-            <a id="wSolscanLink" href="#" target="_blank" class="inline-flex items-center gap-2 text-sm text-violet-400 font-medium">
-                Vedi su Solscan <i data-lucide="external-link" class="w-4 h-4"></i>
-            </a>
+        <div id="wResult" class="hidden mt-4 card p-4 border-green-500">
+            <p class="text-green-400 font-semibold mb-2">✓ Prelievo Inviato!</p>
+            <p class="text-xs text-zinc-500 mb-1">TX Hash:</p>
+            <p class="mono text-xs break-all mb-3" id="wTxHash">...</p>
+            <a id="wTxLink" href="#" target="_blank" class="text-sm text-indigo-400">Vedi su Solscan →</a>
         </div>
     </div>
 
@@ -588,106 +364,77 @@
     <div id="tradeSheet" class="sheet">
         <div class="flex items-center justify-between mb-4">
             <div class="flex items-center gap-3">
-                <img id="tsImg" src="" class="w-12 h-12 rounded-full bg-[#2a2a3a]">
+                <img id="tsImg" src="" class="w-12 h-12 rounded-full bg-zinc-800">
                 <div>
                     <h3 class="font-bold text-lg" id="tsSymbol">TOKEN</h3>
-                    <p class="text-xs text-gray-400 font-mono" id="tsAddr">...</p>
+                    <p class="text-xs text-zinc-500" id="tsName">Name</p>
                 </div>
             </div>
-            <button onclick="closeAll()" class="w-9 h-9 rounded-full bg-[#2a2a3a] flex items-center justify-center">
+            <button onclick="closeAll()" class="p-2 rounded-full bg-zinc-800">
                 <i data-lucide="x" class="w-5 h-5"></i>
             </button>
         </div>
 
-        <!-- Price & Change -->
+        <!-- Token Info -->
         <div class="grid grid-cols-2 gap-3 mb-4">
-            <div class="bg-[#1a1a25] rounded-xl p-4 border border-[#2a2a3a]">
-                <p class="text-xs text-gray-500 mb-1">Prezzo</p>
-                <p class="font-mono font-bold text-lg" id="tsPrice">$0.00</p>
+            <div class="card p-3">
+                <p class="text-xs text-zinc-500">Prezzo</p>
+                <p class="mono font-bold" id="tsPrice">$0.00</p>
             </div>
-            <div class="bg-[#1a1a25] rounded-xl p-4 border border-[#2a2a3a]">
-                <p class="text-xs text-gray-500 mb-1">24h</p>
-                <p class="font-mono font-bold text-lg text-green-400" id="tsChange">+0.00%</p>
+            <div class="card p-3">
+                <p class="text-xs text-zinc-500">24h</p>
+                <p class="mono font-bold text-green-400" id="tsChange">+0%</p>
+            </div>
+            <div class="card p-3">
+                <p class="text-xs text-zinc-500">Liquidità</p>
+                <p class="mono font-bold text-sm" id="tsLiq">$0</p>
+            </div>
+            <div class="card p-3">
+                <p class="text-xs text-zinc-500">Score</p>
+                <p class="mono font-bold" id="tsScore">0</p>
             </div>
         </div>
 
-        <!-- Mini Chart Placeholder -->
-        <div class="bg-[#0d0d15] rounded-xl p-4 border border-[#2a2a3a] mb-4 h-32 flex items-center justify-center">
-            <canvas id="miniChart" class="w-full h-full"></canvas>
-        </div>
-
-        <!-- Buy/Sell Toggle -->
-        <div class="flex bg-[#1a1a25] p-1 rounded-xl mb-4">
-            <button id="btnBuy" onclick="setTradeMode('BUY')" class="flex-1 py-3 rounded-lg font-bold text-sm bg-green-500 text-white transition-all">COMPRA</button>
-            <button id="btnSell" onclick="setTradeMode('SELL')" class="flex-1 py-3 rounded-lg font-bold text-sm text-gray-500 transition-all">VENDI</button>
-        </div>
-
-        <!-- Amount Input -->
+        <!-- Trade Form -->
         <div class="mb-4">
-            <div class="flex justify-between items-center mb-2">
-                <label class="text-xs text-gray-400 font-medium">Quantità (SOL)</label>
-                <span class="text-xs text-gray-500">Disp: <span id="tsAvail">0.00</span> SOL</span>
+            <div class="flex justify-between mb-2">
+                <label class="text-xs text-zinc-500">Importo (SOL)</label>
+                <span class="text-xs text-zinc-500">Max: <span id="tsMax">0</span></span>
             </div>
             <div class="relative">
-                <input id="tsAmt" type="number" step="0.01" placeholder="0.00" class="w-full bg-[#0d0d15] border border-[#2a2a3a] rounded-xl p-4 pr-32 font-mono text-lg outline-none focus:border-violet-500/50">
+                <input type="number" id="tsAmt" placeholder="0.0" step="0.01" class="mono">
                 <div class="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1">
-                    <button onclick="setTradePct(0.25)" class="bg-[#2a2a3a] px-2 py-1 rounded text-xs">25%</button>
-                    <button onclick="setTradePct(0.5)" class="bg-[#2a2a3a] px-2 py-1 rounded text-xs">50%</button>
-                    <button onclick="setTradePct(1)" class="bg-violet-500/30 text-violet-300 px-2 py-1 rounded text-xs">MAX</button>
+                    <button onclick="setTradePct(0.5)" class="bg-zinc-800 px-2 py-1 rounded text-xs">50%</button>
+                    <button onclick="setTradePct(1)" class="bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded text-xs">MAX</button>
                 </div>
             </div>
         </div>
 
-        <button onclick="executeTrade()" id="btnExecuteTrade" class="w-full btn-success py-4 rounded-xl font-bold text-white flex items-center justify-center gap-2">
-            <i data-lucide="zap" class="w-5 h-5"></i>
-            <span id="btnTradeText">Compra TOKEN</span>
+        <button onclick="executeTrade()" id="btnTrade" class="btn btn-green w-full flex items-center justify-center gap-2">
+            <i data-lucide="zap" class="w-4 h-4"></i> <span id="btnTradeText">Compra</span>
         </button>
     </div>
 
-    <!-- Notifications Sheet -->
-    <div id="notifSheet" class="sheet">
-        <div class="flex items-center justify-between mb-6">
-            <h3 class="text-xl font-bold">Notifiche</h3>
-            <button onclick="closeAll()" class="w-9 h-9 rounded-full bg-[#2a2a3a] flex items-center justify-center">
-                <i data-lucide="x" class="w-5 h-5"></i>
-            </button>
-        </div>
-        <div id="notifList" class="space-y-2">
-            <div class="card p-4 text-center text-gray-500 text-sm">
-                Nessuna notifica
-            </div>
-        </div>
-    </div>
-
-    <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- BOTTOM NAV -->
-    <!-- ═══════════════════════════════════════════════════════════════ -->
-    <nav class="fixed bottom-0 left-0 right-0 bg-[#0a0a0f]/95 backdrop-blur-xl border-t border-[#2a2a3a] h-20 flex justify-around items-center z-50 px-4">
-        <button onclick="navTo('wallet', this)" class="nav-item active flex flex-col items-center gap-1 py-2 px-4 rounded-xl">
+    <!-- Bottom Nav -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-[#09090b] border-t border-zinc-800 h-20 flex justify-around items-center z-50 px-4">
+        <button onclick="navTo('wallet')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-indigo-400" data-page="wallet">
             <i data-lucide="wallet" class="w-6 h-6"></i>
-            <span class="text-[10px] font-semibold">Wallet</span>
-            <div class="nav-indicator w-1 h-1 rounded-full bg-violet-500 mt-0.5"></div>
+            <span class="text-[10px] font-medium">Wallet</span>
         </button>
-        <button onclick="navTo('trade', this)" class="nav-item flex flex-col items-center gap-1 py-2 px-4 rounded-xl text-gray-500">
+        <button onclick="navTo('trade')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-zinc-500" data-page="trade">
             <i data-lucide="line-chart" class="w-6 h-6"></i>
-            <span class="text-[10px] font-semibold">Trading</span>
-            <div class="nav-indicator w-1 h-1 rounded-full bg-violet-500 mt-0.5"></div>
+            <span class="text-[10px] font-medium">Trading</span>
         </button>
-        <button onclick="navTo('bot', this)" class="nav-item flex flex-col items-center gap-1 py-2 px-4 rounded-xl text-gray-500">
+        <button onclick="navTo('bot')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-zinc-500" data-page="bot">
             <i data-lucide="bot" class="w-6 h-6"></i>
-            <span class="text-[10px] font-semibold">Bot</span>
-            <div class="nav-indicator w-1 h-1 rounded-full bg-violet-500 mt-0.5"></div>
+            <span class="text-[10px] font-medium">Bot</span>
         </button>
-        <button onclick="navTo('settings', this)" class="nav-item flex flex-col items-center gap-1 py-2 px-4 rounded-xl text-gray-500">
+        <button onclick="navTo('settings')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-zinc-500" data-page="settings">
             <i data-lucide="settings" class="w-6 h-6"></i>
-            <span class="text-[10px] font-semibold">Setup</span>
-            <div class="nav-indicator w-1 h-1 rounded-full bg-violet-500 mt-0.5"></div>
+            <span class="text-[10px] font-medium">Setup</span>
         </button>
     </nav>
 
-    <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- JAVASCRIPT -->
-    <!-- ═══════════════════════════════════════════════════════════════ -->
     <script>
         lucide.createIcons();
 
@@ -695,31 +442,24 @@
         let state = {
             balance: 0,
             address: '',
-            solPrice: 180, // Default SOL price
+            solPrice: 180,
             botActive: false,
+            reinvest: true,
             currentToken: null,
-            tradeMode: 'BUY',
-            notifications: [],
-            miniChart: null
+            gems: []
         };
 
-        // ═══════════════════════════════════════════════════════════════
-        // NAVIGATION
-        // ═══════════════════════════════════════════════════════════════
-        function navTo(page, btn) {
+        // Navigation
+        function navTo(page) {
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             document.getElementById('p-' + page).classList.add('active');
-            document.querySelectorAll('.nav-item').forEach(n => {
-                n.classList.remove('active');
-                n.classList.add('text-gray-500');
+            document.querySelectorAll('.nav-btn').forEach(b => {
+                b.classList.toggle('text-indigo-400', b.dataset.page === page);
+                b.classList.toggle('text-zinc-500', b.dataset.page !== page);
             });
-            btn.classList.add('active');
-            btn.classList.remove('text-gray-500');
         }
 
-        // ═══════════════════════════════════════════════════════════════
-        // SHEETS
-        // ═══════════════════════════════════════════════════════════════
+        // Sheets
         function openSheet(id) {
             document.getElementById('overlay').classList.add('open');
             document.getElementById(id).classList.add('open');
@@ -731,422 +471,254 @@
 
         function openDeposit() {
             openSheet('depositSheet');
-            const qrEl = document.getElementById('qrCode');
-            qrEl.innerHTML = '';
+            const qr = document.getElementById('qrCode');
+            qr.innerHTML = '';
             if (state.address) {
-                new QRCode(qrEl, {
-                    text: state.address,
-                    width: 180,
-                    height: 180,
-                    colorDark: "#000000",
-                    colorLight: "#ffffff",
-                    correctLevel: QRCode.CorrectLevel.H
-                });
+                new QRCode(qr, { text: state.address, width: 160, height: 160, colorDark: "#000", colorLight: "#fff" });
             }
-            document.getElementById('depAddr').innerText = state.address || 'Caricamento...';
+            document.getElementById('depAddr').innerText = state.address || '...';
         }
 
         function openWithdraw() {
             openSheet('withdrawSheet');
             document.getElementById('wAvail').innerText = state.balance.toFixed(4) + ' SOL';
-            document.getElementById('withdrawResult').classList.add('hidden');
+            document.getElementById('wResult').classList.add('hidden');
             document.getElementById('btnWithdraw').disabled = false;
-            document.getElementById('btnWithdraw').innerHTML = '<i data-lucide="send" class="w-5 h-5"></i> Invia Prelievo';
-            lucide.createIcons();
         }
 
-        function openSwap() {
-            toast('Info', 'Swap disponibile nella sezione Trading', false);
-            navTo('trade', document.querySelectorAll('.nav-item')[1]);
-        }
-
-        function showNotifications() {
-            openSheet('notifSheet');
-        }
-
-        // ═══════════════════════════════════════════════════════════════
-        // TOKEN TRADING
-        // ═══════════════════════════════════════════════════════════════
-        function openToken(token, symbol, price, change = 0) {
-            state.currentToken = { token, symbol, price, change };
+        // Token Trading
+        function openToken(token) {
+            state.currentToken = token;
             openSheet('tradeSheet');
-            
-            document.getElementById('tsSymbol').innerText = symbol;
-            document.getElementById('tsAddr').innerText = token.slice(0, 6) + '...' + token.slice(-4);
-            document.getElementById('tsPrice').innerText = '$' + price.toFixed(6);
-            document.getElementById('tsChange').innerText = (change >= 0 ? '+' : '') + change.toFixed(2) + '%';
-            document.getElementById('tsChange').className = 'font-mono font-bold text-lg ' + (change >= 0 ? 'text-green-400' : 'text-red-400');
-            document.getElementById('tsAvail').innerText = state.balance.toFixed(4);
-            document.getElementById('tsImg').src = `https://img.jup.ag/v6/${token}/logo`;
-            document.getElementById('tsImg').onerror = function() { this.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%232a2a3a" width="100" height="100" rx="50"/><text x="50" y="60" text-anchor="middle" fill="white" font-size="40">' + symbol[0] + '</text></svg>'; };
-            
-            setTradeMode('BUY');
-            initMiniChart();
-        }
-
-        function setTradeMode(mode) {
-            state.tradeMode = mode;
-            const btnBuy = document.getElementById('btnBuy');
-            const btnSell = document.getElementById('btnSell');
-            const btnExec = document.getElementById('btnExecuteTrade');
-            const btnText = document.getElementById('btnTradeText');
-            
-            if (mode === 'BUY') {
-                btnBuy.className = 'flex-1 py-3 rounded-lg font-bold text-sm bg-green-500 text-white transition-all';
-                btnSell.className = 'flex-1 py-3 rounded-lg font-bold text-sm text-gray-500 transition-all';
-                btnExec.className = 'w-full btn-success py-4 rounded-xl font-bold text-white flex items-center justify-center gap-2';
-                btnText.innerText = 'Compra ' + (state.currentToken?.symbol || 'TOKEN');
-            } else {
-                btnBuy.className = 'flex-1 py-3 rounded-lg font-bold text-sm text-gray-500 transition-all';
-                btnSell.className = 'flex-1 py-3 rounded-lg font-bold text-sm bg-red-500 text-white transition-all';
-                btnExec.className = 'w-full btn-danger py-4 rounded-xl font-bold text-white flex items-center justify-center gap-2';
-                btnText.innerText = 'Vendi ' + (state.currentToken?.symbol || 'TOKEN');
-            }
+            document.getElementById('tsSymbol').innerText = token.symbol;
+            document.getElementById('tsName').innerText = token.name;
+            document.getElementById('tsPrice').innerText = '$' + token.price.toFixed(6);
+            document.getElementById('tsChange').innerText = (token.change_24h >= 0 ? '+' : '') + token.change_24h.toFixed(1) + '%';
+            document.getElementById('tsChange').className = 'mono font-bold ' + (token.change_24h >= 0 ? 'text-green-400' : 'text-red-400');
+            document.getElementById('tsLiq').innerText = '$' + formatNum(token.liquidity_usd);
+            document.getElementById('tsScore').innerText = token.safety_score + '/100';
+            document.getElementById('tsMax').innerText = (state.balance - 0.005).toFixed(4);
+            document.getElementById('tsImg').src = token.image_url || `https://img.jup.ag/v6/${token.token}/logo`;
+            document.getElementById('tsImg').onerror = function() { this.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect fill="%2327272a" width="40" height="40" rx="20"/><text x="20" y="26" text-anchor="middle" fill="white" font-size="16">' + token.symbol[0] + '</text></svg>'; };
         }
 
         function setTradePct(pct) {
-            const safe = Math.max(0, state.balance - 0.005);
-            document.getElementById('tsAmt').value = (safe * pct).toFixed(4);
-        }
-
-        function initMiniChart() {
-            const ctx = document.getElementById('miniChart').getContext('2d');
-            if (state.miniChart) state.miniChart.destroy();
-            
-            // Generate fake data for demo
-            const data = Array.from({length: 20}, () => Math.random() * 0.0001 + (state.currentToken?.price || 0.001));
-            
-            state.miniChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: data.map((_, i) => i),
-                    datasets: [{
-                        data: data,
-                        borderColor: '#8b5cf6',
-                        backgroundColor: 'rgba(139, 92, 246, 0.1)',
-                        fill: true,
-                        tension: 0.4,
-                        pointRadius: 0,
-                        borderWidth: 2
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { display: false },
-                        y: { display: false }
-                    }
-                }
-            });
+            const max = Math.max(0, state.balance - 0.005);
+            document.getElementById('tsAmt').value = (max * pct).toFixed(4);
         }
 
         async function executeTrade() {
             const amt = parseFloat(document.getElementById('tsAmt').value);
-            if (!amt || amt <= 0) return toast('Errore', 'Inserisci importo valido', true);
-            if (state.tradeMode === 'BUY' && amt > state.balance) return toast('Errore', 'Fondi insufficienti', true);
+            if (!amt || amt <= 0) return toast('Errore', 'Inserisci importo');
+            if (amt > state.balance) return toast('Errore', 'Fondi insufficienti');
 
-            const btn = document.getElementById('btnExecuteTrade');
+            const btn = document.getElementById('btnTrade');
             btn.disabled = true;
-            btn.innerHTML = '<i data-lucide="loader" class="w-5 h-5 animate-spin"></i> Elaborazione...';
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Invio...';
             lucide.createIcons();
 
             try {
-                const res = await fetch(`${API_BASE}/trade`, {
+                const res = await fetch(`${API}/trade`, {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        action: state.tradeMode,
-                        token: state.currentToken.token,
-                        amount_sol: amt
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'BUY', token: state.currentToken.token, amount_sol: amt })
                 });
                 const d = await res.json();
-                
                 if (d.success) {
-                    toast('Eseguito!', `${state.tradeMode === 'BUY' ? 'Acquisto' : 'Vendita'} completato`, false, d.solscan_url);
+                    toast('Eseguito!', `Acquisto ${state.currentToken.symbol} completato`);
                     closeAll();
-                    addNotification(`${state.tradeMode === 'BUY' ? '🟢 Acquistato' : '🔴 Venduto'} ${amt} SOL di ${state.currentToken.symbol}`, d.tx_signature);
                     sync();
                 } else {
-                    toast('Errore', d.message, true);
+                    toast('Errore', d.message);
                 }
             } catch (e) {
-                toast('Errore', 'Connessione fallita', true);
+                toast('Errore', 'Connessione fallita');
             } finally {
                 btn.disabled = false;
-                const txt = state.tradeMode === 'BUY' ? 'Compra' : 'Vendi';
-                btn.innerHTML = `<i data-lucide="zap" class="w-5 h-5"></i> ${txt} ${state.currentToken?.symbol || 'TOKEN'}`;
+                btn.innerHTML = '<i data-lucide="zap" class="w-4 h-4"></i> Compra';
                 lucide.createIcons();
             }
         }
 
-        // ═══════════════════════════════════════════════════════════════
-        // WITHDRAW
-        // ═══════════════════════════════════════════════════════════════
+        // Withdraw
         function setWMax() {
-            const safe = Math.max(0, state.balance - 0.005);
-            document.getElementById('wAmt').value = safe.toFixed(4);
+            document.getElementById('wAmt').value = Math.max(0, state.balance - 0.005).toFixed(4);
         }
 
         async function doWithdraw() {
             const addr = document.getElementById('wAddr').value.trim();
             const amt = parseFloat(document.getElementById('wAmt').value);
-            
-            if (!addr) return toast('Errore', 'Inserisci indirizzo', true);
-            if (!amt || amt <= 0) return toast('Errore', 'Inserisci importo', true);
-            if (amt > state.balance) return toast('Errore', 'Fondi insufficienti', true);
+            if (!addr) return toast('Errore', 'Inserisci indirizzo');
+            if (!amt || amt <= 0) return toast('Errore', 'Inserisci importo');
 
             const btn = document.getElementById('btnWithdraw');
             btn.disabled = true;
-            btn.innerHTML = '<i data-lucide="loader" class="w-5 h-5 animate-spin"></i> Invio...';
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i>';
             lucide.createIcons();
 
             try {
-                const res = await fetch(`${API_BASE}/withdraw`, {
+                const res = await fetch(`${API}/withdraw`, {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ amount: amt, token: 'SOL', destination_address: addr })
                 });
                 const d = await res.json();
-                
                 if (d.success) {
                     document.getElementById('wTxHash').innerText = d.tx_signature;
-                    document.getElementById('wSolscanLink').href = d.solscan_url || SOLSCAN_TX + d.tx_signature;
-                    document.getElementById('withdrawResult').classList.remove('hidden');
-                    toast('Successo!', 'Prelievo inviato', false, d.solscan_url);
-                    addNotification(`💸 Prelievo di ${amt} SOL inviato`, d.tx_signature);
+                    document.getElementById('wTxLink').href = d.solscan_url || SOLSCAN + d.tx_signature;
+                    document.getElementById('wResult').classList.remove('hidden');
+                    toast('Successo', 'Prelievo inviato');
                     sync();
                 } else {
-                    toast('Errore', d.message, true);
+                    toast('Errore', d.message);
                     btn.disabled = false;
-                    btn.innerHTML = '<i data-lucide="send" class="w-5 h-5"></i> Invia Prelievo';
+                    btn.innerHTML = '<i data-lucide="send" class="w-4 h-4"></i> Invia';
                 }
             } catch (e) {
-                toast('Errore', 'Connessione fallita', true);
+                toast('Errore', 'Connessione fallita');
                 btn.disabled = false;
-                btn.innerHTML = '<i data-lucide="send" class="w-5 h-5"></i> Invia Prelievo';
+                btn.innerHTML = '<i data-lucide="send" class="w-4 h-4"></i> Invia';
             }
             lucide.createIcons();
         }
 
-        // ═══════════════════════════════════════════════════════════════
-        // BOT CONTROL
-        // ═══════════════════════════════════════════════════════════════
-        async function toggleBot() {
-            const toggle = document.getElementById('botToggle');
-            const isActive = toggle.checked;
+        // Bot
+        function toggleBot() {
+            state.botActive = !state.botActive;
+            const sw = document.getElementById('botSwitch');
+            sw.classList.toggle('on', state.botActive);
+            updateBotUI();
+            toast(state.botActive ? 'Bot Attivato' : 'Bot Fermato', state.botActive ? 'Trading automatico avviato' : 'Trading automatico disattivato');
+        }
 
-            try {
-                // Here you would call your API to start/stop the bot
-                // For now, we simulate it
-                state.botActive = isActive;
-                updateBotUI();
-                
-                if (isActive) {
-                    toast('Bot Attivato', 'Trading automatico avviato per 24h', false);
-                    addNotification('🤖 Bot Auto-Trading attivato', null);
-                } else {
-                    toast('Bot Fermato', 'Trading automatico disattivato', false);
-                    addNotification('⏹️ Bot Auto-Trading fermato', null);
-                }
-            } catch (e) {
-                toggle.checked = !isActive;
-                toast('Errore', 'Impossibile cambiare stato bot', true);
-            }
+        function toggleReinvest() {
+            state.reinvest = !state.reinvest;
+            document.getElementById('reinvestSwitch').classList.toggle('on', state.reinvest);
         }
 
         function updateBotUI() {
-            const statusText = document.getElementById('botStatusText');
-            const botGlow = document.getElementById('botGlow');
-            const botIconBg = document.getElementById('botIconBg');
-            const statsContainer = document.getElementById('botStatsContainer');
-            const infoDiv = document.getElementById('botInfo');
-
+            const status = document.getElementById('botStatus');
+            const iconBox = document.getElementById('botIconBox');
+            const stats = document.getElementById('botStats');
+            
             if (state.botActive) {
-                statusText.innerText = '🟢 Attivo - Ciclo 24h';
-                statusText.className = 'text-sm text-green-400';
-                botGlow.className = 'absolute -top-10 -right-10 w-32 h-32 bg-green-500/30 rounded-full blur-2xl';
-                botIconBg.className = 'w-14 h-14 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center';
-                statsContainer.classList.remove('hidden');
-                infoDiv.innerHTML = '<p class="text-sm text-green-400 text-center flex items-center justify-center gap-2"><i data-lucide="activity" class="w-4 h-4"></i> Analisi mercato in corso...</p>';
+                status.innerText = '🟢 Attivo';
+                status.className = 'text-sm text-green-400';
+                iconBox.className = 'w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center';
+                stats.classList.remove('hidden');
             } else {
-                statusText.innerText = 'Inattivo';
-                statusText.className = 'text-sm text-gray-400';
-                botGlow.className = 'absolute -top-10 -right-10 w-32 h-32 bg-violet-500/20 rounded-full blur-2xl';
-                botIconBg.className = 'w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center';
-                statsContainer.classList.add('hidden');
-                infoDiv.innerHTML = '<p class="text-sm text-gray-400 text-center">Attiva il bot per iniziare il trading automatico basato sulla strategia matematica RSI + Bollinger + Volume</p>';
-            }
-            lucide.createIcons();
-        }
-
-        // ═══════════════════════════════════════════════════════════════
-        // NOTIFICATIONS
-        // ═══════════════════════════════════════════════════════════════
-        function addNotification(message, txHash) {
-            const notif = {
-                id: Date.now(),
-                message,
-                txHash,
-                time: new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
-            };
-            state.notifications.unshift(notif);
-            if (state.notifications.length > 20) state.notifications.pop();
-            updateNotifBadge();
-            renderNotifications();
-        }
-
-        function updateNotifBadge() {
-            const badge = document.getElementById('notifBadge');
-            const count = state.notifications.length;
-            if (count > 0) {
-                badge.classList.remove('hidden');
-                badge.innerText = count > 9 ? '9+' : count;
-            } else {
-                badge.classList.add('hidden');
+                status.innerText = 'Disattivato';
+                status.className = 'text-sm text-zinc-400';
+                iconBox.className = 'w-12 h-12 rounded-xl bg-indigo-500/20 flex items-center justify-center';
+                stats.classList.add('hidden');
             }
         }
 
-        function renderNotifications() {
-            const list = document.getElementById('notifList');
-            if (state.notifications.length === 0) {
-                list.innerHTML = '<div class="card p-4 text-center text-gray-500 text-sm">Nessuna notifica</div>';
-                return;
-            }
-            list.innerHTML = state.notifications.map(n => `
-                <div class="card p-4">
-                    <div class="flex items-start justify-between">
-                        <p class="text-sm">${n.message}</p>
-                        <span class="text-xs text-gray-500 shrink-0 ml-2">${n.time}</span>
-                    </div>
-                    ${n.txHash ? `<a href="${SOLSCAN_TX}${n.txHash}" target="_blank" class="text-xs text-violet-400 mt-1 inline-block">Vedi TX →</a>` : ''}
-                </div>
-            `).join('');
-        }
-
-        // ═══════════════════════════════════════════════════════════════
-        // UTILS
-        // ═══════════════════════════════════════════════════════════════
-        function toast(title, msg, isError = false, txLink = null) {
-            const el = document.getElementById('toast');
-            const card = document.getElementById('toastCard');
-            const iconBg = document.getElementById('toastIconBg');
-            const icon = document.getElementById('toastIcon');
-            const link = document.getElementById('toastLink');
-
+        // Utils
+        function toast(title, msg) {
             document.getElementById('toastTitle').innerText = title;
             document.getElementById('toastMsg').innerText = msg;
-
-            if (isError) {
-                card.style.borderLeftColor = '#ef4444';
-                iconBg.style.background = 'rgba(239, 68, 68, 0.2)';
-                icon.style.color = '#ef4444';
-            } else {
-                card.style.borderLeftColor = '#10b981';
-                iconBg.style.background = 'rgba(16, 185, 129, 0.2)';
-                icon.style.color = '#10b981';
-            }
-
-            if (txLink) {
-                link.href = txLink;
-                link.classList.remove('hidden');
-            } else {
-                link.classList.add('hidden');
-            }
-
-            el.classList.add('show');
-            setTimeout(() => el.classList.remove('show'), txLink ? 5000 : 3000);
+            document.getElementById('toast').classList.add('show');
+            setTimeout(() => document.getElementById('toast').classList.remove('show'), 3000);
         }
 
         function copyAddr() {
-            if (!state.address) return;
             navigator.clipboard.writeText(state.address);
-            toast('Copiato!', 'Indirizzo copiato negli appunti');
-            document.getElementById('copyIcon').style.color = '#10b981';
-            setTimeout(() => document.getElementById('copyIcon').style.color = '', 300);
+            toast('Copiato', 'Indirizzo negli appunti');
         }
 
-        // ═══════════════════════════════════════════════════════════════
-        // SYNC WITH BACKEND
-        // ═══════════════════════════════════════════════════════════════
-        async function sync() {
-            const syncIcon = document.getElementById('syncIcon');
-            syncIcon.classList.add('animate-spin');
+        function formatNum(n) {
+            if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+            if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+            return n.toFixed(0);
+        }
 
+        function getScoreClass(score) {
+            if (score >= 70) return 'score-high';
+            if (score >= 50) return 'score-mid';
+            return 'score-low';
+        }
+
+        // Sync
+        async function sync() {
+            document.getElementById('syncIcon').classList.add('animate-spin');
+            
             try {
-                const res = await fetch(`${API_BASE}/status`);
+                const res = await fetch(`${API}/status`);
                 const data = await res.json();
 
                 state.balance = data.balance_sol || 0;
                 state.address = data.wallet_address || '';
+                state.gems = data.gems_feed || [];
 
                 // Update UI
-                document.getElementById('statusDot').className = 'w-2 h-2 rounded-full bg-green-500 pulse-green';
+                document.getElementById('statusDot').className = 'w-2 h-2 rounded-full bg-green-500';
                 document.getElementById('statusText').innerText = 'Online';
-                document.getElementById('statusText').className = 'text-[11px] font-medium text-green-400';
+                document.getElementById('statusText').className = 'text-[10px] text-green-400';
 
                 document.getElementById('balanceSOL').innerText = state.balance.toFixed(4);
-                document.getElementById('balanceUSD').innerText = `≈ $${(state.balance * state.solPrice).toFixed(2)} USD`;
+                document.getElementById('balanceUSD').innerText = '≈ $' + (data.balance_usd || state.balance * state.solPrice).toFixed(2);
                 document.getElementById('walletAddr').innerText = state.address;
-                document.getElementById('solscanAddrLink').href = SOLSCAN_ADDR + state.address;
+                document.getElementById('addrLink').href = SOLSCAN_ADDR + state.address;
                 document.getElementById('tradesCount').innerText = data.active_trades_count || 0;
 
-                // Update gems list
-                const hotList = document.getElementById('hotTokensList');
-                if (data.gems_feed && data.gems_feed.length > 0) {
-                    hotList.innerHTML = data.gems_feed.slice(0, 5).map(g => `
-                        <div class="card token-card p-4 flex items-center justify-between cursor-pointer" onclick="openToken('${g.token}', '${g.symbol}', ${g.price}, ${g.change_5m || 0})">
-                            <div class="flex items-center gap-3">
-                                <img src="https://img.jup.ag/v6/${g.token}/logo" class="w-10 h-10 rounded-full bg-[#2a2a3a]" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%232a2a3a%22 width=%22100%22 height=%22100%22 rx=%2250%22/><text x=%2250%22 y=%2260%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2240%22>${g.symbol[0]}</text></svg>'">
-                                <div>
-                                    <p class="font-semibold">${g.symbol}</p>
-                                    <p class="text-xs text-gray-500 font-mono">$${g.price.toFixed(6)}</p>
+                // Wealth Level dal backend
+                const wlMap = {
+                    'POOR': { text: '🔴 Povero (<€12)', class: 'text-red-400' },
+                    'MEDIUM': { text: '🟡 Medio (€12-200)', class: 'text-yellow-400' },
+                    'RICH': { text: '🟢 Ricco (>€200)', class: 'text-green-400' }
+                };
+                const wl = wlMap[data.wealth_level] || wlMap['POOR'];
+                document.getElementById('wealthLevel').innerText = wl.text;
+                document.getElementById('wealthLevel').className = 'text-sm font-semibold ' + wl.class;
+
+                // Token List - già ordinata per score dal backend
+                const list = document.getElementById('tokenList');
+                if (state.gems.length > 0) {
+                    list.innerHTML = state.gems.map(g => {
+                        const safeJson = JSON.stringify(g).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+                        return `
+                        <div class="token-row" onclick='openToken(JSON.parse(this.dataset.token))' data-token='${JSON.stringify(g)}'>
+                            <img src="${g.image_url || `https://img.jup.ag/v6/${g.token}/logo`}" class="w-10 h-10 rounded-full bg-zinc-800" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%2327272a%22 width=%2240%22 height=%2240%22 rx=%2220%22/><text x=%2220%22 y=%2226%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2216%22>${g.symbol ? g.symbol[0] : '?'}</text></svg>'">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <span class="font-semibold">${g.symbol}</span>
+                                    <span class="score-badge ${getScoreClass(g.safety_score)}">${g.safety_score}%</span>
                                 </div>
+                                <p class="text-xs text-zinc-500 truncate">${g.name || g.symbol}</p>
                             </div>
-                            <div class="flex items-center gap-3">
-                                <span class="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded-full font-semibold">SAFE</span>
-                                <i data-lucide="chevron-right" class="w-4 h-4 text-gray-500"></i>
+                            <div class="text-right">
+                                <p class="mono text-sm">${formatPrice(g.price)}</p>
+                                <p class="text-xs ${(g.change_24h || 0) >= 0 ? 'text-green-400' : 'text-red-400'}">${(g.change_24h || 0) >= 0 ? '+' : ''}${(g.change_24h || 0).toFixed(1)}%</p>
                             </div>
                         </div>
-                    `).join('');
+                    `}).join('');
                 } else {
-                    hotList.innerHTML = '<div class="card p-4 text-center text-gray-500 text-sm">Scansione mercato...</div>';
+                    list.innerHTML = '<div class="p-8 text-center text-zinc-500 text-sm">Nessun token trovato. Scansione in corso...</div>';
                 }
-
-                // Update signals
-                const sigList = document.getElementById('signalsList');
-                if (data.signals_feed && data.signals_feed.length > 0) {
-                    sigList.innerHTML = data.signals_feed.slice(0, 3).map(s => `
-                        <div class="card p-4 border-l-2 border-violet-500">
-                            <div class="flex items-center justify-between mb-1">
-                                <span class="font-semibold">${s.token.slice(0, 8)}...</span>
-                                <span class="text-xs text-violet-400">${s.score}/100</span>
-                            </div>
-                            <p class="text-xs text-gray-400">${s.reason}</p>
-                        </div>
-                    `).join('');
-                }
-
-                lucide.createIcons();
 
             } catch (e) {
-                document.getElementById('statusDot').className = 'w-2 h-2 rounded-full bg-red-500 animate-pulse';
+                console.error('Sync error:', e);
+                document.getElementById('statusDot').className = 'w-2 h-2 rounded-full bg-red-500';
                 document.getElementById('statusText').innerText = 'Offline';
-                document.getElementById('statusText').className = 'text-[11px] font-medium text-red-400';
+                document.getElementById('statusText').className = 'text-[10px] text-red-400';
             } finally {
-                syncIcon.classList.remove('animate-spin');
+                document.getElementById('syncIcon').classList.remove('animate-spin');
             }
         }
+        
+        function formatPrice(p) {
+            if (!p || p === 0) return '$0';
+            if (p < 0.000001) return '$' + p.toExponential(2);
+            if (p < 0.01) return '$' + p.toFixed(6);
+            if (p < 1) return '$' + p.toFixed(4);
+            return '$' + p.toFixed(2);
+        }
 
-        // ═══════════════════════════════════════════════════════════════
-        // INIT
-        // ═══════════════════════════════════════════════════════════════
+        // Init
         sync();
         setInterval(sync, 3000);
         updateBotUI();
-        renderNotifications();
     </script>
 </body>
 </html>

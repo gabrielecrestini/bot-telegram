@@ -12,6 +12,7 @@ use std::str::FromStr;
 use log::{info, error};
 
 const SOLSCAN_TX_URL: &str = "https://solscan.io/tx/";
+const SOL_PRICE_USD: f64 = 180.0; // Placeholder - in produzione usare oracle
 
 // --- DATI ---
 #[derive(Serialize, Clone)]
@@ -27,6 +28,8 @@ pub struct SignalData {
 struct DashboardData {
     wallet_address: String,
     balance_sol: f64,
+    balance_usd: f64,
+    wealth_level: String,
     active_trades_count: usize,
     system_status: String,
     gems_feed: Vec<GemData>,
@@ -45,6 +48,19 @@ struct WithdrawRequest {
     amount: f64,
     token: String,
     destination_address: String,
+}
+
+#[derive(Deserialize)]
+struct BotSettingsRequest {
+    active: bool,
+    amount_per_trade: f64,
+    reinvest: bool,
+}
+
+#[derive(Serialize)]
+struct BotSettingsResponse {
+    success: bool,
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -84,9 +100,9 @@ pub async fn start_server(pool: sqlx::SqlitePool, net: Arc<network::NetworkClien
         .and_then(handle_withdraw);
 
     let cors = warp::cors()
-        .allow_origin("https://god-sniper-pro.netlify.app")
-        .allow_methods(vec!["GET", "POST"])
-        .allow_headers(vec!["content-type"]);
+        .allow_any_origin()
+        .allow_methods(vec!["GET", "POST", "OPTIONS"])
+        .allow_headers(vec!["content-type", "x-user-id"]);
 
     let routes = status.or(trade).or(withdraw).with(cors);
 
@@ -112,7 +128,19 @@ async fn handle_status(
         balance = net.get_balance_fast(&pk).await as f64 / LAMPORTS_PER_SOL as f64;
     }
 
-    let gems = state.found_gems.lock().unwrap().clone();
+    // Calcola livello ricchezza
+    let wealth_level = if balance < 0.06 {
+        "POOR".to_string() // < ~12€
+    } else if balance < 1.1 {
+        "MEDIUM".to_string() // 12-200€
+    } else {
+        "RICH".to_string() // > 200€
+    };
+
+    let mut gems = state.found_gems.lock().unwrap().clone();
+    // Ordina per score decrescente
+    gems.sort_by(|a, b| b.safety_score.cmp(&a.safety_score));
+    
     let signals = state.math_signals.lock().unwrap().clone();
 
     let active_trades = match db::get_open_trades(&pool).await {
@@ -123,6 +151,8 @@ async fn handle_status(
     Ok(warp::reply::json(&DashboardData {
         wallet_address: pubkey_str,
         balance_sol: balance,
+        balance_usd: balance * SOL_PRICE_USD,
+        wealth_level,
         active_trades_count: active_trades,
         system_status: "ONLINE".to_string(),
         gems_feed: gems,
