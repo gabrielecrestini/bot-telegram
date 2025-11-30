@@ -43,6 +43,15 @@
         .score-high { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
         .score-mid { background: rgba(234, 179, 8, 0.2); color: #eab308; }
         .score-low { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .history-filter { background: transparent; color: #71717a; }
+        .history-filter.active { background: #6366f1; color: white; }
+        .history-item { display: flex; align-items: center; padding: 12px 16px; gap: 12px; border-bottom: 1px solid #27272a; }
+        .history-item:last-child { border-bottom: none; }
+        .status-badge { padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
+        .status-open { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+        .status-sold, .status-completed { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+        .status-failed { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .status-pending { background: rgba(234, 179, 8, 0.2); color: #eab308; }
     </style>
 </head>
 <body>
@@ -130,7 +139,7 @@
         </div>
 
         <!-- Stats -->
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-2 gap-3 mb-4">
             <div class="card p-4">
                 <p class="text-xs text-zinc-500 mb-1">Trade Attivi</p>
                 <p class="text-2xl font-bold mono" id="tradesCount">0</p>
@@ -138,6 +147,26 @@
             <div class="card p-4">
                 <p class="text-xs text-zinc-500 mb-1">Oggi</p>
                 <p class="text-2xl font-bold mono text-green-400" id="todayPnl">+0%</p>
+            </div>
+        </div>
+
+        <!-- Transaction History -->
+        <div class="card overflow-hidden">
+            <div class="p-4 border-b border-zinc-800 flex items-center justify-between">
+                <h3 class="font-semibold flex items-center gap-2">
+                    <i data-lucide="history" class="w-4 h-4 text-indigo-400"></i>
+                    Storico Transazioni
+                </h3>
+                <div class="flex gap-1">
+                    <button onclick="filterHistory('all')" class="history-filter active text-xs px-2 py-1 rounded" data-filter="all">Tutto</button>
+                    <button onclick="filterHistory('trades')" class="history-filter text-xs px-2 py-1 rounded" data-filter="trades">Trade</button>
+                    <button onclick="filterHistory('withdrawals')" class="history-filter text-xs px-2 py-1 rounded" data-filter="withdrawals">Prelievi</button>
+                </div>
+            </div>
+            <div id="historyList" class="max-h-80 overflow-y-auto">
+                <div class="p-8 text-center text-zinc-500 text-sm">
+                    Nessuna transazione
+                </div>
             </div>
         </div>
     </section>
@@ -470,7 +499,10 @@
             botActive: false,
             reinvest: true,
             currentToken: null,
-            gems: []
+            gems: [],
+            trades: [],
+            withdrawals: [],
+            historyFilter: 'all'
         };
 
         // Navigation
@@ -657,6 +689,100 @@
             return n.toFixed(0);
         }
 
+        // History Functions
+        function filterHistory(filter) {
+            state.historyFilter = filter;
+            document.querySelectorAll('.history-filter').forEach(b => {
+                b.classList.toggle('active', b.dataset.filter === filter);
+            });
+            renderHistory();
+        }
+
+        function renderHistory() {
+            const list = document.getElementById('historyList');
+            let items = [];
+
+            // Combine and format items
+            if (state.historyFilter === 'all' || state.historyFilter === 'trades') {
+                state.trades.forEach(t => {
+                    items.push({
+                        type: 'trade',
+                        icon: t.status === 'OPEN' ? 'trending-up' : (t.profit_loss_sol >= 0 ? 'check-circle' : 'x-circle'),
+                        iconColor: t.status === 'OPEN' ? 'text-blue-400' : (t.profit_loss_sol >= 0 ? 'text-green-400' : 'text-red-400'),
+                        title: `Trade ${t.token_address.slice(0,6)}...`,
+                        subtitle: t.entry_time ? formatDate(t.entry_time) : '',
+                        amount: `${t.amount_sol.toFixed(4)} SOL`,
+                        status: t.status,
+                        hash: t.tx_signature,
+                        pnl: t.profit_loss_sol,
+                        timestamp: new Date(t.entry_time).getTime()
+                    });
+                });
+            }
+
+            if (state.historyFilter === 'all' || state.historyFilter === 'withdrawals') {
+                state.withdrawals.forEach(w => {
+                    items.push({
+                        type: 'withdrawal',
+                        icon: w.status === 'COMPLETED' ? 'arrow-up-right' : (w.status === 'PENDING' ? 'clock' : 'x-circle'),
+                        iconColor: w.status === 'COMPLETED' ? 'text-green-400' : (w.status === 'PENDING' ? 'text-yellow-400' : 'text-red-400'),
+                        title: `Prelievo → ${w.destination.slice(0,6)}...`,
+                        subtitle: w.created_at ? formatDate(w.created_at) : '',
+                        amount: `-${w.amount_sol.toFixed(4)} SOL`,
+                        status: w.status,
+                        hash: w.tx_signature,
+                        timestamp: new Date(w.created_at).getTime()
+                    });
+                });
+            }
+
+            // Sort by timestamp descending
+            items.sort((a, b) => b.timestamp - a.timestamp);
+
+            if (items.length === 0) {
+                list.innerHTML = '<div class="p-8 text-center text-zinc-500 text-sm">Nessuna transazione</div>';
+                return;
+            }
+
+            list.innerHTML = items.map(item => `
+                <div class="history-item">
+                    <div class="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center shrink-0">
+                        <i data-lucide="${item.icon}" class="w-5 h-5 ${item.iconColor}"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                            <span class="font-medium text-sm">${item.title}</span>
+                            <span class="status-badge status-${item.status.toLowerCase()}">${item.status}</span>
+                        </div>
+                        <p class="text-xs text-zinc-500">${item.subtitle}</p>
+                    </div>
+                    <div class="text-right shrink-0">
+                        <p class="mono text-sm font-medium ${item.type === 'withdrawal' ? 'text-red-400' : ''}">${item.amount}</p>
+                        ${item.hash ? `<a href="${SOLSCAN}${item.hash}" target="_blank" class="text-[10px] text-indigo-400 hover:underline">TX →</a>` : ''}
+                    </div>
+                </div>
+            `).join('');
+
+            lucide.createIcons();
+        }
+
+        function formatDate(dateStr) {
+            try {
+                const d = new Date(dateStr);
+                const now = new Date();
+                const diff = now - d;
+                
+                if (diff < 60000) return 'Adesso';
+                if (diff < 3600000) return `${Math.floor(diff/60000)} min fa`;
+                if (diff < 86400000) return `${Math.floor(diff/3600000)} ore fa`;
+                if (diff < 604800000) return `${Math.floor(diff/86400000)} giorni fa`;
+                
+                return d.toLocaleDateString('it-IT', { day: '2-digit', month: 'short' });
+            } catch {
+                return dateStr;
+            }
+        }
+
         function getScoreClass(score) {
             if (score >= 70) return 'score-high';
             if (score >= 50) return 'score-mid';
@@ -674,6 +800,8 @@
                 state.balance = data.balance_sol || 0;
                 state.address = data.wallet_address || '';
                 state.gems = data.gems_feed || [];
+                state.trades = data.trades_history || [];
+                state.withdrawals = data.withdrawals_history || [];
 
                 // Update UI
                 document.getElementById('statusDot').className = 'w-2 h-2 rounded-full bg-green-500';
@@ -729,6 +857,9 @@
                 } else {
                     list.innerHTML = '<div class="p-8 text-center text-zinc-500 text-sm">Nessun token trovato. Scansione in corso...</div>';
                 }
+
+                // Render history
+                renderHistory();
 
             } catch (e) {
                 console.error('Sync error:', e);

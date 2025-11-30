@@ -34,6 +34,8 @@ struct DashboardData {
     system_status: String,
     gems_feed: Vec<GemData>,
     signals_feed: Vec<SignalData>,
+    trades_history: Vec<db::TradeHistory>,
+    withdrawals_history: Vec<db::WithdrawalHistory>,
 }
 
 #[derive(Deserialize)]
@@ -154,6 +156,12 @@ async fn handle_status(
         Err(_) => 0,
     };
 
+    // Storico transazioni
+    let (trades_history, withdrawals_history) = match db::get_all_history(&pool, user_id).await {
+        Ok((t, w)) => (t, w),
+        Err(_) => (vec![], vec![]),
+    };
+
     Ok(warp::reply::json(&DashboardData {
         wallet_address: pubkey_str,
         balance_sol: balance,
@@ -163,6 +171,8 @@ async fn handle_status(
         system_status: "ONLINE".to_string(),
         gems_feed: gems,
         signals_feed: signals,
+        trades_history,
+        withdrawals_history,
     }))
 }
 

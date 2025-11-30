@@ -242,3 +242,88 @@ pub async fn get_open_trades(pool: &SqlitePool) -> Result<Vec<(i32, String, u64,
     }
     Ok(results)
 }
+
+// ═══════════════════════════════════════════════════════════════
+// STORICO TRANSAZIONI
+// ═══════════════════════════════════════════════════════════════
+
+/// Struttura per trade nello storico
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TradeHistory {
+    pub id: i32,
+    pub token_address: String,
+    pub tx_signature: String,
+    pub amount_sol: f64,
+    pub status: String,
+    pub entry_time: String,
+    pub exit_time: Option<String>,
+    pub profit_loss_sol: f64,
+}
+
+/// Struttura per prelievo nello storico
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WithdrawalHistory {
+    pub id: i32,
+    pub amount_sol: f64,
+    pub destination: String,
+    pub status: String,
+    pub tx_signature: Option<String>,
+    pub created_at: String,
+}
+
+/// Recupera tutti i trade di un utente (ultimi 50)
+pub async fn get_user_trades(pool: &SqlitePool, user_id: &str) -> Result<Vec<TradeHistory>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, token_address, tx_signature, amount_in_lamports, status, entry_time, exit_time, profit_loss_sol 
+         FROM trades WHERE user_id = ? ORDER BY entry_time DESC LIMIT 50"
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(TradeHistory {
+            id: row.get("id"),
+            token_address: row.get("token_address"),
+            tx_signature: row.get("tx_signature"),
+            amount_sol: row.get::<i64, _>("amount_in_lamports") as f64 / 1_000_000_000.0,
+            status: row.get("status"),
+            entry_time: row.get("entry_time"),
+            exit_time: row.try_get("exit_time").ok(),
+            profit_loss_sol: row.try_get("profit_loss_sol").unwrap_or(0.0),
+        });
+    }
+    Ok(results)
+}
+
+/// Recupera tutti i prelievi di un utente (ultimi 50)
+pub async fn get_user_withdrawals(pool: &SqlitePool, user_id: &str) -> Result<Vec<WithdrawalHistory>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, amount_lamports, destination, status, tx_signature, created_at 
+         FROM withdrawals WHERE user_id = ? ORDER BY created_at DESC LIMIT 50"
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(WithdrawalHistory {
+            id: row.get("id"),
+            amount_sol: row.get::<i64, _>("amount_lamports") as f64 / 1_000_000_000.0,
+            destination: row.get("destination"),
+            status: row.get("status"),
+            tx_signature: row.try_get("tx_signature").ok(),
+            created_at: row.get("created_at"),
+        });
+    }
+    Ok(results)
+}
+
+/// Recupera storico combinato (trade + prelievi) ordinato per data
+pub async fn get_all_history(pool: &SqlitePool, user_id: &str) -> Result<(Vec<TradeHistory>, Vec<WithdrawalHistory>), sqlx::Error> {
+    let trades = get_user_trades(pool, user_id).await?;
+    let withdrawals = get_user_withdrawals(pool, user_id).await?;
+    Ok((trades, withdrawals))
+}
