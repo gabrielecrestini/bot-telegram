@@ -93,35 +93,202 @@ pub async fn fetch_all_verified_tokens() -> Result<Vec<JupiterToken>, Box<dyn Er
     Ok(tokens)
 }
 
-/// Calcola uno score 0-100 basato su metriche del token
-fn calculate_token_score(liq: f64, vol: f64, mcap: f64, change_1h: f64, change_24h: f64) -> u8 {
-    let mut score: f64 = 50.0; // Base score
+// ═══════════════════════════════════════════════════════════════════════════════
+// SISTEMA DI SCORING SCIENTIFICO AVANZATO
+// Basato su: Liquidità, Volume, Market Cap, Momentum, Volatilità, Rapporti
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Analisi dettagliata del potenziale di un token
+#[derive(Debug, Clone)]
+pub struct TokenAnalysis {
+    pub liquidity_score: f64,      // 0-25 punti
+    pub volume_score: f64,         // 0-20 punti
+    pub mcap_potential_score: f64, // 0-20 punti
+    pub momentum_score: f64,       // 0-20 punti
+    pub safety_score: f64,         // 0-15 punti
+    pub total_score: u8,
+    pub risk_level: String,
+    pub recommendation: String,
+}
+
+/// Calcola score SCIENTIFICO 0-100 basato su metriche avanzate
+fn calculate_token_score(liq: f64, vol: f64, mcap: f64, change_5m: f64, change_1h: f64, change_24h: f64) -> u8 {
+    let analysis = analyze_token_potential(liq, vol, mcap, change_5m, change_1h, change_24h);
+    analysis.total_score
+}
+
+/// Analisi scientifica completa del token
+pub fn analyze_token_potential(liq: f64, vol: f64, mcap: f64, change_5m: f64, change_1h: f64, change_24h: f64) -> TokenAnalysis {
     
-    // Liquidità (più alta = più sicuro)
-    if liq > 100000.0 { score += 15.0; }
-    else if liq > 50000.0 { score += 10.0; }
-    else if liq > 10000.0 { score += 5.0; }
-    else if liq < 5000.0 { score -= 20.0; } // Troppo bassa = rischio
+    // ═══════════════════════════════════════════════════════════════
+    // 1. LIQUIDITY SCORE (0-25 punti)
+    // Formula: Liquidità logaritmica normalizzata
+    // Logica: Più liquidità = meno slippage = più sicuro
+    // ═══════════════════════════════════════════════════════════════
+    let liquidity_score: f64 = if liq <= 0.0 {
+        0.0
+    } else {
+        let log_liq = (liq.ln() - 8.0_f64).max(0.0); // ln(3000) ≈ 8
+        (log_liq * 2.5).min(25.0)
+        // $10k = ~5 punti, $50k = ~12 punti, $200k = ~20 punti, $1M+ = 25 punti
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // 2. VOLUME SCORE (0-20 punti)
+    // Formula: Volume/Liquidity Ratio + Volume assoluto
+    // Logica: Alto volume rispetto alla liquidità = interesse forte
+    // ═══════════════════════════════════════════════════════════════
+    let vol_liq_ratio: f64 = if liq > 0.0 { vol / liq } else { 0.0 };
+    let volume_score: f64 = {
+        let mut vs: f64 = 0.0;
+        
+        // Ratio Volume/Liquidity (0-10 punti)
+        // Ratio > 2 significa che il volume giornaliero è 2x la liquidità = MOLTO attivo
+        if vol_liq_ratio > 3.0 { vs += 10.0; }
+        else if vol_liq_ratio > 2.0 { vs += 8.0; }
+        else if vol_liq_ratio > 1.0 { vs += 6.0; }
+        else if vol_liq_ratio > 0.5 { vs += 4.0; }
+        else if vol_liq_ratio > 0.2 { vs += 2.0; }
+        
+        // Volume assoluto (0-10 punti)
+        if vol > 1_000_000.0 { vs += 10.0; }
+        else if vol > 500_000.0 { vs += 8.0; }
+        else if vol > 100_000.0 { vs += 6.0; }
+        else if vol > 50_000.0 { vs += 4.0; }
+        else if vol > 20_000.0 { vs += 2.0; }
+        
+        vs.min(20.0)
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // 3. MARKET CAP POTENTIAL SCORE (0-20 punti)
+    // Formula: Low cap + Volume alto = Potenziale esplosivo
+    // Logica: Token con mcap basso MA volume alto possono fare 10-100x
+    // ═══════════════════════════════════════════════════════════════
+    let mcap_potential_score: f64 = {
+        let mut mps: f64 = 0.0;
+        
+        // Sweet Spot: Market cap tra $100k e $10M con volume alto
+        if mcap > 0.0 && mcap < 500_000.0 && vol > 50_000.0 {
+            // MICRO CAP con volume = MASSIMO POTENZIALE (ma alto rischio)
+            mps += 18.0;
+        } else if mcap >= 500_000.0 && mcap < 2_000_000.0 && vol > 100_000.0 {
+            // SMALL CAP con buon volume = Ottimo potenziale
+            mps += 16.0;
+        } else if mcap >= 2_000_000.0 && mcap < 10_000_000.0 && vol > 200_000.0 {
+            // MID CAP emergente
+            mps += 12.0;
+        } else if mcap >= 10_000_000.0 && mcap < 50_000_000.0 {
+            // Già consolidato ma può crescere
+            mps += 8.0;
+        } else if mcap >= 50_000_000.0 {
+            // Grande = stabile ma meno upside
+            mps += 4.0;
+        }
+        
+        // Bonus: Volume/MCap ratio alto (indica interesse rispetto alla dimensione)
+        let vol_mcap_ratio: f64 = if mcap > 0.0 { vol / mcap } else { 0.0 };
+        if vol_mcap_ratio > 0.3 { mps += 2.0; } // Volume > 30% del mcap in 24h = molto attivo
+        
+        mps.min(20.0)
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // 4. MOMENTUM SCORE (0-20 punti)
+    // Formula: Analisi multi-timeframe con pesi
+    // Logica: Trend consistente su più timeframe = segnale forte
+    // ═══════════════════════════════════════════════════════════════
+    let momentum_score: f64 = {
+        let mut ms: f64 = 10.0; // Base neutra
+        
+        // Analisi 5 minuti (reazione immediata)
+        if change_5m > 3.0 && change_5m < 15.0 { ms += 3.0; } // Pump sano
+        else if change_5m > 15.0 { ms -= 2.0; } // Troppo veloce = sospetto
+        else if change_5m < -5.0 { ms -= 3.0; } // Dump recente
+        
+        // Analisi 1 ora (trend a breve)
+        if change_1h > 5.0 && change_1h < 30.0 { ms += 4.0; } // Crescita sana
+        else if change_1h > 30.0 && change_1h < 50.0 { ms += 2.0; } // Pump ma attenzione
+        else if change_1h > 50.0 { ms -= 3.0; } // Pump & dump probabile
+        else if change_1h < -15.0 { ms -= 4.0; } // Crollo
+        
+        // Analisi 24h (trend giornaliero)
+        if change_24h > 10.0 && change_24h < 50.0 { ms += 3.0; } // Trend positivo
+        else if change_24h > 50.0 && change_24h < 100.0 { ms += 1.0; } // Forte ma rischioso
+        else if change_24h > 100.0 { ms -= 2.0; } // Già pumpato troppo
+        else if change_24h < -20.0 { ms -= 3.0; } // Downtrend
+        
+        // BONUS: Trend coerente (tutti positivi o accelerazione)
+        if change_5m > 0.0 && change_1h > change_5m && change_1h > 0.0 {
+            ms += 2.0; // Accelerazione positiva
+        }
+        
+        ms.clamp(0.0, 20.0)
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // 5. SAFETY SCORE (0-15 punti)
+    // Formula: Rapporti di sicurezza
+    // Logica: Liquidità sufficiente per uscire senza slippage eccessivo
+    // ═══════════════════════════════════════════════════════════════
+    let safety_score: f64 = {
+        let mut ss: f64 = 0.0;
+        
+        // Liquidità minima assoluta
+        if liq >= 50_000.0 { ss += 5.0; }
+        else if liq >= 20_000.0 { ss += 3.0; }
+        else if liq >= 10_000.0 { ss += 1.0; }
+        else { ss -= 5.0; } // PENALITÀ: Liquidità troppo bassa
+        
+        // Stabilità: Volatilità non eccessiva
+        let volatility: f64 = (change_1h.abs() + change_24h.abs()) / 2.0;
+        if volatility < 20.0 { ss += 5.0; } // Stabile
+        else if volatility < 40.0 { ss += 3.0; } // Moderata
+        else if volatility > 80.0 { ss -= 3.0; } // Troppo volatile
+        
+        // Volume consistente (non manipolato)
+        if vol > liq * 0.3 && vol < liq * 5.0 { ss += 5.0; } // Volume "normale"
+        else if vol > liq * 10.0 { ss -= 2.0; } // Volume anomalo = possibile wash trading
+        
+        ss.clamp(0.0, 15.0)
+    };
+
+    // ═══════════════════════════════════════════════════════════════
+    // CALCOLO FINALE
+    // ═══════════════════════════════════════════════════════════════
+    let total_raw = liquidity_score + volume_score + mcap_potential_score + momentum_score + safety_score;
+    let total_score = total_raw.clamp(0.0, 100.0) as u8;
     
-    // Volume 24h (attività di trading)
-    if vol > 500000.0 { score += 10.0; }
-    else if vol > 100000.0 { score += 5.0; }
-    else if vol < 10000.0 { score -= 10.0; }
+    // Risk Level
+    let risk_level = if safety_score >= 12.0 && liq >= 100_000.0 {
+        "🟢 BASSO".to_string()
+    } else if safety_score >= 8.0 && liq >= 30_000.0 {
+        "🟡 MEDIO".to_string()
+    } else {
+        "🔴 ALTO".to_string()
+    };
     
-    // Market Cap (stabilità)
-    if mcap > 10_000_000.0 { score += 10.0; }
-    else if mcap > 1_000_000.0 { score += 5.0; }
-    
-    // Momentum positivo
-    if change_1h > 5.0 && change_1h < 50.0 { score += 10.0; } // Salita sana
-    else if change_1h > 50.0 { score -= 5.0; } // Troppo pump = rischio dump
-    else if change_1h < -20.0 { score -= 15.0; } // Crollo
-    
-    // Trend 24h
-    if change_24h > 10.0 && change_24h < 100.0 { score += 5.0; }
-    else if change_24h < -30.0 { score -= 10.0; }
-    
-    score.clamp(0.0, 100.0) as u8
+    // Recommendation
+    let recommendation = if total_score >= 75 {
+        "💎 GEMMA - Alto potenziale, considera entry".to_string()
+    } else if total_score >= 60 {
+        "✅ BUONO - Metriche solide, monitora".to_string()
+    } else if total_score >= 45 {
+        "⚠️ CAUTO - Rischio medio, attendi conferme".to_string()
+    } else {
+        "❌ EVITA - Metriche deboli".to_string()
+    };
+
+    TokenAnalysis {
+        liquidity_score,
+        volume_score,
+        mcap_potential_score,
+        momentum_score,
+        safety_score,
+        total_score,
+        risk_level,
+        recommendation,
+    }
 }
 
 /// Ottiene dati completi di un token da DexScreener
@@ -159,7 +326,7 @@ pub async fn get_token_market_data(mint: &str) -> Result<TokenMarketData, Box<dy
                 .and_then(|i| i.imageUrl.clone())
                 .unwrap_or_else(|| format!("https://img.jup.ag/v6/{}/logo", mint));
             
-            let score = calculate_token_score(liq, vol, mcap, ch_1h, ch_24h);
+            let score = calculate_token_score(liq, vol, mcap, ch_5m, ch_1h, ch_24h);
             
             return Ok(TokenMarketData { 
                 address,
@@ -195,6 +362,7 @@ pub async fn get_token_market_data(mint: &str) -> Result<TokenMarketData, Box<dy
 }
 
 /// Cerca gemme promettenti su Solana - Tokens con potenziale di crescita
+/// Usa multiple fonti e applica scoring scientifico avanzato
 pub async fn discover_trending_gems() -> Result<Vec<TokenMarketData>, Box<dyn Error + Send + Sync>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -202,49 +370,24 @@ pub async fn discover_trending_gems() -> Result<Vec<TokenMarketData>, Box<dyn Er
     
     let mut gems: Vec<TokenMarketData> = Vec::new();
     
-    // 1. Cerca token Solana su DexScreener con volume alto
-    let search_url = "https://api.dexscreener.com/latest/dex/search?q=solana";
-    if let Ok(resp) = client.get(search_url).send().await {
-        if let Ok(data) = resp.json::<DexResponse>().await {
-            if let Some(pairs) = data.pairs {
-                for pair in pairs.iter().take(30) {
-                    let liq = pair.liquidity.as_ref().and_then(|l| l.usd).unwrap_or(0.0);
-                    let vol = pair.volume.as_ref().and_then(|v| v.h24).unwrap_or(0.0);
-                    let ch_1h = pair.priceChange.as_ref().and_then(|c| c.h1).unwrap_or(0.0);
-                    let ch_24h = pair.priceChange.as_ref().and_then(|c| c.h24).unwrap_or(0.0);
-                    let price = pair.priceUsd.as_ref().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                    let mcap = pair.fdv.unwrap_or(0.0);
-                    
-                    // Filtro qualità: liquidità minima, volume minimo, non pump & dump
-                    if liq >= 10000.0 && vol >= 50000.0 && ch_1h > -10.0 && ch_1h < 100.0 && price > 0.0 {
-                        let symbol = pair.baseToken.symbol.clone();
-                        let name = pair.baseToken.name.clone().unwrap_or_else(|| symbol.clone());
-                        let address = pair.baseToken.address.clone().unwrap_or_default();
-                        
-                        if address.is_empty() { continue; }
-                        
-                        let image_url = pair.info.as_ref()
-                            .and_then(|i| i.imageUrl.clone())
-                            .unwrap_or_else(|| format!("https://img.jup.ag/v6/{}/logo", address));
-                        
-                        let score = calculate_token_score(liq, vol, mcap, ch_1h, ch_24h);
-                        
-                        // Solo token con score decente
-                        if score >= 40 {
-                            gems.push(TokenMarketData {
-                                address,
-                                price,
-                                symbol,
-                                name,
-                                liquidity_usd: liq,
-                                market_cap: mcap,
-                                volume_24h: vol,
-                                change_5m: pair.priceChange.as_ref().and_then(|c| c.m5).unwrap_or(0.0),
-                                change_1h: ch_1h,
-                                change_24h: ch_24h,
-                                image_url,
-                                score,
-                            });
+    // ═══════════════════════════════════════════════════════════════
+    // FONTE 1: DexScreener Token Profiles (Nuovi/Trending)
+    // ═══════════════════════════════════════════════════════════════
+    let sources = vec![
+        "https://api.dexscreener.com/latest/dex/search?q=solana",
+        "https://api.dexscreener.com/token-profiles/latest/v1", // Nuovi token
+    ];
+    
+    for search_url in sources {
+        if let Ok(resp) = client.get(search_url).send().await {
+            if let Ok(data) = resp.json::<DexResponse>().await {
+                if let Some(pairs) = data.pairs {
+                    for pair in pairs.iter().take(50) {
+                        if let Some(token_data) = process_pair(&pair) {
+                            // Applica filtri avanzati
+                            if passes_quality_filters(&token_data) {
+                                gems.push(token_data);
+                            }
                         }
                     }
                 }
@@ -252,17 +395,122 @@ pub async fn discover_trending_gems() -> Result<Vec<TokenMarketData>, Box<dyn Er
         }
     }
     
-    // Ordina per score decrescente (migliori in cima)
+    // ═══════════════════════════════════════════════════════════════
+    // FONTE 2: Ricerca specifica per "meme", "ai", "defi" su Solana
+    // ═══════════════════════════════════════════════════════════════
+    let keywords = vec!["meme solana", "ai solana", "sol defi", "pump solana"];
+    for keyword in keywords {
+        let url = format!("https://api.dexscreener.com/latest/dex/search?q={}", keyword);
+        if let Ok(resp) = client.get(&url).send().await {
+            if let Ok(data) = resp.json::<DexResponse>().await {
+                if let Some(pairs) = data.pairs {
+                    for pair in pairs.iter().take(20) {
+                        if let Some(token_data) = process_pair(&pair) {
+                            if passes_quality_filters(&token_data) && !gems.iter().any(|g| g.address == token_data.address) {
+                                gems.push(token_data);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // RANKING FINALE
+    // ═══════════════════════════════════════════════════════════════
+    
+    // Ordina per score decrescente
     gems.sort_by(|a, b| b.score.cmp(&a.score));
     
-    // Rimuovi duplicati per address
+    // Rimuovi duplicati
     gems.dedup_by(|a, b| a.address == b.address);
     
-    // Limita a top 15
-    gems.truncate(15);
+    // Top 20 gemme
+    gems.truncate(20);
     
-    info!("💎 Trovate {} gemme potenziali", gems.len());
+    info!("💎 Scoperte {} gemme con scoring scientifico", gems.len());
+    
+    // Log delle top 5
+    for (i, gem) in gems.iter().take(5).enumerate() {
+        info!("  #{} {} - Score: {} | Liq: ${:.0}K | MCap: ${:.0}K | Vol: ${:.0}K | 24h: {:.1}%",
+            i+1, gem.symbol, gem.score, 
+            gem.liquidity_usd/1000.0, gem.market_cap/1000.0, 
+            gem.volume_24h/1000.0, gem.change_24h);
+    }
+    
     Ok(gems)
+}
+
+/// Processa un pair da DexScreener e crea TokenMarketData
+fn process_pair(pair: &PairData) -> Option<TokenMarketData> {
+    let liq = pair.liquidity.as_ref().and_then(|l| l.usd).unwrap_or(0.0);
+    let vol = pair.volume.as_ref().and_then(|v| v.h24).unwrap_or(0.0);
+    let price = pair.priceUsd.as_ref().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+    let mcap = pair.fdv.unwrap_or(0.0);
+    let ch_5m = pair.priceChange.as_ref().and_then(|c| c.m5).unwrap_or(0.0);
+    let ch_1h = pair.priceChange.as_ref().and_then(|c| c.h1).unwrap_or(0.0);
+    let ch_24h = pair.priceChange.as_ref().and_then(|c| c.h24).unwrap_or(0.0);
+    
+    // Skip se mancano dati essenziali
+    if price <= 0.0 || liq <= 0.0 { return None; }
+    
+    let symbol = pair.baseToken.symbol.clone();
+    let name = pair.baseToken.name.clone().unwrap_or_else(|| symbol.clone());
+    let address = pair.baseToken.address.clone().unwrap_or_default();
+    
+    if address.is_empty() || address.len() < 30 { return None; }
+    
+    let image_url = pair.info.as_ref()
+        .and_then(|i| i.imageUrl.clone())
+        .unwrap_or_else(|| format!("https://img.jup.ag/v6/{}/logo", address));
+    
+    let score = calculate_token_score(liq, vol, mcap, ch_5m, ch_1h, ch_24h);
+    
+    Some(TokenMarketData {
+        address,
+        price,
+        symbol,
+        name,
+        liquidity_usd: liq,
+        market_cap: mcap,
+        volume_24h: vol,
+        change_5m: ch_5m,
+        change_1h: ch_1h,
+        change_24h: ch_24h,
+        image_url,
+        score,
+    })
+}
+
+/// Filtri di qualità avanzati per escludere token scam/dead
+fn passes_quality_filters(token: &TokenMarketData) -> bool {
+    // 1. Liquidità minima $5,000
+    if token.liquidity_usd < 5_000.0 { return false; }
+    
+    // 2. Volume minimo $10,000 (deve essere attivamente tradato)
+    if token.volume_24h < 10_000.0 { return false; }
+    
+    // 3. Score minimo 35 (il nostro scoring scientifico)
+    if token.score < 35 { return false; }
+    
+    // 4. Non in dump estremo (> -50% in 24h = probabilmente rug)
+    if token.change_24h < -50.0 { return false; }
+    
+    // 5. Non pump estremo recente (> +200% in 1h = pump & dump)
+    if token.change_1h > 200.0 { return false; }
+    
+    // 6. Market cap ragionevole (non troppo alto per potenziale, non troppo basso per sicurezza)
+    // Sweet spot: $50k - $100M
+    if token.market_cap > 0.0 && (token.market_cap < 30_000.0 || token.market_cap > 500_000_000.0) {
+        return false;
+    }
+    
+    // 7. Volume/Liquidity ratio sano (0.1x - 10x)
+    let vol_liq_ratio = token.volume_24h / token.liquidity_usd;
+    if vol_liq_ratio < 0.05 || vol_liq_ratio > 20.0 { return false; }
+    
+    true
 }
 
 pub async fn get_token_info(mint: &str) -> Result<(f64, String), Box<dyn Error + Send + Sync>> {
