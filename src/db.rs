@@ -206,6 +206,26 @@ pub async fn confirm_withdrawal(pool: &SqlitePool, id: i64, signature: &str) {
         .await;
 }
 
+/// Marca un prelievo come fallito
+pub async fn mark_withdrawal_failed(pool: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE withdrawals SET status = 'FAILED' WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Conta i trade aperti per un utente specifico
+pub async fn count_open_trades(pool: &SqlitePool, user_id: &str) -> Result<usize, sqlx::Error> {
+    let row = sqlx::query("SELECT COUNT(*) as count FROM trades WHERE user_id = ? AND status = 'OPEN'")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await?;
+    
+    let count: i32 = row.get("count");
+    Ok(count as usize)
+}
+
 /// Recupera trade aperti (per il ripristino al riavvio)
 pub async fn get_open_trades(pool: &SqlitePool) -> Result<Vec<(i32, String, u64, u64)>, sqlx::Error> {
     let rows = sqlx::query("SELECT id, token_address, amount_in_lamports, highest_price_lamports FROM trades WHERE status = 'OPEN'")
