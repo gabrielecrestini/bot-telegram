@@ -212,8 +212,8 @@
             </div>
 
             <div class="bg-zinc-900 rounded-lg p-4 text-sm text-zinc-400" id="botInfo">
-                Il bot analizza il mercato con RSI + Bollinger + Volume e investe automaticamente.
-                <strong class="text-white">Nessuno stop loss fisso</strong> - il bot decide da solo quando vendere basandosi sul profitto.
+                <strong class="text-indigo-400">AMMS 2025</strong> - Strategia multi-indicatore con EMA, RSI, ATR e Bollinger.
+                <strong class="text-white">Trailing stop adattivo</strong> basato su ATR - sale con il prezzo, mai scende. Cattura pump infiniti.
             </div>
         </div>
 
@@ -264,6 +264,43 @@
                 </div>
             </div>
         </div>
+        
+        <!-- AMMS Strategy Details -->
+        <div class="card p-4 mb-4 border-indigo-500/30">
+            <div class="flex items-center justify-between mb-3">
+                <h4 class="font-semibold flex items-center gap-2">
+                    <i data-lucide="activity" class="w-4 h-4 text-indigo-400"></i>
+                    AMMS Strategy
+                </h4>
+                <span class="text-[10px] bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full">2025</span>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2 text-xs mb-3">
+                <div class="bg-zinc-900 rounded-lg p-2">
+                    <span class="text-zinc-500">EMA 20/50</span>
+                    <p class="font-semibold text-green-400">Trend ↑</p>
+                </div>
+                <div class="bg-zinc-900 rounded-lg p-2">
+                    <span class="text-zinc-500">RSI (14)</span>
+                    <p class="font-semibold">50-70 ✓</p>
+                </div>
+                <div class="bg-zinc-900 rounded-lg p-2">
+                    <span class="text-zinc-500">ATR Stop</span>
+                    <p class="font-semibold text-yellow-400">1.5x ATR</p>
+                </div>
+                <div class="bg-zinc-900 rounded-lg p-2">
+                    <span class="text-zinc-500">Trailing</span>
+                    <p class="font-semibold text-blue-400">-3% max</p>
+                </div>
+            </div>
+            
+            <div class="text-[11px] text-zinc-500 space-y-1">
+                <p>✓ <strong>Entry:</strong> EMA20 > EMA50 + RSI momentum + Bollinger breakout</p>
+                <p>✓ <strong>Stop Loss:</strong> Adattivo basato su ATR (volatilità)</p>
+                <p>✓ <strong>Take Profit:</strong> Trailing stop dopo +3% - cattura pump infiniti</p>
+                <p>✓ <strong>Reinvest:</strong> Automatico dopo vendita con risk adjustment</p>
+            </div>
+        </div>
 
         <!-- Current Strategy -->
         <div class="card p-4 mb-4" id="currentStrategy">
@@ -278,16 +315,16 @@
         <div class="card p-4">
             <h4 class="font-semibold mb-3 flex items-center gap-2">
                 <i data-lucide="brain" class="w-4 h-4 text-indigo-400"></i>
-                Strategia Intelligente
+                Money Management
             </h4>
             <ul class="text-xs text-zinc-400 space-y-2">
                 <li class="flex items-start gap-2">
                     <span class="text-zinc-500">⚫</span>
-                    <span><strong>Micro (&lt;€5):</strong> 95% - Un solo tentativo YOLO</span>
+                    <span><strong>Micro (&lt;€5):</strong> 95% - Full risk, un solo tentativo</span>
                 </li>
                 <li class="flex items-start gap-2">
                     <span class="text-red-400">🔴</span>
-                    <span><strong>Povero (€5-15):</strong> 88% - Massimo rischio/reward</span>
+                    <span><strong>Povero (€5-15):</strong> 88% - Massimo potenziale</span>
                 </li>
                 <li class="flex items-start gap-2">
                     <span class="text-orange-400">🟠</span>
@@ -303,11 +340,41 @@
                 </li>
                 <li class="flex items-start gap-2">
                     <span class="text-green-400">💎</span>
-                    <span><strong>Ricco (&gt;€200):</strong> 12-25% - Diversifica</span>
+                    <span><strong>Ricco (&gt;€200):</strong> 12-25% - Diversificato</span>
                 </li>
             </ul>
             <div class="mt-3 pt-3 border-t border-zinc-800 text-xs text-zinc-500">
-                💡 Con meno soldi investi di più per avere guadagni significativi. Il bot calcola automaticamente.
+                💡 L'importo viene anche ridotto se ATR (volatilità) è alta per proteggere il capitale.
+            </div>
+        </div>
+        
+        <!-- AMMS Indicators Explained -->
+        <div class="card p-4 mt-4">
+            <h4 class="font-semibold mb-3 flex items-center gap-2">
+                <i data-lucide="bar-chart-3" class="w-4 h-4 text-purple-400"></i>
+                Indicatori AMMS
+            </h4>
+            <div class="text-xs text-zinc-400 space-y-3">
+                <div>
+                    <p class="font-medium text-white mb-1">📊 EMA 20/50</p>
+                    <p>EMA veloce sopra lenta = trend rialzista. Entry solo se confermato.</p>
+                </div>
+                <div>
+                    <p class="font-medium text-white mb-1">📈 RSI (14)</p>
+                    <p>Tra 50-70 = momentum sano. Sopra 70 = ipercomprato (no entry).</p>
+                </div>
+                <div>
+                    <p class="font-medium text-white mb-1">📉 ATR (14)</p>
+                    <p>Misura volatilità. Stop loss = Entry - 1.5×ATR. Si adatta al mercato.</p>
+                </div>
+                <div>
+                    <p class="font-medium text-white mb-1">🎯 Bollinger Bands</p>
+                    <p>Breakout sopra banda superiore = pump confermato. +20 punti score.</p>
+                </div>
+                <div>
+                    <p class="font-medium text-white mb-1">🔄 Trailing Stop</p>
+                    <p>Dopo +3% profit, lo stop si alza ogni nuovo massimo. Cattura pump senza limiti.</p>
+                </div>
             </div>
         </div>
     </section>

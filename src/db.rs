@@ -185,6 +185,61 @@ pub async fn update_highest_price(pool: &SqlitePool, trade_id: i32, new_high: u6
         .await;
 }
 
+/// Registra una vendita (Sell) - chiude un trade aperto
+pub async fn record_sell(
+    pool: &SqlitePool, 
+    user_id: &str, 
+    token_addr: &str, 
+    signature: &str,
+    pnl_pct: f64
+) -> Result<(), sqlx::Error> {
+    let exit_time = chrono::Utc::now().to_rfc3339();
+    
+    // Trova il trade aperto più recente per questo token
+    let trade_opt = sqlx::query(
+        "SELECT id, amount_in_lamports FROM trades 
+         WHERE user_id = ? AND token_address = ? AND status = 'OPEN' 
+         ORDER BY entry_time DESC LIMIT 1"
+    )
+    .bind(user_id)
+    .bind(token_addr)
+    .fetch_optional(pool)
+    .await?;
+    
+    if let Some(row) = trade_opt {
+        let trade_id: i32 = row.get("id");
+        let amount_lamports: i64 = row.get("amount_in_lamports");
+        let amount_sol = amount_lamports as f64 / 1_000_000_000.0;
+        let pnl_sol = amount_sol * (pnl_pct / 100.0);
+        
+        sqlx::query(
+            "UPDATE trades SET status = 'SOLD', exit_time = ?, profit_loss_sol = ?, tx_signature = ? WHERE id = ?"
+        )
+        .bind(&exit_time)
+        .bind(pnl_sol)
+        .bind(signature)
+        .bind(trade_id)
+        .execute(pool)
+        .await?;
+        
+        info!("📝 Trade {} chiuso | PnL: {:+.4} SOL ({:+.1}%)", trade_id, pnl_sol, pnl_pct);
+    } else {
+        // Se non troviamo un trade aperto, registriamo comunque come nuovo record
+        sqlx::query(
+            "INSERT INTO trades (user_id, token_address, tx_signature, amount_in_lamports, status, exit_time, profit_loss_sol) 
+             VALUES (?, ?, ?, 0, 'SOLD', ?, 0)"
+        )
+        .bind(user_id)
+        .bind(token_addr)
+        .bind(signature)
+        .bind(&exit_time)
+        .execute(pool)
+        .await?;
+    }
+    
+    Ok(())
+}
+
 /// Registra un prelievo PRIMA di inviarlo (Crash Protection)
 pub async fn record_withdrawal_request(pool: &SqlitePool, tg_id: &str, amount: u64, dest: &str) -> Result<i64, sqlx::Error> {
     let id = sqlx::query("INSERT INTO withdrawals (user_id, amount_lamports, destination) VALUES (?, ?, ?)")

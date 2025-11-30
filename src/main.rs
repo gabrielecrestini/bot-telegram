@@ -24,16 +24,24 @@ pub mod safety;
 pub mod strategy;
 pub mod api;
 pub mod jupiter;
+pub mod engine;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// WATCHLIST - Token monitorati per segnali
+// ═══════════════════════════════════════════════════════════════════════════════
 const WATCHLIST: &[&str] = &[
     "So11111111111111111111111111111111111111112", 
-    "JUPyiwrYJFskUPiHa7hkeR8VUtkCw785HvjeyzmEgGz",
+    "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz",
     "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", 
     "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", 
     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
-    "HZ1JovNiVvGrGNiiYv3XW5KKge5Wbtf2dqsfYfFq5pump", 
+    "HZ1JovNiVvGrGNiiYvv3XW5KKge5Wbtf2dqsfYfFq5pump", 
     "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn", 
 ];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DATA STRUCTURES
+// ═══════════════════════════════════════════════════════════════════════════════
 
 #[derive(Clone, serde::Serialize)]
 pub struct GemData {
@@ -52,71 +60,77 @@ pub struct GemData {
     pub source: String, 
 }
 
-// STATO CONDIVISO AGGIORNATO
+// ═══════════════════════════════════════════════════════════════════════════════
+// APP STATE - Stato condiviso dell'applicazione
+// ═══════════════════════════════════════════════════════════════════════════════
+
 pub struct AppState {
     pub found_gems: Mutex<Vec<GemData>>,
     pub math_signals: Mutex<Vec<api::SignalData>>,
-    // Cache per evitare doppi acquisti (User -> Token -> Timestamp)
     pub buy_cooldowns: Mutex<HashMap<String, HashMap<String, i64>>>, 
-    // Cache per evitare doppi processamenti Sniper
     pub processed_sigs: Mutex<HashSet<String>>,
+    // Nuovi per AMMS
+    pub market_data: Mutex<HashMap<String, strategy::MarketData>>,
+    pub open_positions: Mutex<HashMap<String, Vec<engine::OpenPosition>>>, // user_id -> positions
+    pub portfolio_stats: Mutex<HashMap<String, engine::PortfolioStats>>,   // user_id -> stats
 }
 
-// --- HELPER: CONTROLLO COOLDOWN ---
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
 fn check_and_set_cooldown(state: &Arc<AppState>, user_id: &str, token: &str) -> bool {
     let mut cache = state.buy_cooldowns.lock().unwrap();
     let user_cache = cache.entry(user_id.to_string()).or_insert_with(HashMap::new);
     let now = chrono::Utc::now().timestamp();
 
     if let Some(last_buy) = user_cache.get(token) {
-        // Se comprato meno di 10 minuti fa (600s), BLOCCA
-        if now - last_buy < 600 {
-            return false; // Bloccato
+        if now - last_buy < 600 { // 10 min cooldown
+            return false;
         }
     }
     
-    // Aggiorna timestamp e permetti
     user_cache.insert(token.to_string(), now);
     true
 }
 
-// --- HELPER: CONTROLLO DUPLICATI SNIPER ---
 fn is_new_signature(state: &Arc<AppState>, sig: &str) -> bool {
     let mut cache = state.processed_sigs.lock().unwrap();
     if cache.contains(sig) { return false; }
     cache.insert(sig.to_string());
-    // Pulizia periodica semplice: se supera 10k elementi, svuota (per non esplodere RAM)
     if cache.len() > 10000 { cache.clear(); }
     true
 }
 
-// --- SMART AUTO-BUY (Sicuro) ---
-async fn execute_smart_auto_buy(
+// ═══════════════════════════════════════════════════════════════════════════════
+// AMMS AUTO-BUY - Buy con analisi AMMS completa
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async fn execute_amms_auto_buy(
     pool: &sqlx::SqlitePool,
     net: &Arc<network::NetworkClient>,
     state: &Arc<AppState>,
-    token_mint: &Pubkey
+    token_mint: &Pubkey,
+    external_data: Option<&strategy::ExternalData>,
 ) {
     let users = sqlx::query("SELECT tg_id FROM users WHERE is_active = 1").fetch_all(pool).await;
     if let Ok(rows) = users {
         if rows.is_empty() { return; }
         
         let mint_str = token_mint.to_string();
-        info!("🤖 AUTO-BUY CHECK: {} utenti potenziali per {}", rows.len(), mint_str);
+        info!("🤖 AMMS AUTO-BUY CHECK: {} utenti per {}", rows.len(), &mint_str[..8]);
 
-        // Fetch Pool Keys UNA volta sola
-        let pool_keys_res = raydium::fetch_pool_keys_by_mint(net, token_mint).await;
-        let pool_keys = match pool_keys_res {
-            Ok(k) => k,
-            Err(_) => return, // Se non c'è pool, inutile provare
+        // Fetch Pool Keys UNA volta
+        let pool_keys = match raydium::fetch_pool_keys_by_mint(net, token_mint).await {
+            Ok(k) => Some(k),
+            Err(_) => None,
         };
 
         for row in rows {
             let uid: String = row.get("tg_id");
 
-            // 1. CHECK COOLDOWN (Anti-Loop)
+            // 1. CHECK COOLDOWN
             if !check_and_set_cooldown(state, &uid, &mint_str) {
-                debug!("🚫 Auto-Buy saltato per {} su {}: Cooldown attivo.", uid, mint_str);
                 continue;
             }
 
@@ -125,46 +139,91 @@ async fn execute_smart_auto_buy(
             let token_c = mint_str.clone();
             let keys_c = pool_keys.clone();
             let mint_key = *token_mint;
+            let state_c = state.clone();
+            let ext_data = external_data.cloned();
 
             tokio::spawn(async move {
                 if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool_c, &uid).await {
-                    
-                    // 2. CHECK SALDO & RISK MANAGEMENT
                     let bal = net_c.get_balance_fast(&payer.pubkey()).await;
                     let bal_sol = bal as f64 / 1_000_000_000.0;
                     
-                    // Non comprare se saldo < 0.05 SOL (riserva gas)
-                    if bal_sol < 0.05 { return; }
+                    if bal_sol < 0.02 { return; } // Riserva minima
 
-                    let mut amt_sol = crate::strategy::calculate_investment_amount(bal_sol);
+                    // Calcola ATR se abbiamo market data
+                    let atr_pct = if let Ok(mkt_data) = state_c.market_data.lock() {
+                        mkt_data.get(&token_c)
+                            .and_then(|d| strategy::analyze_market_full(d))
+                            .map(|a| (a.atr / ext_data.as_ref().map(|e| e.price).unwrap_or(1.0)) * 100.0)
+                    } else { None };
+
+                    let mut amt_sol = strategy::calculate_investment_amount(bal_sol, atr_pct);
                     
-                    // TETTO MASSIMO DI SICUREZZA (Max 0.5 SOL per auto-trade)
-                    if amt_sol > 0.5 { amt_sol = 0.5; }
+                    // Tetto sicurezza auto-trade
+                    amt_sol = amt_sol.min(0.5);
                     
                     let amt_lam = (amt_sol * 1_000_000_000.0) as u64;
 
                     if amt_lam > 0 {
-                        // 3. JUPITER FIRST
                         let input = "So11111111111111111111111111111111111111112";
                         let mut success = false;
+                        let mut entry_price = 0.0;
+                        let mut tx_sig = String::new();
 
-                        if let Ok(mut tx) = jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), input, &token_c, amt_lam, 100).await { // 1% Slippage Jupiter
-                             let bh = net_c.rpc.get_latest_blockhash().await.unwrap();
-                             tx.sign(&[&payer], bh);
-                             if let Ok(sig) = net_c.rpc.send_transaction(&tx).await {
-                                 info!("✅ BUY JUPITER ({}) -> TX: {}", uid, sig);
-                                 let _ = db::record_buy(&pool_c, &uid, &token_c, &sig.to_string(), amt_lam).await;
-                                 success = true;
-                             }
+                        // JUPITER FIRST
+                        if let Ok(mut tx) = jupiter::get_jupiter_swap_tx(
+                            &payer.pubkey().to_string(), 
+                            input, 
+                            &token_c, 
+                            amt_lam, 
+                            100
+                        ).await {
+                            let bh = net_c.rpc.get_latest_blockhash().await.unwrap();
+                            tx.sign(&[&payer], bh);
+                            if let Ok(sig) = net_c.rpc.send_transaction(&tx).await {
+                                info!("✅ AMMS BUY JUPITER ({}) -> TX: {}", uid, sig);
+                                let _ = db::record_buy(&pool_c, &uid, &token_c, &sig.to_string(), amt_lam).await;
+                                success = true;
+                                tx_sig = sig.to_string();
+                                entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
+                            }
                         }
 
-                        // 4. RAYDIUM FALLBACK (Con Slippage 2%)
+                        // RAYDIUM FALLBACK
                         if !success {
-                             // Usa slippage 2% (200 bps) invece di 0
-                             if let Ok(sig) = raydium::execute_swap(&net_c, &payer, &keys_c, mint_key, amt_lam, 200).await {
-                                 info!("⚡ BUY RAYDIUM ({}) -> TX: {}", uid, sig);
-                                 let _ = db::record_buy(&pool_c, &uid, &token_c, &sig, amt_lam).await;
-                             }
+                            if let Some(keys) = keys_c {
+                                if let Ok(sig) = raydium::execute_swap(&net_c, &payer, &keys, mint_key, amt_lam, 200).await {
+                                    info!("⚡ AMMS BUY RAYDIUM ({}) -> TX: {}", uid, sig);
+                                    let _ = db::record_buy(&pool_c, &uid, &token_c, &sig, amt_lam).await;
+                                    success = true;
+                                    tx_sig = sig.clone();
+                                    entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
+                                }
+                            }
+                        }
+
+                        // Registra posizione per tracking AMMS
+                        if success && entry_price > 0.0 {
+                            let atr = if let Ok(mkt_data) = state_c.market_data.lock() {
+                                mkt_data.get(&token_c)
+                                    .and_then(|d| strategy::analyze_market_full(d))
+                                    .map(|a| a.atr)
+                                    .unwrap_or(entry_price * 0.03)
+                            } else { entry_price * 0.03 };
+                            
+                            if let Ok(mut positions) = state_c.open_positions.lock() {
+                                let user_positions = positions.entry(uid.clone()).or_insert_with(Vec::new);
+                                let pos = engine::OpenPosition::new(
+                                    chrono::Utc::now().timestamp(),
+                                    &token_c,
+                                    entry_price,
+                                    atr,
+                                    amt_sol,
+                                    amt_lam,
+                                );
+                                user_positions.push(pos);
+                                info!("📊 Posizione registrata per {} | SL: ${:.8} | TP: ${:.8}", 
+                                    uid, entry_price - (1.5 * atr), entry_price + (2.0 * atr));
+                            }
                         }
                     }
                 }
@@ -173,51 +232,247 @@ async fn execute_smart_auto_buy(
     }
 }
 
-// --- MARKET STRATEGY (Filtrato) ---
-async fn run_market_strategy(net: Arc<network::NetworkClient>, state: Arc<AppState>, pool: sqlx::SqlitePool) {
-    let mut history: std::collections::HashMap<String, strategy::MarketData> = std::collections::HashMap::new();
+// ═══════════════════════════════════════════════════════════════════════════════
+// POSITION MANAGER - Gestisce posizioni con trailing stop ATR
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async fn run_position_manager(
+    pool: sqlx::SqlitePool, 
+    net: Arc<network::NetworkClient>,
+    state: Arc<AppState>
+) {
+    info!("📊 AMMS Position Manager avviato");
     
     loop {
-        for token in WATCHLIST {
-            // 1. Check Dati Mercato Completi
-            if let Ok(mkt) = jupiter::get_token_market_data(token).await {
-                 
-                 // FILTRO LIQUIDITÀ E VOLUME (Anti-Rumore)
-                 // Ignora se Liquidità < 10k o Volume 24h < 50k
-                 if mkt.liquidity_usd < 10000.0 || mkt.volume_24h < 50000.0 { continue; }
-
-                 let data = history.entry(token.to_string()).or_insert_with(|| strategy::MarketData::new(&mkt.symbol));
-                 data.add_tick(mkt.price, mkt.volume_24h); // Usa add_tick con volume
-
-                 // Analisi
-                 let action = strategy::analyze_market(data, 1.0); 
-                 if let strategy::TradeAction::Buy { amount_sol: _, reason } = action {
-                     info!("📈 SEGNALE VALIDO: {} - {}", mkt.symbol, reason);
-                     
-                     if let Ok(mut s) = state.math_signals.lock() {
-                         if !s.iter().any(|x| x.token == *token && (chrono::Utc::now().timestamp() - x.timestamp) < 300) {
-                             s.insert(0, api::SignalData { token: token.to_string(), price: mkt.price, score: 90, reason: reason.clone(), timestamp: chrono::Utc::now().timestamp() });
-                             if s.len() > 20 { s.pop(); }
-                         }
-                     }
-                     
-                     // Esegui Auto-Buy (che ora ha il check cooldown)
-                     let p = pool.clone(); let n = net.clone(); let s = state.clone(); let m = Pubkey::from_str(token).unwrap();
-                     tokio::spawn(async move { execute_smart_auto_buy(&p, &n, &s, &m).await; });
-                 }
+        // Raccogli posizioni da processare (senza tenere lock)
+        let positions_snapshot: Vec<(String, Vec<engine::OpenPosition>)> = {
+            if let Ok(positions) = state.open_positions.lock() {
+                positions.iter()
+                    .map(|(uid, pos)| (uid.clone(), pos.clone()))
+                    .collect()
+            } else { Vec::new() }
+        };
+        
+        for (user_id, user_positions) in positions_snapshot {
+            for pos in &user_positions {
+                // Ottieni prezzo corrente
+                let current_price = match jupiter::get_token_market_data(&pos.token_address).await {
+                    Ok(mkt) => mkt.price,
+                    Err(_) => continue,
+                };
+                
+                // Calcola ATR corrente
+                let current_atr = if let Ok(mkt_data) = state.market_data.lock() {
+                    mkt_data.get(&pos.token_address)
+                        .and_then(|d| strategy::analyze_market_full(d))
+                        .map(|a| a.atr)
+                        .unwrap_or(pos.entry_atr)
+                } else { pos.entry_atr };
+                
+                // Clona posizione per update
+                let mut pos_updated = pos.clone();
+                let action = pos_updated.update(current_price, current_atr);
+                
+                match action {
+                    engine::PositionAction::Sell { reason, pnl_pct } => {
+                        info!("🔔 SELL SIGNAL [{}]: {} | {}", user_id, &pos.token_address[..8], reason);
+                        
+                        // Esegui vendita
+                        if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
+                            if let Ok(mint) = Pubkey::from_str(&pos.token_address) {
+                                // Tenta Jupiter sell
+                                let output = "So11111111111111111111111111111111111111112";
+                                let sell_amount = pos.amount_lamports;
+                                
+                                match jupiter::get_jupiter_swap_tx(
+                                    &payer.pubkey().to_string(),
+                                    &pos.token_address,
+                                    output,
+                                    sell_amount,
+                                    200 // 2% slippage per sell
+                                ).await {
+                                    Ok(mut tx) => {
+                                        let bh = net.rpc.get_latest_blockhash().await.unwrap();
+                                        tx.sign(&[&payer], bh);
+                                        if let Ok(sig) = net.rpc.send_transaction(&tx).await {
+                                            info!("✅ AMMS SELL [{}] {} | PnL: {:+.1}% | TX: {}", 
+                                                user_id, &pos.token_address[..8], pnl_pct, sig);
+                                            
+                                            // Registra nel DB
+                                            let _ = db::record_sell(&pool, &user_id, &pos.token_address, &sig.to_string(), pnl_pct).await;
+                                            
+                                            // Update stats
+                                            let hold_time = (chrono::Utc::now().timestamp() - pos.entry_time) as f64 / 60.0;
+                                            let pnl_sol = pos.amount_sol * (pnl_pct / 100.0);
+                                            
+                                            if let Ok(mut stats) = state.portfolio_stats.lock() {
+                                                let user_stats = stats.entry(user_id.clone()).or_default();
+                                                user_stats.record_trade(pnl_pct, pnl_sol, hold_time);
+                                            }
+                                            
+                                            // Rimuovi posizione
+                                            if let Ok(mut positions) = state.open_positions.lock() {
+                                                if let Some(user_pos) = positions.get_mut(&user_id) {
+                                                    user_pos.retain(|p| p.id != pos.id);
+                                                }
+                                            }
+                                            
+                                            // REINVESTIMENTO AUTOMATICO
+                                            let new_balance = net.get_balance_fast(&payer.pubkey()).await as f64 / 1_000_000_000.0;
+                                            if new_balance > 0.02 {
+                                                let stats_clone = if let Ok(stats) = state.portfolio_stats.lock() {
+                                                    stats.get(&user_id).cloned().unwrap_or_default()
+                                                } else { engine::PortfolioStats::default() };
+                                                
+                                                let (reinvest_amt, strategy_desc) = engine::calculate_reinvestment(
+                                                    new_balance, pnl_pct, &stats_clone
+                                                );
+                                                
+                                                info!("♻️ REINVEST [{}]: {} - {:.4} SOL", user_id, strategy_desc, reinvest_amt);
+                                                // Il prossimo ciclo market_strategy gestirà il reinvestimento
+                                            }
+                                        }
+                                    },
+                                    Err(e) => warn!("❌ Sell fallito per {}: {}", user_id, e),
+                                }
+                            }
+                        }
+                    },
+                    engine::PositionAction::Hold => {
+                        // Aggiorna posizione in state
+                        if let Ok(mut positions) = state.open_positions.lock() {
+                            if let Some(user_pos) = positions.get_mut(&user_id) {
+                                if let Some(p) = user_pos.iter_mut().find(|p| p.id == pos.id) {
+                                    *p = pos_updated;
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            sleep(Duration::from_millis(500)).await;
         }
         
-        if history.len() > 50 { history.clear(); }
-        sleep(Duration::from_secs(30)).await;
+        sleep(Duration::from_secs(5)).await;
     }
 }
 
-// --- SNIPER LISTENER (Anti-Rug e Anti-Doppioni) ---
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARKET STRATEGY - Analisi AMMS per segnali di entrata
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async fn run_market_strategy(net: Arc<network::NetworkClient>, state: Arc<AppState>, pool: sqlx::SqlitePool) {
+    info!("📊 AMMS Market Strategy avviato");
+    
+    loop {
+        // Include anche gemme trovate nella watchlist
+        let tokens_to_check: Vec<String> = {
+            let mut tokens: Vec<String> = WATCHLIST.iter().map(|s| s.to_string()).collect();
+            
+            if let Ok(gems) = state.found_gems.lock() {
+                for gem in gems.iter().take(10) { // Top 10 gems
+                    if !tokens.contains(&gem.token) {
+                        tokens.push(gem.token.clone());
+                    }
+                }
+            }
+            tokens
+        };
+        
+        for token in &tokens_to_check {
+            // Fetch dati mercato
+            if let Ok(mkt) = jupiter::get_token_market_data(token).await {
+                // FILTRO QUALITÀ
+                if mkt.liquidity_usd < 10000.0 || mkt.volume_24h < 50000.0 { continue; }
+
+                // Aggiorna market data
+                {
+                    let mut data_map = state.market_data.lock().unwrap();
+                    let data = data_map.entry(token.clone())
+                        .or_insert_with(|| strategy::MarketData::new(&mkt.symbol));
+                    data.add_tick(mkt.price, mkt.volume_24h);
+                }
+                
+                // Analisi AMMS
+                let analysis = {
+                    let data_map = state.market_data.lock().unwrap();
+                    data_map.get(token).and_then(|d| strategy::analyze_market_full(d))
+                };
+                
+                if let Some(analysis) = analysis {
+                    let external = strategy::ExternalData {
+                        price: mkt.price,
+                        change_5m: mkt.change_1h / 12.0, // Stima 5m da 1h
+                        change_1h: mkt.change_1h,
+                        change_24h: mkt.change_24h,
+                        volume_24h: mkt.volume_24h,
+                        liquidity_usd: mkt.liquidity_usd,
+                        market_cap: mkt.market_cap,
+                    };
+                    
+                    let (should_buy, reason) = strategy::check_entry_conditions(&analysis, &external);
+                    
+                    if should_buy {
+                        info!("📈 AMMS SEGNALE: {} - {}", mkt.symbol, reason);
+                        
+                        // Salva segnale
+                        if let Ok(mut signals) = state.math_signals.lock() {
+                            let already_exists = signals.iter()
+                                .any(|x| x.token == *token && (chrono::Utc::now().timestamp() - x.timestamp) < 300);
+                            
+                            if !already_exists {
+                                signals.insert(0, api::SignalData { 
+                                    token: token.clone(), 
+                                    price: mkt.price, 
+                                    score: 90, 
+                                    reason: reason.clone(), 
+                                    timestamp: chrono::Utc::now().timestamp() 
+                                });
+                                if signals.len() > 20 { signals.pop(); }
+                            }
+                        }
+                        
+                        // Auto-Buy
+                        if let Ok(pk) = Pubkey::from_str(token) {
+                            let p = pool.clone();
+                            let n = net.clone();
+                            let s = state.clone();
+                            let ext = external.clone();
+                            
+                            tokio::spawn(async move {
+                                execute_amms_auto_buy(&p, &n, &s, &pk, Some(&ext)).await;
+                            });
+                        }
+                    }
+                }
+            }
+            
+            sleep(Duration::from_millis(300)).await;
+        }
+        
+        // Pulizia cache periodica
+        {
+            let mut data_map = state.market_data.lock().unwrap();
+            if data_map.len() > 100 {
+                let tokens_to_remove: Vec<String> = data_map.keys()
+                    .filter(|k| !tokens_to_check.contains(k))
+                    .take(50)
+                    .cloned()
+                    .collect();
+                for k in tokens_to_remove { data_map.remove(&k); }
+            }
+        }
+        
+        sleep(Duration::from_secs(20)).await;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SNIPER LISTENER - Snipa nuovi token con verifiche di sicurezza
+// ═══════════════════════════════════════════════════════════════════════════════
+
 async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppState>, pool: sqlx::SqlitePool) {
     let raydium_id = Pubkey::from_str(crate::raydium::RAYDIUM_V4_PROGRAM_ID).unwrap();
-    let mut ws_client = net.clone();
+    let ws_client = net.clone();
 
     loop {
         match ws_client.pubsub.logs_subscribe(
@@ -225,42 +480,55 @@ async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppSta
              RpcTransactionLogsConfig { commitment: Some(CommitmentConfig::processed()) }
         ).await {
             Ok((mut stream, _)) => {
-                info!("✅ Sniper Attivo.");
+                info!("✅ AMMS Sniper Attivo.");
                 while let Some(log) = stream.next().await {
                     if log.value.logs.iter().any(|l| l.contains("initialize2")) {
                         let sig_str = log.value.signature;
                         
-                        // 1. CHECK DUPLICATI
                         if !is_new_signature(&state, &sig_str) { continue; }
 
-                        let n_an = net.clone(); let s_an = state.clone(); let p_an = pool.clone();
+                        let n_an = net.clone();
+                        let s_an = state.clone();
+                        let p_an = pool.clone();
                         
                         tokio::spawn(async move {
                             if let Ok(sig) = solana_sdk::signature::Signature::from_str(&sig_str) {
-                                if let Ok(tx) = n_an.rpc.get_transaction_with_config(&sig, RpcTransactionConfig { encoding: Some(UiTransactionEncoding::Json), commitment: Some(CommitmentConfig::confirmed()), max_supported_transaction_version: Some(0) }).await {
+                                if let Ok(tx) = n_an.rpc.get_transaction_with_config(
+                                    &sig, 
+                                    RpcTransactionConfig { 
+                                        encoding: Some(UiTransactionEncoding::Json), 
+                                        commitment: Some(CommitmentConfig::confirmed()), 
+                                        max_supported_transaction_version: Some(0) 
+                                    }
+                                ).await {
                                     if let Some(meta) = tx.transaction.meta {
-                                        let balances = match meta.post_token_balances { OptionSerializer::Some(b) => b, _ => vec![] };
+                                        let balances = match meta.post_token_balances { 
+                                            OptionSerializer::Some(b) => b, 
+                                            _ => vec![] 
+                                        };
                                         let wsol = "So11111111111111111111111111111111111111112";
                                         
                                         for b in balances {
                                             let mint = b.mint;
                                             if mint != wsol && b.ui_token_amount.decimals > 0 {
                                                 if let Ok(pk) = Pubkey::from_str(&mint) {
-                                                    // 2. CHECK SAFETY + ANTI-HONEYPOT (Simulazione)
-                                                    // Qui chiameremo la nuova safety::full_check
+                                                    // Safety check
                                                     if let Ok(rep) = safety::check_token_safety(&n_an, &pk).await {
                                                         if rep.is_safe {
                                                             sleep(Duration::from_secs(2)).await;
                                                             if let Ok(mkt) = jupiter::get_token_market_data(&mint).await {
-                                                                // 3. FILTRO QUALITÀ RIGIDO
+                                                                // Filtro qualità
                                                                 if mkt.liquidity_usd > 5000.0 && mkt.price > 0.0 {
-                                                                    info!("💎 GEMMA NUOVA: {} (${:.6}) Liq: ${:.0} Score: {}", mkt.symbol, mkt.price, mkt.liquidity_usd, mkt.score);
+                                                                    info!("💎 SNIPER HIT: {} (${:.8}) Liq: ${:.0}", 
+                                                                        mkt.symbol, mkt.price, mkt.liquidity_usd);
                                                                     
-                                                                    if let Ok(mut g) = s_an.found_gems.lock() {
+                                                                    // Aggiungi a gems
+                                                                    {
+                                                                        let mut g = s_an.found_gems.lock().unwrap();
                                                                         g.insert(0, GemData { 
                                                                             token: mint.clone(), 
                                                                             symbol: mkt.symbol.clone(), 
-                                                                            name: mkt.name,
+                                                                            name: mkt.name.clone(),
                                                                             price: mkt.price, 
                                                                             safety_score: mkt.score, 
                                                                             liquidity_usd: mkt.liquidity_usd,
@@ -268,16 +536,26 @@ async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppSta
                                                                             volume_24h: mkt.volume_24h,
                                                                             change_1h: mkt.change_1h,
                                                                             change_24h: mkt.change_24h,
-                                                                            image_url: mkt.image_url,
+                                                                            image_url: mkt.image_url.clone(),
                                                                             timestamp: chrono::Utc::now().timestamp(), 
                                                                             source: "SNIPER".into() 
                                                                         });
-                                                                        // Ordina per score decrescente
                                                                         g.sort_by(|a, b| b.safety_score.cmp(&a.safety_score));
                                                                         if g.len() > 30 { g.pop(); }
                                                                     }
                                                                     
-                                                                    execute_smart_auto_buy(&p_an, &n_an, &s_an, &pk).await;
+                                                                    // Auto buy con dati esterni
+                                                                    let ext = strategy::ExternalData {
+                                                                        price: mkt.price,
+                                                                        change_5m: 5.0, // Nuovo = pump
+                                                                        change_1h: mkt.change_1h,
+                                                                        change_24h: mkt.change_24h,
+                                                                        volume_24h: mkt.volume_24h,
+                                                                        liquidity_usd: mkt.liquidity_usd,
+                                                                        market_cap: mkt.market_cap,
+                                                                    };
+                                                                    
+                                                                    execute_amms_auto_buy(&p_an, &n_an, &s_an, &pk, Some(&ext)).await;
                                                                 }
                                                             }
                                                         }
@@ -293,38 +571,37 @@ async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppSta
                     }
                 }
             },
-            Err(_) => sleep(Duration::from_secs(5)).await
+            Err(e) => {
+                warn!("⚠️ Sniper WS error: {}", e);
+                sleep(Duration::from_secs(5)).await;
+            }
         }
     }
 }
 
-async fn monitor_open_positions(pool: &sqlx::SqlitePool, net: &Arc<network::NetworkClient>) {
-    // ... (Codice identico a prima, ma assicurati di chiamare execute_sell se serve)
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+// GEM DISCOVERY - Trova token promettenti
+// ═══════════════════════════════════════════════════════════════════════════════
 
-// --- GEM DISCOVERY (Trova token promettenti) ---
 async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient>) {
-    info!("💎 Gem Discovery Task avviato");
+    info!("💎 AMMS Gem Discovery avviato");
     
     let mut cycle = 0u32;
     
     loop {
         let mut all_gems: Vec<GemData> = Vec::new();
         
-        // ═══════════════════════════════════════════════════════════════
-        // PARTE 1: ALTCOIN AFFERMATE (ogni ciclo)
-        // Token con alta capitalizzazione e storico
-        // ═══════════════════════════════════════════════════════════════
+        // PARTE 1: ALTCOIN AFFERMATE
         match jupiter::find_profitable_altcoins().await {
             Ok(altcoins) => {
-                info!("📊 Trovate {} altcoin affermate con momentum", altcoins.len());
+                debug!("📊 {} altcoin affermate trovate", altcoins.len());
                 for coin in altcoins {
                     all_gems.push(GemData {
                         token: coin.address.clone(),
                         symbol: coin.symbol.clone(),
                         name: coin.name.clone(),
                         price: coin.price,
-                        safety_score: coin.score.max(70), // Altcoin affermate hanno score minimo 70
+                        safety_score: coin.score.max(70),
                         liquidity_usd: coin.liquidity_usd,
                         market_cap: coin.market_cap,
                         volume_24h: coin.volume_24h,
@@ -336,24 +613,19 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
                     });
                 }
             },
-            Err(e) => warn!("⚠️ Errore recupero altcoin: {}", e),
+            Err(e) => debug!("⚠️ Altcoin fetch: {}", e),
         }
         
-        // ═══════════════════════════════════════════════════════════════
-        // PARTE 2: NUOVE GEMME (ogni 3 cicli per non sovraccaricare)
-        // Token nuovi/emergenti con potenziale
-        // ═══════════════════════════════════════════════════════════════
+        // PARTE 2: NUOVE GEMME (ogni 3 cicli)
         if cycle % 3 == 0 {
             match jupiter::discover_trending_gems().await {
                 Ok(gems) => {
-                    info!("💎 Scoperte {} nuove gemme emergenti", gems.len());
+                    debug!("💎 {} nuove gemme trovate", gems.len());
                     
                     for gem in gems {
-                        // Verifica sicurezza per i token nuovi
                         if let Ok(pk) = Pubkey::from_str(&gem.address) {
                             if let Ok(report) = safety::check_token_safety(&net, &pk).await {
                                 if report.is_safe && gem.score >= 45 {
-                                    // Evita duplicati
                                     if !all_gems.iter().any(|g| g.token == gem.address) {
                                         all_gems.push(GemData {
                                             token: gem.address.clone(),
@@ -376,56 +648,50 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
                         }
                     }
                 },
-                Err(e) => warn!("⚠️ Errore gem discovery: {}", e),
+                Err(e) => debug!("⚠️ Gem discovery: {}", e),
             }
         }
         
-        // ═══════════════════════════════════════════════════════════════
         // AGGIORNA STATO
-        // Ordina per: 1) Market Cap (altcoin prime), 2) Score
-        // ═══════════════════════════════════════════════════════════════
         if !all_gems.is_empty() {
-            // Ordina: prima per market cap (alto), poi per score
             all_gems.sort_by(|a, b| {
-                // Priorità: market cap > $10M in cima
                 let a_priority = if a.market_cap > 10_000_000.0 { 1 } else { 0 };
                 let b_priority = if b.market_cap > 10_000_000.0 { 1 } else { 0 };
                 
                 match b_priority.cmp(&a_priority) {
-                    std::cmp::Ordering::Equal => {
-                        // Se stesso tier, ordina per score
-                        b.safety_score.cmp(&a.safety_score)
-                    },
+                    std::cmp::Ordering::Equal => b.safety_score.cmp(&a.safety_score),
                     other => other
                 }
             });
             
-            // Limita e aggiorna state
             all_gems.truncate(25);
             
             let mut found = state.found_gems.lock().unwrap();
             *found = all_gems;
-            
-            info!("✅ Lista gemme aggiornata: {} token (altcoin + nuove)", found.len());
         }
         
         cycle = cycle.wrapping_add(1);
-        
-        // Scansiona ogni 45 secondi
         sleep(Duration::from_secs(45)).await;
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN - Entry point
+// ═══════════════════════════════════════════════════════════════════════════════
 
 #[tokio::main]
 async fn main() {
     dotenv().ok();
     if env::var("RUST_LOG").is_err() { env::set_var("RUST_LOG", "info"); }
     env_logger::init();
-    info!("🚀 GOD SNIPER: Ultimate Safe Engine Avviato.");
+    
+    info!("═══════════════════════════════════════════════════════════════");
+    info!("  🚀 GOD SNIPER - AMMS (Adaptive Multi-Phase Momentum Strategy)");
+    info!("═══════════════════════════════════════════════════════════════");
 
-    let _master = env::var("MASTER_KEY").expect("Manca KEY");
-    let _rpc = env::var("RPC_URL").expect("Manca RPC");
-    let _db = env::var("DATABASE_URL").expect("Manca DB");
+    let _master = env::var("MASTER_KEY").expect("Manca MASTER_KEY");
+    let _rpc = env::var("RPC_URL").expect("Manca RPC_URL");
+    let _db = env::var("DATABASE_URL").expect("Manca DATABASE_URL");
 
     let pool = db::connect().await;
     let net = Arc::new(network::init_clients().await);
@@ -433,31 +699,55 @@ async fn main() {
     let state = Arc::new(AppState { 
         found_gems: Mutex::new(Vec::new()), 
         math_signals: Mutex::new(Vec::new()),
-        buy_cooldowns: Mutex::new(HashMap::new()), // Nuovo
-        processed_sigs: Mutex::new(HashSet::new()), // Nuovo
+        buy_cooldowns: Mutex::new(HashMap::new()),
+        processed_sigs: Mutex::new(HashSet::new()),
+        market_data: Mutex::new(HashMap::new()),
+        open_positions: Mutex::new(HashMap::new()),
+        portfolio_stats: Mutex::new(HashMap::new()),
     });
 
-    let p1=pool.clone(); let n1=net.clone();
+    // Telegram Bot
+    let p1 = pool.clone();
+    let n1 = net.clone();
     tokio::spawn(async move { telegram_bot::start_bot(p1, n1).await; });
 
-    let p2=pool.clone(); let n2=net.clone(); let s2=state.clone();
+    // API Server
+    let p2 = pool.clone();
+    let n2 = net.clone();
+    let s2 = state.clone();
     tokio::spawn(async move { api::start_server(p2, n2, s2).await; });
 
-    let p3=pool.clone(); let n3=net.clone(); let s3=state.clone();
+    // AMMS Market Strategy
+    let p3 = pool.clone();
+    let n3 = net.clone();
+    let s3 = state.clone();
     tokio::spawn(async move { run_market_strategy(n3, s3, p3).await; });
 
-    let p4=pool.clone(); let n4=net.clone(); let s4=state.clone();
-    tokio::spawn(async move { run_sniper_listener(n4, s4, p4).await; });
+    // AMMS Position Manager (trailing stop)
+    let p4 = pool.clone();
+    let n4 = net.clone();
+    let s4 = state.clone();
+    tokio::spawn(async move { run_position_manager(p4, n4, s4).await; });
 
-    // Gem Discovery Task - Scansiona il mercato per token promettenti
-    let n5=net.clone(); let s5=state.clone();
-    tokio::spawn(async move { run_gem_discovery(s5, n5).await; });
+    // Sniper Listener
+    let p5 = pool.clone();
+    let n5 = net.clone();
+    let s5 = state.clone();
+    tokio::spawn(async move { run_sniper_listener(n5, s5, p5).await; });
 
-    // let p6=pool.clone(); let n6=net.clone();
-    // tokio::spawn(async move { run_position_manager(p6, n6).await; }); // Attiva se hai il modulo completo
+    // Gem Discovery
+    let n6 = net.clone();
+    let s6 = state.clone();
+    tokio::spawn(async move { run_gem_discovery(s6, n6).await; });
+
+    info!("✅ Tutti i moduli AMMS avviati");
+    info!("   • Market Strategy: EMA, RSI, ATR, Bollinger");
+    info!("   • Position Manager: Trailing Stop ATR-based");
+    info!("   • Auto-Reinvestment: Wealth-adaptive");
+    info!("   • Sniper: Anti-rug, Anti-honeypot");
 
     match tokio::signal::ctrl_c().await {
-        Ok(()) => info!("🛑 Chiusura sicura."),
+        Ok(()) => info!("🛑 Chiusura sicura..."),
         Err(_) => {}
     }
     pool.close().await;
