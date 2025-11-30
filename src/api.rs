@@ -7,8 +7,11 @@ use solana_sdk::pubkey::Pubkey;
 use solana_sdk::system_instruction;
 use solana_sdk::transaction::Transaction;
 use solana_sdk::signer::Signer;
+use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use std::str::FromStr;
 use log::{info, error};
+
+const SOLSCAN_TX_URL: &str = "https://solscan.io/tx/";
 
 // --- DATI ---
 #[derive(Serialize, Clone)]
@@ -49,6 +52,8 @@ struct ApiResponse {
     success: bool,
     message: String,
     tx_signature: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    solscan_url: Option<String>,
 }
 
 // --- SERVER ---
@@ -141,6 +146,7 @@ async fn handle_trade(
                 success: false,
                 message: "Wallet Error".into(),
                 tx_signature: "".into(),
+                solscan_url: None,
             }));
         }
     };
@@ -154,6 +160,7 @@ async fn handle_trade(
                 success: false,
                 message: "Fondi Insufficienti".into(),
                 tx_signature: "".into(),
+                solscan_url: None,
             }));
         }
 
@@ -164,11 +171,13 @@ async fn handle_trade(
                 if let Ok(bh) = net.rpc.get_latest_blockhash().await {
                     tx.sign(&[&payer], bh);
                     if let Ok(sig) = net.rpc.send_transaction(&tx).await {
-                        let _ = db::record_buy(&pool, user_id, &req.token, &sig.to_string(), amount_lamports).await;
+                        let sig_str = sig.to_string();
+                        let _ = db::record_buy(&pool, user_id, &req.token, &sig_str, amount_lamports).await;
                         return Ok(warp::reply::json(&ApiResponse {
                             success: true,
                             message: "Buy Eseguito (Jupiter)".into(),
-                            tx_signature: sig.to_string(),
+                            tx_signature: sig_str.clone(),
+                            solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig_str)),
                         }));
                     }
                 }
@@ -182,7 +191,8 @@ async fn handle_trade(
                             return Ok(warp::reply::json(&ApiResponse {
                                 success: true,
                                 message: "Buy Eseguito (Raydium)".into(),
-                                tx_signature: sig,
+                                tx_signature: sig.clone(),
+                                solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
                             }));
                         }
                     }
@@ -194,6 +204,7 @@ async fn handle_trade(
             success: false,
             message: "Funzione Sell Manuale in arrivo. Usa Jupiter DApp per vendere ora.".into(),
             tx_signature: "".into(),
+            solscan_url: None,
         }));
     }
 
@@ -201,6 +212,7 @@ async fn handle_trade(
         success: false,
         message: "Errore generico".into(),
         tx_signature: "".into(),
+        solscan_url: None,
     }))
 }
 
@@ -218,6 +230,7 @@ async fn handle_withdraw(
             success: false,
             message: "Per sicurezza, preleva solo SOL. Converti gli altri token prima.".into(),
             tx_signature: "".into(),
+            solscan_url: None,
         }));
     }
 
@@ -229,6 +242,7 @@ async fn handle_withdraw(
                     success: false,
                     message: msg,
                     tx_signature: "".into(),
+                    solscan_url: None,
                 }));
             }
         }
@@ -238,6 +252,7 @@ async fn handle_withdraw(
                 success: false,
                 message: "Errore verifica stato prelievo".into(),
                 tx_signature: "".into(),
+                solscan_url: None,
             }));
         }
     }
@@ -251,6 +266,7 @@ async fn handle_withdraw(
                 success: false,
                 message: "Errore accesso wallet".into(),
                 tx_signature: "".into(),
+                solscan_url: None,
             }));
         }
     };
@@ -264,6 +280,7 @@ async fn handle_withdraw(
             success: false,
             message: "Fondi Insufficienti (Lascia 0.005 SOL per le fee)".into(),
             tx_signature: "".into(),
+            solscan_url: None,
         }));
     }
 
@@ -275,6 +292,7 @@ async fn handle_withdraw(
                 success: false,
                 message: "Indirizzo destinazione non valido".into(),
                 tx_signature: "".into(),
+                solscan_url: None,
             }));
         }
     };
@@ -288,13 +306,21 @@ async fn handle_withdraw(
                 success: false,
                 message: "Errore registrazione prelievo".into(),
                 tx_signature: "".into(),
+                solscan_url: None,
             }));
         }
     };
     info!("📝 Prelievo registrato con ID: {}", withdrawal_id);
 
-    // 7. Prepara transazione
-    let ix = system_instruction::transfer(&payer.pubkey(), &dest, amount);
+    // 7. Prepara transazione CON PRIORITY FEES per velocità massima
+    let mut instructions = vec![
+        // Priority fee: 500k microlamports (~0.0005 SOL) per saltare la coda
+        ComputeBudgetInstruction::set_compute_unit_price(500_000),
+        ComputeBudgetInstruction::set_compute_unit_limit(50_000),
+        // Transfer effettivo
+        system_instruction::transfer(&payer.pubkey(), &dest, amount),
+    ];
+
     let bh = match net.rpc.get_latest_blockhash().await {
         Ok(hash) => hash,
         Err(e) => {
@@ -304,22 +330,25 @@ async fn handle_withdraw(
                 success: false,
                 message: "Errore rete Solana".into(),
                 tx_signature: "".into(),
+                solscan_url: None,
             }));
         }
     };
 
-    let tx = Transaction::new_signed_with_payer(&[ix], Some(&payer.pubkey()), &[&payer], bh);
+    let tx = Transaction::new_signed_with_payer(&instructions, Some(&payer.pubkey()), &[&payer], bh);
 
-    // 8. Invia transazione
-    match net.rpc.send_transaction(&tx).await {
+    // 8. Invia transazione (TPU first, poi RPC fallback)
+    match net.send_transaction_fast(&tx).await {
         Ok(sig) => {
             // ✅ Conferma prelievo con l'ID corretto
-            let _ = db::confirm_withdrawal(&pool, withdrawal_id, &sig.to_string()).await;
+            let _ = db::confirm_withdrawal(&pool, withdrawal_id, &sig).await;
+            let solscan_link = format!("{}{}", SOLSCAN_TX_URL, sig);
             info!("✅ Prelievo completato: {} (ID: {})", sig, withdrawal_id);
             Ok(warp::reply::json(&ApiResponse {
                 success: true,
-                message: "Prelievo Inviato!".into(),
-                tx_signature: sig.to_string(),
+                message: format!("Prelievo Inviato! Vedi su Solscan"),
+                tx_signature: sig,
+                solscan_url: Some(solscan_link),
             }))
         }
         Err(e) => {
@@ -330,6 +359,7 @@ async fn handle_withdraw(
                 success: false,
                 message: "Errore invio transazione".into(),
                 tx_signature: "".into(),
+                solscan_url: None,
             }))
         }
     }

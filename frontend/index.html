@@ -44,6 +44,8 @@
             transition: bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             border-top: 1px solid #333;
             box-shadow: 0 -10px 50px rgba(0,0,0,0.5);
+            max-height: 85vh;
+            overflow-y: auto;
         }
         .sheet.open { bottom: 0; }
         .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 90; display: none; backdrop-filter: blur(4px); }
@@ -57,29 +59,42 @@
         /* Toast */
         #toast { transform: translateY(-150%); transition: transform 0.3s; z-index: 200; }
         #toast.show { transform: translateY(0); }
+
+        /* Pulse animation */
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .animate-pulse { animation: pulse 2s infinite; }
+
+        /* Copy animation */
+        .copied { animation: copiedAnim 0.3s ease; }
+        @keyframes copiedAnim { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
     </style>
 </head>
 <body>
 
     <script>
         // ⚠️ CONFIGURAZIONE ⚠️
-        // Se usi Cloudflare: "https://api.domisia.it"
-        // Se usi IP diretto: "http://3.77.118.239:3000" (ma su netlify serve https)
         const API_BASE = "https://api.domisia.it"; 
+        const SOLSCAN_TX = "https://solscan.io/tx/";
+        const SOLSCAN_ADDR = "https://solscan.io/account/";
     </script>
 
+    <!-- Toast Notification -->
     <div id="toast" class="fixed top-4 left-4 right-4">
-        <div class="glass p-4 flex items-center gap-4 shadow-2xl border-l-4 border-[#FFD700]">
-            <i data-lucide="info" id="toastIcon" class="text-[#FFD700]"></i>
-            <div>
+        <div class="glass p-4 flex items-center gap-4 shadow-2xl border-l-4 border-[#FFD700]" id="toastCard">
+            <i data-lucide="info" id="toastIcon" class="text-[#FFD700] w-6 h-6"></i>
+            <div class="flex-1">
                 <h4 class="font-bold text-sm" id="toastTitle">Info</h4>
                 <p class="text-xs text-gray-400" id="toastMsg">...</p>
             </div>
+            <a id="toastLink" href="#" target="_blank" class="hidden bg-[#FFD700] text-black px-3 py-1 rounded-lg text-xs font-bold">
+                Vedi TX
+            </a>
         </div>
     </div>
 
     <div id="overlay" class="overlay" onclick="closeAll()"></div>
 
+    <!-- Header -->
     <header class="px-6 pt-8 pb-2 flex justify-between items-center sticky top-0 z-40 bg-[#050505]/90 backdrop-blur">
         <div class="flex items-center gap-3">
             <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-yellow-400 to-orange-500 flex items-center justify-center shadow-lg shadow-yellow-500/20">
@@ -93,11 +108,12 @@
                 </div>
             </div>
         </div>
-        <div class="bg-[#1E1E1E] p-2 rounded-full border border-[#333]">
-            <i data-lucide="user" class="w-5 h-5 text-gray-400"></i>
-        </div>
+        <button onclick="sync()" class="bg-[#1E1E1E] p-2 rounded-full border border-[#333] active:scale-95 transition-transform">
+            <i data-lucide="refresh-cw" class="w-5 h-5 text-gray-400"></i>
+        </button>
     </header>
 
+    <!-- Wallet Page -->
     <section id="p-wallet" class="page active px-4 pt-4">
         <div class="glass p-6 mb-6 bg-gradient-to-br from-[#1E1E1E] to-black relative overflow-hidden">
             <div class="absolute top-0 right-0 w-48 h-48 bg-[#FFD700]/5 rounded-full blur-3xl -mr-10 -mt-10"></div>
@@ -106,9 +122,20 @@
                 <p class="text-gray-500 text-xs font-bold uppercase tracking-widest mb-1">Asset Totali</p>
                 <h2 class="text-5xl font-bold font-mono mb-2 tracking-tight" id="balance">0.00 <span class="text-2xl text-[#FFD700]">SOL</span></h2>
                 
-                <div class="flex items-center gap-2 mb-8 opacity-70 hover:opacity-100 cursor-pointer" onclick="copyAddr()">
-                    <span class="text-xs font-mono bg-[#222] px-2 py-1 rounded border border-[#333]" id="walletAddr">Loading...</span>
-                    <i data-lucide="copy" class="w-3 h-3 text-[#FFD700]"></i>
+                <!-- Wallet Address Section -->
+                <div class="bg-[#0A0A0A] rounded-xl p-3 mb-4 border border-[#222]">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-[10px] text-gray-500 font-bold uppercase">Il Tuo Wallet</span>
+                        <a id="solscanLink" href="#" target="_blank" class="text-[10px] text-[#FFD700] flex items-center gap-1">
+                            <i data-lucide="external-link" class="w-3 h-3"></i> Solscan
+                        </a>
+                    </div>
+                    <div class="flex items-center gap-2 cursor-pointer group" onclick="copyAddr()">
+                        <span class="text-xs font-mono text-gray-300 truncate flex-1" id="walletAddr">Loading...</span>
+                        <div class="bg-[#222] p-2 rounded-lg group-active:scale-95 transition-transform">
+                            <i data-lucide="copy" class="w-4 h-4 text-[#FFD700]" id="copyIcon"></i>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="grid grid-cols-2 gap-3">
@@ -122,6 +149,7 @@
             </div>
         </div>
 
+        <!-- Stats Cards -->
         <div class="grid grid-cols-2 gap-3 mb-6">
             <div class="glass p-4 flex flex-col justify-between h-24">
                 <i data-lucide="activity" class="w-5 h-5 text-[#00FFA3]"></i>
@@ -138,13 +166,22 @@
                 </div>
             </div>
         </div>
+
+        <!-- Recent Transactions -->
+        <div class="mb-4">
+            <h3 class="text-sm font-bold text-gray-400 mb-3 px-1">Ultime Transazioni</h3>
+            <div id="txList" class="space-y-2">
+                <div class="text-center text-xs text-gray-600 py-4">Nessuna transazione recente</div>
+            </div>
+        </div>
     </section>
 
+    <!-- Trade/Sniper Page -->
     <section id="p-trade" class="page px-4 pt-4">
         <div class="flex justify-between items-end mb-4 px-1">
             <h2 class="text-2xl font-bold">Mercato Live</h2>
             <div class="flex items-center gap-2">
-                <span class="text-[10px] bg-[#00FFA3]/10 text-[#00FFA3] px-2 py-1 rounded font-bold">AI SCANNER ACTIVE</span>
+                <span class="text-[10px] bg-[#00FFA3]/10 text-[#00FFA3] px-2 py-1 rounded font-bold animate-pulse">AI SCANNER ACTIVE</span>
             </div>
         </div>
 
@@ -153,6 +190,7 @@
         </div>
     </section>
 
+    <!-- Trade Sheet -->
     <div id="tradeSheet" class="sheet">
         <div class="flex justify-between items-start mb-6">
             <div class="flex items-center gap-4">
@@ -181,8 +219,9 @@
         <div class="mb-6">
             <label class="text-xs text-gray-500 font-bold ml-1 mb-1 block">Quantità (SOL)</label>
             <div class="relative">
-                <input type="number" id="tradeAmt" placeholder="0.0" class="w-full bg-[#0A0A0A] border border-[#333] rounded-xl p-4 text-xl font-mono outline-none focus:border-[#FFD700] text-white">
+                <input type="number" id="tradeAmt" placeholder="0.0" step="0.01" class="w-full bg-[#0A0A0A] border border-[#333] rounded-xl p-4 text-xl font-mono outline-none focus:border-[#FFD700] text-white">
                 <div class="absolute right-3 top-3 flex gap-1">
+                    <button onclick="setPct(0.25)" class="bg-[#222] text-xs px-2 py-1 rounded text-gray-400">25%</button>
                     <button onclick="setPct(0.5)" class="bg-[#222] text-xs px-2 py-1 rounded text-gray-400">50%</button>
                     <button onclick="setPct(1.0)" class="bg-[#222] text-xs px-2 py-1 rounded text-[#FFD700]">MAX</button>
                 </div>
@@ -190,28 +229,80 @@
             <p class="text-right text-xs text-gray-500 mt-1">Disponibile: <span id="availBal">0.00</span> SOL</p>
         </div>
 
-        <button onclick="sendTrade()" class="w-full bg-[#FFD700] text-black font-bold py-4 rounded-xl text-lg shadow-lg shadow-yellow-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform">
+        <button onclick="sendTrade()" id="btnTrade" class="w-full bg-[#FFD700] text-black font-bold py-4 rounded-xl text-lg shadow-lg shadow-yellow-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform">
             <i data-lucide="zap" class="w-5 h-5"></i> <span id="btnActionText">CONFERMA ORDINE</span>
         </button>
     </div>
 
+    <!-- Deposit Sheet -->
     <div id="depositSheet" class="sheet text-center">
-        <h3 class="text-xl font-bold mb-2">Deposita Solana</h3>
-        <p class="text-xs text-gray-400 mb-6">Invia solo SOL su rete Solana.</p>
-        <div id="qr" class="bg-white p-3 rounded-xl mx-auto w-fit mb-6"></div>
-        <div class="bg-[#222] p-3 rounded-xl border border-[#333] flex justify-between items-center mb-6" onclick="copyAddr()">
-            <span class="text-xs font-mono text-gray-300 truncate w-48" id="depAddr">...</span>
-            <i data-lucide="copy" class="w-4 h-4 text-[#FFD700]"></i>
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-xl font-bold">Deposita Solana</h3>
+            <button onclick="closeAll()" class="bg-[#222] p-2 rounded-full"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <p class="text-xs text-gray-400 mb-6">Invia solo SOL su rete Solana. I fondi appariranno automaticamente.</p>
+        
+        <div id="qr" class="bg-white p-4 rounded-2xl mx-auto w-fit mb-6 shadow-lg"></div>
+        
+        <div class="bg-[#0A0A0A] p-4 rounded-xl border border-[#222] mb-4">
+            <p class="text-[10px] text-gray-500 mb-2 font-bold uppercase">Indirizzo Wallet</p>
+            <div class="flex items-center justify-between gap-2 cursor-pointer group" onclick="copyAddr()">
+                <span class="text-sm font-mono text-white break-all" id="depAddr">...</span>
+                <div class="bg-[#222] p-2 rounded-lg shrink-0 group-active:scale-95 transition-transform">
+                    <i data-lucide="copy" class="w-4 h-4 text-[#FFD700]"></i>
+                </div>
+            </div>
+        </div>
+
+        <a id="depSolscanLink" href="#" target="_blank" class="inline-flex items-center gap-2 text-sm text-[#FFD700] mb-4">
+            <i data-lucide="external-link" class="w-4 h-4"></i> Apri su Solscan
+        </a>
+    </div>
+
+    <!-- Withdraw Sheet -->
+    <div id="withdrawSheet" class="sheet">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-xl font-bold">Preleva Fondi</h3>
+            <button onclick="closeAll()" class="bg-[#222] p-2 rounded-full"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        
+        <div class="bg-[#0A0A0A] p-3 rounded-xl border border-[#222] mb-4 flex justify-between items-center">
+            <span class="text-xs text-gray-500">Disponibile</span>
+            <span class="font-mono font-bold text-white" id="wAvailBal">0.00 SOL</span>
+        </div>
+
+        <div class="mb-4">
+            <label class="text-xs text-gray-500 font-bold ml-1 mb-1 block">Indirizzo Destinazione</label>
+            <input id="wAddr" placeholder="Inserisci indirizzo Solana" class="w-full bg-[#0A0A0A] border border-[#333] rounded-xl p-4 text-sm font-mono text-white outline-none focus:border-[#FFD700]">
+        </div>
+        
+        <div class="mb-6">
+            <label class="text-xs text-gray-500 font-bold ml-1 mb-1 block">Importo (SOL)</label>
+            <div class="relative">
+                <input id="wAmt" type="number" placeholder="0.00" step="0.01" class="w-full bg-[#0A0A0A] border border-[#333] rounded-xl p-4 text-sm font-mono text-white outline-none focus:border-[#FFD700]">
+                <button onclick="setWithdrawMax()" class="absolute right-3 top-3 bg-[#222] text-xs px-2 py-1 rounded text-[#FFD700]">MAX</button>
+            </div>
+        </div>
+
+        <button onclick="doWithdraw()" id="btnWithdraw" class="w-full bg-[#FF4D4D] text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 active:scale-95 transition-transform">
+            <i data-lucide="send" class="w-5 h-5"></i> INVIA PRELIEVO
+        </button>
+
+        <!-- Withdrawal Result (hidden initially) -->
+        <div id="withdrawResult" class="hidden mt-4 p-4 rounded-xl border border-[#00FFA3] bg-[#00FFA3]/10">
+            <div class="flex items-center gap-2 mb-2">
+                <i data-lucide="check-circle" class="w-5 h-5 text-[#00FFA3]"></i>
+                <span class="font-bold text-[#00FFA3]">Prelievo Inviato!</span>
+            </div>
+            <p class="text-xs text-gray-400 mb-2">Hash Transazione:</p>
+            <p class="text-xs font-mono text-white break-all mb-3" id="withdrawTxHash">...</p>
+            <a id="withdrawSolscanLink" href="#" target="_blank" class="inline-flex items-center gap-2 text-sm text-[#FFD700] font-bold">
+                <i data-lucide="external-link" class="w-4 h-4"></i> Vedi su Solscan
+            </a>
         </div>
     </div>
 
-    <div id="withdrawSheet" class="sheet">
-        <h3 class="text-xl font-bold mb-6">Preleva Fondi</h3>
-        <input id="wAddr" placeholder="Indirizzo Destinazione (SOL)" class="w-full bg-[#0A0A0A] border border-[#333] rounded-xl p-4 text-sm mb-4 text-white outline-none focus:border-[#FFD700]">
-        <input id="wAmt" type="number" placeholder="Importo" class="w-full bg-[#0A0A0A] border border-[#333] rounded-xl p-4 text-sm mb-6 text-white outline-none focus:border-[#FFD700]">
-        <button onclick="doWithdraw()" class="w-full bg-[#222] text-white font-bold py-4 rounded-xl border border-[#333]">INVIA PRELIEVO</button>
-    </div>
-
+    <!-- Bottom Navigation -->
     <div class="fixed bottom-0 w-full bg-[#080808] border-t border-[#222] h-20 flex justify-around items-start pt-4 z-50">
         <button onclick="nav('wallet', this)" class="nav-btn active text-[#FFD700] flex flex-col items-center gap-1 w-16"><i data-lucide="wallet" class="w-6 h-6"></i><span class="text-[10px] font-bold">Wallet</span></button>
         <button onclick="nav('trade', this)" class="nav-btn text-gray-600 flex flex-col items-center gap-1 w-16"><i data-lucide="radar" class="w-6 h-6"></i><span class="text-[10px] font-medium">Sniper</span></button>
@@ -224,6 +315,7 @@
         let address = "";
         let currentToken = null;
         let mode = 'BUY';
+        let qrInstance = null;
 
         // --- UI HELPERS ---
         function nav(p, btn) {
@@ -236,14 +328,30 @@
         function openDeposit() {
             document.getElementById('overlay').classList.add('open');
             document.getElementById('depositSheet').classList.add('open');
-            document.getElementById('qr').innerHTML = "";
-            new QRCode(document.getElementById("qr"), { text: address, width: 160, height: 160 });
+            
+            // Generate QR Code
+            const qrContainer = document.getElementById('qr');
+            qrContainer.innerHTML = "";
+            qrInstance = new QRCode(qrContainer, { 
+                text: address, 
+                width: 180, 
+                height: 180,
+                colorDark: "#000000",
+                colorLight: "#ffffff",
+                correctLevel: QRCode.CorrectLevel.H
+            });
+            
             document.getElementById('depAddr').innerText = address;
+            document.getElementById('depSolscanLink').href = SOLSCAN_ADDR + address;
         }
 
         function openWithdraw() {
             document.getElementById('overlay').classList.add('open');
             document.getElementById('withdrawSheet').classList.add('open');
+            document.getElementById('wAvailBal').innerText = balance.toFixed(4) + " SOL";
+            document.getElementById('withdrawResult').classList.add('hidden');
+            document.getElementById('btnWithdraw').disabled = false;
+            document.getElementById('btnWithdraw').classList.remove('opacity-50');
         }
 
         function closeAll() {
@@ -261,9 +369,11 @@
             document.getElementById('tsPrice').innerText = "$" + p.toFixed(6);
             document.getElementById('tsImg').src = `https://img.jup.ag/v6/${t}/logo`;
             document.getElementById('availBal').innerText = balance.toFixed(4);
+            document.getElementById('tradeAmt').value = "";
             
-            // Default Image Error Handler
-            document.getElementById('tsImg').onerror = function() { this.src = 'https://via.placeholder.com/50/333/FFF?text=' + s.substring(0,1); };
+            document.getElementById('tsImg').onerror = function() { 
+                this.src = 'https://via.placeholder.com/50/333/FFF?text=' + s.substring(0,1); 
+            };
 
             setMode('BUY');
         }
@@ -275,35 +385,57 @@
             const bAct = document.getElementById('btnActionText');
             
             if(m === 'BUY') {
-                bBuy.className = "flex-1 py-2 rounded-lg font-bold text-sm bg-[#00FFA3] text-black transition-all";
-                bSell.className = "flex-1 py-2 rounded-lg font-bold text-sm text-gray-500 transition-all";
+                bBuy.className = "flex-1 py-3 rounded-lg font-bold text-sm bg-[#00FFA3] text-black transition-all";
+                bSell.className = "flex-1 py-3 rounded-lg font-bold text-sm text-gray-500 transition-all";
                 bAct.innerText = "COMPRA " + currentToken.s;
-                bAct.parentElement.className = "w-full bg-[#FFD700] text-black font-bold py-4 rounded-xl text-lg shadow-lg shadow-yellow-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform";
+                document.getElementById('btnTrade').className = "w-full bg-[#FFD700] text-black font-bold py-4 rounded-xl text-lg shadow-lg shadow-yellow-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform";
             } else {
-                bBuy.className = "flex-1 py-2 rounded-lg font-bold text-sm text-gray-500 transition-all";
-                bSell.className = "flex-1 py-2 rounded-lg font-bold text-sm bg-[#FF4D4D] text-white transition-all";
+                bBuy.className = "flex-1 py-3 rounded-lg font-bold text-sm text-gray-500 transition-all";
+                bSell.className = "flex-1 py-3 rounded-lg font-bold text-sm bg-[#FF4D4D] text-white transition-all";
                 bAct.innerText = "VENDI " + currentToken.s;
-                bAct.parentElement.className = "w-full bg-[#FF4D4D] text-white font-bold py-4 rounded-xl text-lg shadow-lg shadow-red-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform";
+                document.getElementById('btnTrade').className = "w-full bg-[#FF4D4D] text-white font-bold py-4 rounded-xl text-lg shadow-lg shadow-red-500/20 flex items-center justify-center gap-2 active:scale-95 transition-transform";
             }
         }
 
         function setPct(pct) {
-            const safe = Math.max(0, balance - 0.002);
-            document.getElementById('tradeAmount').value = (safe * pct).toFixed(4);
+            const safe = Math.max(0, balance - 0.005); // Lascia fee per tx
+            document.getElementById('tradeAmt').value = (safe * pct).toFixed(4);
         }
 
-        function toast(t, m, err=false) {
+        function setWithdrawMax() {
+            const safe = Math.max(0, balance - 0.005);
+            document.getElementById('wAmt').value = safe.toFixed(4);
+        }
+
+        function toast(t, m, err=false, txLink=null) {
             const el = document.getElementById('toast');
+            const card = document.getElementById('toastCard');
+            const link = document.getElementById('toastLink');
+            
             document.getElementById('toastTitle').innerText = t;
             document.getElementById('toastMsg').innerText = m;
+            
             const c = err ? '#FF4D4D' : '#FFD700';
-            el.querySelector('.card').style.borderColor = c;
+            card.style.borderColor = c;
             document.getElementById('toastIcon').style.color = c;
+            
+            if(txLink) {
+                link.href = txLink;
+                link.classList.remove('hidden');
+            } else {
+                link.classList.add('hidden');
+            }
+            
             el.classList.add('show');
-            setTimeout(() => el.classList.remove('show'), 3000);
+            setTimeout(() => el.classList.remove('show'), txLink ? 6000 : 3000);
         }
 
-        function copyAddr() { navigator.clipboard.writeText(address); toast("Copiato", "Indirizzo salvato"); }
+        function copyAddr() { 
+            navigator.clipboard.writeText(address); 
+            toast("Copiato!", "Indirizzo wallet copiato");
+            document.getElementById('copyIcon').classList.add('copied');
+            setTimeout(() => document.getElementById('copyIcon').classList.remove('copied'), 300);
+        }
 
         // --- BACKEND LOGIC ---
         async function sync() {
@@ -314,19 +446,24 @@
                 balance = data.balance_sol;
                 address = data.wallet_address;
                 
+                // Update status
                 document.getElementById('statusDot').className = "w-1.5 h-1.5 rounded-full bg-[#00FFA3] shadow-[0_0_5px_#00FFA3]";
                 document.getElementById('statusText').innerText = "ONLINE";
-                document.getElementById('statusText').classList.replace("text-gray-500", "text-[#00FFA3]");
+                document.getElementById('statusText').className = "text-[10px] font-bold text-[#00FFA3] tracking-wider";
 
+                // Update balance
                 document.getElementById('balance').innerHTML = `${balance.toFixed(4)} <span class="text-2xl text-[#FFD700]">SOL</span>`;
                 document.getElementById('walletAddr').innerText = address;
                 document.getElementById('tradesCount').innerText = data.active_trades_count;
+                
+                // Update Solscan link
+                document.getElementById('solscanLink').href = SOLSCAN_ADDR + address;
 
-                // LISTA GEMME
+                // Update gems list
                 const list = document.getElementById('marketList');
-                if(data.gems_feed.length > 0) {
+                if(data.gems_feed && data.gems_feed.length > 0) {
                     list.innerHTML = data.gems_feed.map(g => `
-                        <div class="glass p-4 mb-3 flex justify-between items-center border-l-2 border-[#00FFA3] active:scale-95 transition-transform" onclick="openToken('${g.token}', '${g.symbol}', ${g.price})">
+                        <div class="glass p-4 mb-3 flex justify-between items-center border-l-2 border-[#00FFA3] active:scale-[0.98] transition-transform cursor-pointer" onclick="openToken('${g.token}', '${g.symbol}', ${g.price})">
                             <div class="flex items-center gap-4">
                                 <img src="https://img.jup.ag/v6/${g.token}/logo" class="token-img" onerror="this.src='https://via.placeholder.com/40/333/FFF?text=${g.symbol[0]}'">
                                 <div>
@@ -340,21 +477,26 @@
                             <button class="bg-[#1A1A1A] border border-[#333] text-white px-4 py-2 rounded-lg text-xs font-bold">TRADE</button>
                         </div>
                     `).join('');
+                } else {
+                    list.innerHTML = '<div class="text-center py-12 text-gray-600 text-xs">Scansione mercato in corso...</div>';
                 }
-            } catch {
-                document.getElementById('statusDot').className = "w-1.5 h-1.5 rounded-full bg-red-500";
+            } catch(e) {
+                document.getElementById('statusDot').className = "w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse";
                 document.getElementById('statusText').innerText = "RECONNECTING...";
-                document.getElementById('statusText').classList.replace("text-[#00FFA3]", "text-gray-500");
+                document.getElementById('statusText').className = "text-[10px] font-bold text-gray-500 tracking-wider";
             }
         }
 
         async function sendTrade() {
-            const amt = parseFloat(document.getElementById('tradeAmount').value);
-            if(!amt || amt <= 0) return toast("Errore", "Inserisci importo", true);
+            const amt = parseFloat(document.getElementById('tradeAmt').value);
+            if(!amt || amt <= 0) return toast("Errore", "Inserisci un importo valido", true);
             if(mode === 'BUY' && amt > balance) return toast("Errore", "Fondi insufficienti", true);
 
-            toast("Invio...", "Ordine trasmesso alla chain");
-            closeAll();
+            toast("Invio...", "Ordine trasmesso alla blockchain");
+            
+            const btn = document.getElementById('btnTrade');
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
 
             try {
                 const res = await fetch(`${API_BASE}/trade`, {
@@ -363,18 +505,38 @@
                     body: JSON.stringify({ action: mode, token: currentToken.t, amount_sol: amt })
                 });
                 const d = await res.json();
-                if(d.success) { toast("Eseguito!", "Transazione confermata"); sync(); }
-                else toast("Fallito", d.message, true);
-            } catch { toast("Errore", "Server offline", true); }
+                
+                if(d.success) { 
+                    const txLink = d.solscan_url || (d.tx_signature ? SOLSCAN_TX + d.tx_signature : null);
+                    toast("Eseguito!", "Transazione confermata", false, txLink); 
+                    closeAll();
+                    sync(); 
+                } else {
+                    toast("Fallito", d.message, true);
+                }
+            } catch(e) { 
+                toast("Errore", "Server offline", true); 
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            }
         }
 
         async function doWithdraw() {
-            const addr = document.getElementById('wAddr').value;
+            const addr = document.getElementById('wAddr').value.trim();
             const amt = parseFloat(document.getElementById('wAmt').value);
-            if(!addr || !amt) return toast("Errore", "Dati mancanti", true);
+            
+            if(!addr) return toast("Errore", "Inserisci indirizzo destinazione", true);
+            if(!amt || amt <= 0) return toast("Errore", "Inserisci importo valido", true);
             if(amt > balance) return toast("Errore", "Fondi insufficienti", true);
 
-            toast("Invio...", "Prelievo in corso");
+            toast("Invio...", "Prelievo in elaborazione");
+            
+            const btn = document.getElementById('btnWithdraw');
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
+            btn.innerHTML = '<i data-lucide="loader" class="w-5 h-5 animate-spin"></i> Invio...';
+
             try {
                 const res = await fetch(`${API_BASE}/withdraw`, {
                     method: 'POST',
@@ -382,12 +544,34 @@
                     body: JSON.stringify({ amount: amt, token: "SOL", destination_address: addr })
                 });
                 const d = await res.json();
-                if(d.success) { toast("Successo", "Fondi inviati!"); closeAll(); sync(); }
-                else toast("Errore", d.message, true);
-            } catch { toast("Errore", "Rete", true); }
+                
+                if(d.success) { 
+                    // Show success result
+                    const resultDiv = document.getElementById('withdrawResult');
+                    document.getElementById('withdrawTxHash').innerText = d.tx_signature;
+                    document.getElementById('withdrawSolscanLink').href = d.solscan_url || SOLSCAN_TX + d.tx_signature;
+                    resultDiv.classList.remove('hidden');
+                    
+                    toast("Successo!", "Prelievo inviato", false, d.solscan_url);
+                    sync(); 
+                } else {
+                    toast("Errore", d.message, true);
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-50');
+                    btn.innerHTML = '<i data-lucide="send" class="w-5 h-5"></i> INVIA PRELIEVO';
+                }
+            } catch(e) { 
+                toast("Errore", "Connessione fallita", true); 
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+                btn.innerHTML = '<i data-lucide="send" class="w-5 h-5"></i> INVIA PRELIEVO';
+            }
+            
+            lucide.createIcons();
         }
 
-        setInterval(sync, 2000);
+        // Auto-sync every 3 seconds
+        setInterval(sync, 3000);
         sync();
     </script>
 </body>

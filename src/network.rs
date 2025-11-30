@@ -69,4 +69,29 @@ impl NetworkClient {
     pub async fn get_balance_fast(&self, pubkey: &Pubkey) -> u64 {
         self.rpc.get_balance(pubkey).await.unwrap_or(0)
     }
+
+    /// Invia transazione via TPU (QUIC) per massima velocità - salta la mempool pubblica
+    pub fn send_via_tpu(&self, transaction: &solana_sdk::transaction::Transaction) -> bool {
+        self.tpu.send_transaction(transaction)
+    }
+
+    /// Invia transazione con retry automatico (TPU first, RPC fallback)
+    pub async fn send_transaction_fast(&self, transaction: &solana_sdk::transaction::Transaction) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let sig = transaction.signatures[0].to_string();
+        
+        // Prima prova TPU (più veloce, salta mempool)
+        if self.tpu.send_transaction(transaction) {
+            info!("⚡ TX inviata via TPU/QUIC: {}", sig);
+            return Ok(sig);
+        }
+        
+        // Fallback RPC standard
+        match self.rpc.send_transaction(transaction).await {
+            Ok(s) => {
+                info!("📡 TX inviata via RPC: {}", s);
+                Ok(s.to_string())
+            }
+            Err(e) => Err(format!("Errore invio TX: {}", e).into())
+        }
+    }
 }
