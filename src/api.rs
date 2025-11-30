@@ -128,13 +128,19 @@ async fn handle_status(
         balance = net.get_balance_fast(&pk).await as f64 / LAMPORTS_PER_SOL as f64;
     }
 
-    // Calcola livello ricchezza
-    let wealth_level = if balance < 0.06 {
-        "POOR".to_string() // < ~12€
+    // Calcola livello ricchezza (più granulare)
+    let wealth_level = if balance < 0.03 {
+        "MICRO".to_string()      // < 5€
+    } else if balance < 0.08 {
+        "POOR".to_string()       // 5-15€
+    } else if balance < 0.27 {
+        "LOW_MEDIUM".to_string() // 15-50€
+    } else if balance < 0.55 {
+        "MEDIUM".to_string()     // 50-100€
     } else if balance < 1.1 {
-        "MEDIUM".to_string() // 12-200€
+        "HIGH_MEDIUM".to_string() // 100-200€
     } else {
-        "RICH".to_string() // > 200€
+        "RICH".to_string()       // > 200€
     };
 
     let mut gems = state.found_gems.lock().unwrap().clone();

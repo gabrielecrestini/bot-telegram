@@ -236,26 +236,50 @@
             </div>
         </div>
 
+        <!-- Current Strategy -->
+        <div class="card p-4 mb-4" id="currentStrategy">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-sm text-zinc-400">La tua strategia</span>
+                <span class="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded" id="strategyPct">--%</span>
+            </div>
+            <p class="text-xs text-zinc-500" id="strategyDesc">Caricamento...</p>
+        </div>
+
         <!-- Strategy Info -->
         <div class="card p-4">
             <h4 class="font-semibold mb-3 flex items-center gap-2">
                 <i data-lucide="brain" class="w-4 h-4 text-indigo-400"></i>
-                Come Funziona
+                Strategia Intelligente
             </h4>
-            <ul class="text-sm text-zinc-400 space-y-2">
+            <ul class="text-xs text-zinc-400 space-y-2">
                 <li class="flex items-start gap-2">
-                    <span class="text-green-400">•</span>
-                    <span><strong>Povero (&lt;€12):</strong> Investe 90% del saldo, massimo rischio/reward</span>
+                    <span class="text-zinc-500">⚫</span>
+                    <span><strong>Micro (&lt;€5):</strong> 95% - Un solo tentativo YOLO</span>
                 </li>
                 <li class="flex items-start gap-2">
-                    <span class="text-yellow-400">•</span>
-                    <span><strong>Medio (€12-200):</strong> Investe 30-50%, bilanciato</span>
+                    <span class="text-red-400">🔴</span>
+                    <span><strong>Povero (€5-15):</strong> 88% - Massimo rischio/reward</span>
                 </li>
                 <li class="flex items-start gap-2">
-                    <span class="text-blue-400">•</span>
-                    <span><strong>Ricco (&gt;€200):</strong> Investe 10-20%, diversifica</span>
+                    <span class="text-orange-400">🟠</span>
+                    <span><strong>Basso (€15-50):</strong> 75% - Trade significativi</span>
+                </li>
+                <li class="flex items-start gap-2">
+                    <span class="text-yellow-400">🟡</span>
+                    <span><strong>Medio (€50-100):</strong> 55% - Bilanciato</span>
+                </li>
+                <li class="flex items-start gap-2">
+                    <span class="text-lime-400">🟢</span>
+                    <span><strong>Alto (€100-200):</strong> 40% - Conservativo</span>
+                </li>
+                <li class="flex items-start gap-2">
+                    <span class="text-green-400">💎</span>
+                    <span><strong>Ricco (&gt;€200):</strong> 12-25% - Diversifica</span>
                 </li>
             </ul>
+            <div class="mt-3 pt-3 border-t border-zinc-800 text-xs text-zinc-500">
+                💡 Con meno soldi investi di più per avere guadagni significativi. Il bot calcola automaticamente.
+            </div>
         </div>
     </section>
 
@@ -662,15 +686,24 @@
                 document.getElementById('addrLink').href = SOLSCAN_ADDR + state.address;
                 document.getElementById('tradesCount').innerText = data.active_trades_count || 0;
 
-                // Wealth Level dal backend
+                // Wealth Level dal backend (più dettagliato)
                 const wlMap = {
-                    'POOR': { text: '🔴 Povero (<€12)', class: 'text-red-400' },
-                    'MEDIUM': { text: '🟡 Medio (€12-200)', class: 'text-yellow-400' },
-                    'RICH': { text: '🟢 Ricco (>€200)', class: 'text-green-400' }
+                    'MICRO':       { text: '⚫ Micro (<€5)', class: 'text-zinc-400', pct: 95 },
+                    'POOR':        { text: '🔴 Povero (€5-15)', class: 'text-red-400', pct: 88 },
+                    'LOW_MEDIUM':  { text: '🟠 Basso (€15-50)', class: 'text-orange-400', pct: 75 },
+                    'MEDIUM':      { text: '🟡 Medio (€50-100)', class: 'text-yellow-400', pct: 55 },
+                    'HIGH_MEDIUM': { text: '🟢 Alto (€100-200)', class: 'text-lime-400', pct: 40 },
+                    'RICH':        { text: '💎 Ricco (>€200)', class: 'text-green-400', pct: 20 }
                 };
-                const wl = wlMap[data.wealth_level] || wlMap['POOR'];
+                const wl = wlMap[data.wealth_level] || wlMap['MICRO'];
                 document.getElementById('wealthLevel').innerText = wl.text;
                 document.getElementById('wealthLevel').className = 'text-sm font-semibold ' + wl.class;
+                
+                // Aggiorna strategia bot
+                const investAmt = (state.balance * (wl.pct / 100)).toFixed(4);
+                const investEur = (investAmt * 180).toFixed(2);
+                document.getElementById('strategyPct').innerText = wl.pct + '%';
+                document.getElementById('strategyDesc').innerText = `Con ${state.balance.toFixed(4)} SOL (~€${(state.balance * 180).toFixed(0)}), il bot investirà ${investAmt} SOL (~€${investEur}) per trade.`;
 
                 // Token List - già ordinata per score dal backend
                 const list = document.getElementById('tokenList');

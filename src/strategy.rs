@@ -122,45 +122,97 @@ fn check_volume_spike(candles: &VecDeque<Candle>) -> bool {
 
 // --- 3. MONEY MANAGEMENT INTELLIGENTE ---
 
-/// Determina se l'utente è "povero", "medio" o "ricco" e adatta la strategia
-/// Povero: < 0.06 SOL (~12€)
-/// Medio: 0.06 - 1.1 SOL (~12-200€)  
-/// Ricco: > 1.1 SOL (~200€+)
+// Costanti per la strategia
+const MIN_TRADE_SOL: f64 = 0.015;      // Minimo ~3€ per coprire fee + avere senso
+const FEE_RESERVE_SOL: f64 = 0.003;    // Riserva per fee vendita
+const SOL_PRICE_EUR: f64 = 180.0;      // Prezzo indicativo per calcoli
+
+/// Determina il livello di ricchezza con soglie più granulari
+/// Questo determina la strategia di investimento
 pub enum WealthLevel {
-    Poor,   // Strategia conservativa, micro-trade
-    Medium, // Strategia bilanciata
-    Rich,   // Strategia aggressiva, diversificazione
+    Micro,      // < 0.03 SOL (~5€) - Troppo poco, un solo trade
+    Poor,       // 0.03 - 0.08 SOL (5-15€) - YOLO, investi quasi tutto
+    LowMedium,  // 0.08 - 0.27 SOL (15-50€) - Investi tanto, poco margine
+    Medium,     // 0.27 - 0.55 SOL (50-100€) - Bilanciato
+    HighMedium, // 0.55 - 1.1 SOL (100-200€) - Più conservativo
+    Rich,       // > 1.1 SOL (200€+) - Diversifica
 }
 
 pub fn get_wealth_level(balance_sol: f64) -> WealthLevel {
-    if balance_sol < 0.06 { WealthLevel::Poor }
-    else if balance_sol < 1.1 { WealthLevel::Medium }
+    if balance_sol < 0.03 { WealthLevel::Micro }
+    else if balance_sol < 0.08 { WealthLevel::Poor }
+    else if balance_sol < 0.27 { WealthLevel::LowMedium }
+    else if balance_sol < 0.55 { WealthLevel::Medium }
+    else if balance_sol < 1.1 { WealthLevel::HighMedium }
     else { WealthLevel::Rich }
 }
 
-/// Calcola importo da investire basato sul livello di ricchezza
-/// Il bot NON usa stop loss fissi - decide autonomamente quando vendere
-/// basandosi su RSI overbought e trailing stop dinamico
+/// Calcola importo da investire - INTELLIGENTE
+/// 
+/// Logica: Se hai poco, DEVI investire tanto per avere chance di profitto.
+/// Le fee Solana + DEX sono ~0.5-1%, quindi con 3€ perdi già 0.03€ in fee.
+/// Per guadagnare qualcosa di significativo serve almeno 0.015 SOL.
+///
+/// Il bot NON usa stop loss fissi - decide autonomamente quando vendere.
 pub fn calculate_investment_amount(wallet_balance_sol: f64) -> f64 {
-    let safe_balance = (wallet_balance_sol - 0.005).max(0.0); // Riserva fee minima
+    let safe_balance = (wallet_balance_sol - FEE_RESERVE_SOL).max(0.0);
     
-    match get_wealth_level(wallet_balance_sol) {
+    // Se non hai abbastanza nemmeno per un trade minimo, non fare nulla
+    if safe_balance < MIN_TRADE_SOL {
+        return 0.0;
+    }
+    
+    let investment = match get_wealth_level(wallet_balance_sol) {
+        WealthLevel::Micro => {
+            // Micro (<5€): Tutto quello che hai, un solo tentativo
+            safe_balance * 0.95
+        },
         WealthLevel::Poor => {
-            // Povero: investi tutto ciò che hai (YOLO mode, massimo rischio/reward)
-            // Ma mai più del 90% per avere sempre fee per vendere
-            (safe_balance * 0.90).min(0.05)
+            // Povero (5-15€): YOLO mode - investi 85-90%
+            // Con 10€, investi 8.5€. Un +20% = 1.7€ di guadagno
+            safe_balance * 0.88
+        },
+        WealthLevel::LowMedium => {
+            // Medio-basso (15-50€): Investi 70-80%
+            // Con 30€ (0.16 SOL), investi ~24€
+            // Abbastanza per 1-2 trade significativi
+            safe_balance * 0.75
         },
         WealthLevel::Medium => {
-            // Medio: investi 30-50% del capitale per singolo trade
-            let pct = if safe_balance < 0.3 { 0.50 } else { 0.30 };
-            (safe_balance * pct).min(0.5)
+            // Medio (50-100€): Investi 50-60%
+            // Con 75€ (0.4 SOL), investi ~40€
+            // Puoi permetterti 2-3 trade
+            safe_balance * 0.55
+        },
+        WealthLevel::HighMedium => {
+            // Medio-alto (100-200€): Investi 35-45%
+            // Con 150€ (0.8 SOL), investi ~60€
+            // Diversificazione leggera
+            safe_balance * 0.40
         },
         WealthLevel::Rich => {
-            // Ricco: investi 10-20% per diversificare
-            // Mai più di 2 SOL per singolo trade
-            let pct = if safe_balance < 5.0 { 0.20 } else { 0.10 };
-            (safe_balance * pct).min(2.0)
+            // Ricco (>200€): Investi 15-25%
+            // Con 500€ (2.7 SOL), investi ~100€
+            // Diversifica su più trade
+            let pct = if wallet_balance_sol < 3.0 { 0.25 } else if wallet_balance_sol < 5.0 { 0.18 } else { 0.12 };
+            safe_balance * pct
         }
+    };
+    
+    // Assicura che l'investimento sia almeno il minimo
+    // Ma non più del saldo disponibile
+    investment.max(MIN_TRADE_SOL).min(safe_balance)
+}
+
+/// Ritorna la percentuale del saldo che verrà investita (per UI)
+pub fn get_investment_percentage(wallet_balance_sol: f64) -> u8 {
+    match get_wealth_level(wallet_balance_sol) {
+        WealthLevel::Micro => 95,
+        WealthLevel::Poor => 88,
+        WealthLevel::LowMedium => 75,
+        WealthLevel::Medium => 55,
+        WealthLevel::HighMedium => 40,
+        WealthLevel::Rich => if wallet_balance_sol < 3.0 { 25 } else if wallet_balance_sol < 5.0 { 18 } else { 12 },
     }
 }
 
