@@ -570,7 +570,7 @@
         let state = {
             balance: 0,
             address: '',
-            solPrice: 180,
+            solPrice: 0, // Viene dal backend in tempo reale
             botActive: false,
             reinvest: true,
             currentToken: null,
@@ -871,11 +871,17 @@
             document.getElementById('syncIcon').classList.add('animate-spin');
             
             try {
-                const res = await fetch(`${API}/status`);
+                const res = await fetch(`${API}/status`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                });
+                
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
 
                 state.balance = data.balance_sol || 0;
                 state.address = data.wallet_address || '';
+                state.solPrice = data.sol_price_usd || 180;
                 state.gems = data.gems_feed || [];
                 state.trades = data.trades_history || [];
                 state.withdrawals = data.withdrawals_history || [];
@@ -886,12 +892,12 @@
                 document.getElementById('statusText').className = 'text-[10px] text-green-400';
 
                 document.getElementById('balanceSOL').innerText = state.balance.toFixed(4);
-                document.getElementById('balanceUSD').innerText = '≈ $' + (data.balance_usd || state.balance * state.solPrice).toFixed(2);
-                document.getElementById('walletAddr').innerText = state.address;
+                document.getElementById('balanceUSD').innerText = '≈ $' + (data.balance_usd || 0).toFixed(2);
+                document.getElementById('walletAddr').innerText = state.address || 'Caricamento...';
                 document.getElementById('addrLink').href = SOLSCAN_ADDR + state.address;
                 document.getElementById('tradesCount').innerText = data.active_trades_count || 0;
 
-                // Wealth Level dal backend (più dettagliato)
+                // Wealth Level dal backend
                 const wlMap = {
                     'MICRO':       { text: '⚫ Micro (<€5)', class: 'text-zinc-400', pct: 95 },
                     'POOR':        { text: '🔴 Povero (€5-15)', class: 'text-red-400', pct: 88 },
@@ -904,13 +910,14 @@
                 document.getElementById('wealthLevel').innerText = wl.text;
                 document.getElementById('wealthLevel').className = 'text-sm font-semibold ' + wl.class;
                 
-                // Aggiorna strategia bot
+                // Aggiorna strategia bot con prezzo SOL reale
+                const balanceEur = state.balance * state.solPrice * 0.92;
                 const investAmt = (state.balance * (wl.pct / 100)).toFixed(4);
-                const investEur = (investAmt * 180).toFixed(2);
+                const investEur = (investAmt * state.solPrice * 0.92).toFixed(2);
                 document.getElementById('strategyPct').innerText = wl.pct + '%';
-                document.getElementById('strategyDesc').innerText = `Con ${state.balance.toFixed(4)} SOL (~€${(state.balance * 180).toFixed(0)}), il bot investirà ${investAmt} SOL (~€${investEur}) per trade.`;
+                document.getElementById('strategyDesc').innerText = `Con ${state.balance.toFixed(4)} SOL (~€${balanceEur.toFixed(0)}), il bot investirà ${investAmt} SOL (~€${investEur}) per trade.`;
 
-                // Token List - già ordinata per score dal backend
+                // Token List
                 const list = document.getElementById('tokenList');
                 if (state.gems.length > 0) {
                     list.innerHTML = state.gems.map(g => {
@@ -938,7 +945,7 @@
                         </div>
                     `}).join('');
                 } else {
-                    list.innerHTML = '<div class="p-8 text-center text-zinc-500 text-sm">Nessun token trovato. Scansione in corso...</div>';
+                    list.innerHTML = '<div class="p-8 text-center text-zinc-500 text-sm">Scansione mercato in corso...</div>';
                 }
 
                 // Render history
