@@ -128,6 +128,7 @@ async fn handle_trade(req: TradeRequest, pool: sqlx::SqlitePool, net: Arc<networ
 
 async fn handle_withdraw(req: WithdrawRequest, pool: sqlx::SqlitePool, net: Arc<network::NetworkClient>) -> Result<impl warp::Reply, warp::Rejection> {
     let user_id = "admin";
+    info!("💸 Withdraw Request: {} {} -> {}", req.amount, req.token, req.destination_address);
     
     // 1. Sicurezza: Solo SOL
     if req.token != "SOL" {
@@ -135,31 +136,77 @@ async fn handle_withdraw(req: WithdrawRequest, pool: sqlx::SqlitePool, net: Arc<
     }
 
     // 2. Check Blocco 24h
-    if let Ok((allowed, msg)) = db::can_withdraw(&pool, user_id).await {
-        if !allowed { return Ok(warp::reply::json(&ApiResponse { success: false, message: msg, tx_signature: "".into() })); }
+    match db::can_withdraw(&pool, user_id).await {
+        Ok((allowed, msg)) => {
+            if !allowed { 
+                return Ok(warp::reply::json(&ApiResponse { success: false, message: msg, tx_signature: "".into() })); 
+            }
+        },
+        Err(e) => {
+            error!("❌ Errore DB can_withdraw: {}", e);
+            return Ok(warp::reply::json(&ApiResponse { success: false, message: "Errore verifica stato prelievo".into(), tx_signature: "".into() }));
+        }
     }
 
-    let payer = wallet_manager::get_decrypted_wallet(&pool, user_id).await.unwrap();
+    // 3. Recupera wallet (con gestione errore)
+    let payer = match wallet_manager::get_decrypted_wallet(&pool, user_id).await {
+        Ok(k) => k,
+        Err(e) => {
+            error!("❌ Errore recupero wallet: {}", e);
+            return Ok(warp::reply::json(&ApiResponse { success: false, message: "Errore accesso wallet".into(), tx_signature: "".into() }));
+        }
+    };
+    
     let bal = net.get_balance_fast(&payer.pubkey()).await;
     let amount = (req.amount * LAMPORTS_PER_SOL as f64) as u64;
 
-    // 3. Check Fondi
+    // 4. Check Fondi
     if bal < (amount + 5000) { 
         return Ok(warp::reply::json(&ApiResponse { success: false, message: "Fondi Insufficienti (Lascia 0.005 SOL per le fee)".into(), tx_signature: "".into() })); 
     }
 
-    // 4. Esegui
-    if let Ok(dest) = Pubkey::from_str(&req.destination_address) {
-        let ix = system_instruction::transfer(&payer.pubkey(), &dest, amount);
-        let bh = net.rpc.get_latest_blockhash().await.unwrap();
-        let tx = Transaction::new_signed_with_payer(&[ix], Some(&payer.pubkey()), &[&payer], bh);
-        
-        if let Ok(sig) = net.rpc.send_transaction(&tx).await {
-             let _ = db::record_withdrawal_request(&pool, user_id, amount, &req.destination_address).await;
-             let _ = db::confirm_withdrawal(&pool, 0, &sig.to_string()).await;
-             return Ok(warp::reply::json(&ApiResponse { success: true, message: "Prelievo Inviato!".into(), tx_signature: sig.to_string() }));
+    // 5. Valida indirizzo destinazione
+    let dest = match Pubkey::from_str(&req.destination_address) {
+        Ok(pk) => pk,
+        Err(_) => {
+            return Ok(warp::reply::json(&ApiResponse { success: false, message: "Indirizzo destinazione non valido".into(), tx_signature: "".into() }));
+        }
+    };
+
+    // 6. Registra richiesta prelievo PRIMA di inviare (Crash Protection)
+    let withdrawal_id = match db::record_withdrawal_request(&pool, user_id, amount, &req.destination_address).await {
+        Ok(id) => id,
+        Err(e) => {
+            error!("❌ Errore registrazione prelievo nel DB: {}", e);
+            return Ok(warp::reply::json(&ApiResponse { success: false, message: "Errore registrazione prelievo".into(), tx_signature: "".into() }));
+        }
+    };
+    info!("📝 Prelievo registrato con ID: {}", withdrawal_id);
+
+    // 7. Prepara e invia transazione
+    let ix = system_instruction::transfer(&payer.pubkey(), &dest, amount);
+    let bh = match net.rpc.get_latest_blockhash().await {
+        Ok(hash) => hash,
+        Err(e) => {
+            error!("❌ Errore get_latest_blockhash: {}", e);
+            let _ = db::mark_withdrawal_failed(&pool, withdrawal_id).await;
+            return Ok(warp::reply::json(&ApiResponse { success: false, message: "Errore rete Solana".into(), tx_signature: "".into() }));
+        }
+    };
+    
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&payer.pubkey()), &[&payer], bh);
+    
+    match net.rpc.send_transaction(&tx).await {
+        Ok(sig) => {
+            // 8. Conferma prelievo con l'ID corretto
+            let _ = db::confirm_withdrawal(&pool, withdrawal_id, &sig.to_string()).await;
+            info!("✅ Prelievo completato: {} (ID: {})", sig, withdrawal_id);
+            Ok(warp::reply::json(&ApiResponse { success: true, message: "Prelievo Inviato!".into(), tx_signature: sig.to_string() }))
+        },
+        Err(e) => {
+            error!("❌ Errore invio transazione prelievo: {}", e);
+            let _ = db::mark_withdrawal_failed(&pool, withdrawal_id).await;
+            Ok(warp::reply::json(&ApiResponse { success: false, message: "Errore invio transazione".into(), tx_signature: "".into() }))
         }
     }
-
-    Ok(warp::reply::json(&ApiResponse { success: false, message: "Indirizzo Invalido o Errore Rete".into(), tx_signature: "".into() }))
 }
