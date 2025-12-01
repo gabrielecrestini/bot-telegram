@@ -853,28 +853,45 @@ pub async fn get_jupiter_swap_tx(user_pubkey: &str, input_mint: &str, output_min
     }
     
     // Priority Fee Ottimizzata:
-    // - 20,000 lamports = 0.00002 SOL ≈ $0.004 max
-    // - 100,000 µLamp/CU per priorità alta
+    // NOTA: lite-api NON accetta entrambi! Usa solo prioritizationFeeLamports
+    // 50,000 lamports = 0.00005 SOL ≈ $0.01 - sufficiente per priorità
     let swap_req = SwapRequest { 
         quote_response: quote_resp, 
         user_public_key: user_pubkey.to_string(), 
         wrap_and_unwrap_sol: true,
-        prioritization_fee_lamports: Some(20_000),
-        compute_unit_price_micro_lamports: Some(100_000),
+        prioritization_fee_lamports: Some(50_000),  // Solo questo!
+        compute_unit_price_micro_lamports: None,     // NON usare insieme!
     };
     
     // 2. POST Swap - Usa chiamata HTTP robusta con retry e DNS personalizzato
     let swap_resp = robust_post(JUP_SWAP_API, &swap_req).await?;
-    match swap_resp.json::<SwapResponse>().await {
+    
+    // Prima ottieni la risposta come testo per debug
+    let resp_text = swap_resp.text().await?;
+    
+    // Verifica se è un errore JSON
+    if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&resp_text) {
+        if let Some(error_msg) = error_json.get("error") {
+            error!("❌ Jupiter API error: {}", error_msg);
+            return Err(format!("Jupiter API error: {}", error_msg).into());
+        }
+        if let Some(msg) = error_json.get("message") {
+            error!("❌ Jupiter API message: {}", msg);
+            return Err(format!("Jupiter API: {}", msg).into());
+        }
+    }
+    
+    // Parse come SwapResponse
+    match serde_json::from_str::<SwapResponse>(&resp_text) {
         Ok(data) => {
             let tx_bytes = general_purpose::STANDARD.decode(&data.swap_transaction)?;
-            // Jupiter V6 restituisce VersionedTransaction
             let transaction: VersionedTransaction = bincode::deserialize(&tx_bytes)?;
             info!("✅ Jupiter swap TX ottenuta");
             Ok(transaction)
         }
         Err(e) => {
-            error!("❌ Jupiter swap parse error: {}", e);
+            // Log della risposta raw per debug
+            error!("❌ Jupiter swap parse error: {} | Response: {}", e, &resp_text[..resp_text.len().min(200)]);
             Err(format!("Swap parse error: {}", e).into())
         }
     }
