@@ -661,62 +661,56 @@ async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppSta
 async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient>) {
     info!("💎 AMMS Gem Discovery avviato");
     
-    // FALLBACK: Monete principali sempre disponibili
-    let default_gems = vec![
-        GemData {
-            token: "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz".to_string(),
-            symbol: "JUP".to_string(),
-            name: "Jupiter".to_string(),
-            price: 0.0,
-            safety_score: 95,
-            liquidity_usd: 50_000_000.0,
-            market_cap: 1_500_000_000.0,
-            volume_24h: 100_000_000.0,
-            change_1h: 0.0,
-            change_24h: 0.0,
-            image_url: "https://static.jup.ag/jup/icon.png".to_string(),
-            timestamp: chrono::Utc::now().timestamp(),
-            source: "TOP".to_string(),
-        },
-        GemData {
-            token: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263".to_string(),
-            symbol: "BONK".to_string(),
-            name: "Bonk".to_string(),
-            price: 0.0,
-            safety_score: 90,
-            liquidity_usd: 20_000_000.0,
-            market_cap: 2_000_000_000.0,
-            volume_24h: 50_000_000.0,
-            change_1h: 0.0,
-            change_24h: 0.0,
-            image_url: "https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I".to_string(),
-            timestamp: chrono::Utc::now().timestamp(),
-            source: "TOP".to_string(),
-        },
-        GemData {
-            token: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm".to_string(),
-            symbol: "WIF".to_string(),
-            name: "dogwifhat".to_string(),
-            price: 0.0,
-            safety_score: 88,
-            liquidity_usd: 30_000_000.0,
-            market_cap: 3_000_000_000.0,
-            volume_24h: 80_000_000.0,
-            change_1h: 0.0,
-            change_24h: 0.0,
-            image_url: "https://bafkreibk3covs5ltyqxa272uodhculbr6kea6betidfwy3ajsav2vjzyum.ipfs.nftstorage.link".to_string(),
-            timestamp: chrono::Utc::now().timestamp(),
-            source: "TOP".to_string(),
-        },
+    // TOP ALTCOIN - Solo indirizzi, dati REALI dalle API
+    let top_token_addresses = vec![
+        "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz",  // JUP
+        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK  
+        "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", // WIF
+        "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", // POPCAT
+        "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",  // RENDER
     ];
     
-    // Inizializza con le monete di default e aggiorna i prezzi
-    {
-        let mut found = state.found_gems.lock().unwrap();
-        if found.is_empty() {
-            *found = default_gems.clone();
-            info!("📊 Caricate {} monete di fallback", found.len());
+    // Carica dati LIVE per le top altcoin all'avvio
+    info!("📊 Caricamento dati LIVE per {} top altcoin...", top_token_addresses.len());
+    
+    for token_addr in &top_token_addresses {
+        match jupiter::get_token_market_data(token_addr).await {
+            Ok(mkt) => {
+                if mkt.price > 0.0 {
+                    let gem = GemData {
+                        token: mkt.address.clone(),
+                        symbol: mkt.symbol.clone(),
+                        name: mkt.name.clone(),
+                        price: mkt.price,
+                        safety_score: mkt.score.max(85), // Top altcoin hanno score alto
+                        liquidity_usd: mkt.liquidity_usd,
+                        market_cap: mkt.market_cap,
+                        volume_24h: mkt.volume_24h,
+                        change_1h: mkt.change_1h,
+                        change_24h: mkt.change_24h,
+                        image_url: mkt.image_url.clone(),
+                        timestamp: chrono::Utc::now().timestamp(),
+                        source: "TOP".to_string(),
+                    };
+                    
+                    let mut found = state.found_gems.lock().unwrap();
+                    if !found.iter().any(|g| g.token == gem.token) {
+                        info!("✅ {} | ${:.6} | MCap: ${:.0}M | Vol: ${:.0}K", 
+                            mkt.symbol, mkt.price, mkt.market_cap / 1_000_000.0, mkt.volume_24h / 1_000.0);
+                        found.push(gem);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("⚠️ API error per {}: {}", &token_addr[..8], e);
+            }
         }
+        sleep(Duration::from_millis(300)).await;
+    }
+    
+    {
+        let found = state.found_gems.lock().unwrap();
+        info!("📊 {} altcoin caricate con dati LIVE", found.len());
     }
     
     let mut cycle = 0u32;
@@ -841,12 +835,9 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
                 all_gems.truncate(25);
                 *found = all_gems;
                 info!("💎 Aggiornate {} gems", found.len());
-            } else if found.is_empty() {
-                // Se le API falliscono e non ci sono gems, ripristina fallback
-                *found = default_gems.clone();
-                warn!("⚠️ API non raggiungibili, usando {} gems di fallback", found.len());
             }
             // Se ci sono già gems ma le API falliscono, mantieni quelle esistenti
+            // Le top altcoin vengono caricate all'avvio, quindi ci saranno sempre dati
         }
         
         cycle = cycle.wrapping_add(1);

@@ -345,10 +345,11 @@ pub async fn get_token_market_data(mint: &str) -> Result<TokenMarketData, Box<dy
             let ch_1h = pair.priceChange.as_ref().and_then(|c| c.h1).unwrap_or(0.0);
             let ch_24h = pair.priceChange.as_ref().and_then(|c| c.h24).unwrap_or(0.0);
             
-            // Immagine del token
+            // Immagine del token - DexScreener primario, Jupiter come fallback
             let image_url = pair.info.as_ref()
                 .and_then(|i| i.imageUrl.clone())
-                .unwrap_or_else(|| format!("https://img.jup.ag/v6/{}/logo", mint));
+                .filter(|url| !url.is_empty())
+                .unwrap_or_else(|| format!("https://token-icons.s3.amazonaws.com/{}.png", mint));
             
             let score = calculate_token_score(liq, vol, mcap, ch_5m, ch_1h, ch_24h);
             

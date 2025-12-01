@@ -932,14 +932,16 @@
             document.getElementById('tsAddr').innerText = token.token || '...';
             document.getElementById('tsMax').innerText = Math.max(0, state.balance - 0.005).toFixed(4);
             
-            // Immagine con fallback
-            const imgUrl = token.image_url || `https://img.jup.ag/v6/${token.token}/logo`;
+            // Immagine con fallback robusto
+            const symbol = token.symbol || '?';
+            const letterFallback = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><rect fill='%236366f1' width='48' height='48' rx='24'/><text x='24' y='31' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold' font-size='20'>${symbol[0]}</text></svg>`;
+            
             const imgEl = document.getElementById('tsImg');
-            imgEl.src = imgUrl;
             imgEl.onerror = function() { 
                 this.onerror = null;
-                this.src = `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect fill="%2327272a" width="40" height="40" rx="20"/><text x="20" y="26" text-anchor="middle" fill="white" font-size="16">${(token.symbol || '?')[0]}</text></svg>`; 
+                this.src = letterFallback; 
             };
+            imgEl.src = token.image_url || letterFallback;
             
             lucide.createIcons();
         }
@@ -953,28 +955,49 @@
             const amt = parseFloat(document.getElementById('tsAmt').value);
             if (!amt || amt <= 0) return toast('Errore', 'Inserisci importo');
             if (amt > state.balance) return toast('Errore', 'Fondi insufficienti');
+            
+            // Verifica che il token sia valido
+            if (!state.currentToken || !state.currentToken.token) {
+                return toast('Errore', 'Seleziona un token valido');
+            }
 
             const btn = document.getElementById('btnTrade');
             btn.disabled = true;
-            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Invio...';
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Acquistando...';
             lucide.createIcons();
+
+            console.log('🛒 Acquisto:', {
+                token: state.currentToken.token,
+                symbol: state.currentToken.symbol,
+                amount: amt
+            });
 
             try {
                 const res = await fetch(`${API}/trade`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ action: 'BUY', token: state.currentToken.token, amount_sol: amt })
+                    body: JSON.stringify({ 
+                        action: 'BUY', 
+                        token: state.currentToken.token, 
+                        amount_sol: amt 
+                    })
                 });
                 const d = await res.json();
+                console.log('📬 Risposta:', d);
+                
                 if (d.success) {
-                    toast('Eseguito!', `Acquisto ${state.currentToken.symbol} completato`);
+                    toast('✅ Eseguito!', `Acquisto ${state.currentToken.symbol} completato`);
+                    if (d.solscan_url) {
+                        console.log('🔗 Solscan:', d.solscan_url);
+                    }
                     closeAll();
                     sync();
                 } else {
-                    toast('Errore', d.message);
+                    toast('Errore', d.message || 'Trade fallito');
                 }
             } catch (e) {
-                toast('Errore', 'Connessione fallita');
+                console.error('❌ Trade error:', e);
+                toast('Errore', 'Connessione fallita. Riprova.');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '<i data-lucide="zap" class="w-4 h-4"></i> Compra';
@@ -1251,21 +1274,52 @@
             }
         }
         
-        function openTopCoin(symbol) {
-            const token = {
-                token: TOP_COINS[symbol],
-                symbol: symbol,
-                name: symbol === 'SOL' ? 'Solana' : symbol === 'JUP' ? 'Jupiter' : 'Bonk',
-                price: 0,
-                change_24h: 0,
-                market_cap: 0,
-                liquidity_usd: 0,
-                volume_24h: 0,
-                safety_score: 95,
-                image_url: symbol === 'SOL' ? 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' : 
-                           symbol === 'JUP' ? 'https://static.jup.ag/jup/icon.png' : 'https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I'
-            };
-            openToken(token);
+        async function openTopCoin(symbol) {
+            const address = TOP_COINS[symbol];
+            toast('Caricamento...', 'Recupero dati live per ' + symbol);
+            
+            try {
+                // Carica dati REALI da DexScreener
+                const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, {
+                    signal: AbortSignal.timeout(8000)
+                });
+                const data = await res.json();
+                
+                if (data.pairs && data.pairs[0]) {
+                    const pair = data.pairs[0];
+                    const token = {
+                        token: address,
+                        symbol: symbol,
+                        name: pair.baseToken?.name || symbol,
+                        price: parseFloat(pair.priceUsd || 0),
+                        change_1h: pair.priceChange?.h1 || 0,
+                        change_24h: pair.priceChange?.h24 || 0,
+                        market_cap: pair.marketCap || pair.fdv || 0,
+                        liquidity_usd: pair.liquidity?.usd || 0,
+                        volume_24h: pair.volume?.h24 || 0,
+                        safety_score: 95,
+                        image_url: pair.info?.imageUrl || (symbol === 'SOL' ? 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' : 
+                                   symbol === 'JUP' ? 'https://static.jup.ag/jup/icon.png' : '')
+                    };
+                    openToken(token);
+                } else {
+                    // Fallback se DexScreener non ha dati
+                    openToken({
+                        token: address,
+                        symbol: symbol,
+                        name: symbol,
+                        price: symbol === 'SOL' ? state.solPrice : 0,
+                        change_24h: 0,
+                        market_cap: 0,
+                        liquidity_usd: 0,
+                        volume_24h: 0,
+                        safety_score: 95
+                    });
+                }
+            } catch (e) {
+                console.error('Errore caricamento ' + symbol + ':', e);
+                toast('Errore', 'Impossibile caricare dati per ' + symbol);
+            }
         }
         
         function renderOpenPositions() {
@@ -1678,19 +1732,26 @@
                         const isTop = g.source === 'TOP' || g.source === 'ALTCOIN' || g.market_cap > 10000000;
                         const change1h = g.change_1h || 0;
                         const change24h = g.change_24h || 0;
-                        const imgUrl = g.image_url || `https://img.jup.ag/v6/${g.token}/logo`;
-                        const fallbackImg = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect fill='%2327272a' width='40' height='40' rx='20'/><text x='20' y='26' text-anchor='middle' fill='white' font-size='16'>${(g.symbol || '?')[0]}</text></svg>`;
+                        
+                        // Immagine con fallback multipli
+                        const symbol = g.symbol || '?';
+                        const letterFallback = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><rect fill='%236366f1' width='48' height='48' rx='24'/><text x='24' y='31' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold' font-size='20'>${symbol[0]}</text></svg>`;
                         
                         return `
                         <div class="token-row" onclick="openTokenByIndex(${idx})">
-                            <img src="${imgUrl}" class="w-12 h-12 rounded-full bg-zinc-800" onerror="this.onerror=null; this.src='${fallbackImg}'">
+                            <div class="w-12 h-12 rounded-full bg-zinc-800 overflow-hidden flex-shrink-0">
+                                <img src="${g.image_url || letterFallback}" 
+                                     class="w-full h-full object-cover" 
+                                     onerror="this.onerror=null; this.src='${letterFallback}';"
+                                     loading="lazy">
+                            </div>
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2 mb-1">
-                                    <span class="font-bold">${g.symbol || 'N/A'}</span>
+                                    <span class="font-bold">${symbol}</span>
                                     ${isTop ? '<span class="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-medium">TOP</span>' : ''}
                                     <span class="score-badge ${getScoreClass(g.safety_score)}">${g.safety_score || 0}%</span>
                                 </div>
-                                <div class="text-[11px] text-zinc-500 truncate mb-1">${g.name || g.symbol || 'Unknown'}</div>
+                                <div class="text-[11px] text-zinc-500 truncate mb-1">${g.name || symbol}</div>
                                 <div class="flex items-center gap-3 text-[10px]">
                                     <span class="text-zinc-400">MCap: <span class="text-zinc-300 font-medium">${mcapStr}</span></span>
                                     <span class="text-zinc-400">Vol: <span class="text-zinc-300 font-medium">${volStr}</span></span>
