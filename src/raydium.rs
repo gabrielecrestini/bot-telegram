@@ -190,10 +190,12 @@ pub async fn execute_swap(
 
     let mut instructions = Vec::new();
 
-    // 1. PRIORITY FEES (Massima Velocità)
-    // 1M microlamports = 0.001 SOL. Abbastanza per battere la congestione media.
-    instructions.push(ComputeBudgetInstruction::set_compute_unit_price(1_000_000));
-    instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(200_000));
+    // 1. PRIORITY FEES OTTIMIZZATE
+    // Swap AMM = ~150,000-200,000 CU
+    // 100,000 µLamp/CU × 200,000 CU = 20,000 lamports = 0.00002 SOL (~$0.004)
+    // Abbastanza per battere congestione senza bruciare capitale
+    instructions.push(ComputeBudgetInstruction::set_compute_unit_price(100_000));  // Priorità alta ma ragionevole
+    instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(200_000));  // Swap complesso
 
     // 2. GESTIONE WSOL (Wrap SOL)
     let wsol_ata = spl_associated_token_account::get_associated_token_address(&user, &wsol_mint);

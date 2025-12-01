@@ -618,9 +618,12 @@ async fn handle_withdraw(
         }
     };
 
+    // PRIORITY FEES OTTIMIZZATE per trasferimenti
+    // Trasferimento SOL = ~450 CU, mettiamo margine a 5,000
+    // 50,000 µLamp/CU × 5,000 CU = 250 lamports = 0.00000025 SOL (~$0.00005)
     let instructions = vec![
-        ComputeBudgetInstruction::set_compute_unit_price(100_000),
-        ComputeBudgetInstruction::set_compute_unit_limit(50_000),
+        ComputeBudgetInstruction::set_compute_unit_price(50_000),  // Priorità media
+        ComputeBudgetInstruction::set_compute_unit_limit(5_000),   // Trasferimento semplice
         system_instruction::transfer(&payer.pubkey(), &dest, amount),
     ];
 

@@ -80,9 +80,21 @@ pub struct TokenMarketData {
     pub score: u8, // Punteggio 0-100 basato su analisi
 }
 
+// SwapRequest per Jupiter V6 API con priority fees ottimizzate
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct SwapRequest { quote_response: serde_json::Value, user_public_key: String, wrap_and_unwrap_sol: bool }
+struct SwapRequest { 
+    quote_response: serde_json::Value, 
+    user_public_key: String, 
+    wrap_and_unwrap_sol: bool,
+    // Priority fee dinamica basata su congestione rete
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prioritization_fee_lamports: Option<u64>,
+    // Compute unit price (micro-lamports per CU)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compute_unit_price_micro_lamports: Option<u64>,
+}
+
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct SwapResponse { swap_transaction: String }
@@ -652,13 +664,24 @@ pub async fn find_profitable_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn 
     Ok(profitable)
 }
 
+/// Ottiene transazione swap da Jupiter con priority fees ottimizzate
+/// slippage_bps: 100 = 1%, 200 = 2%, ecc.
 pub async fn get_jupiter_swap_tx(user_pubkey: &str, input_mint: &str, output_mint: &str, amount_lamports: u64, slippage_bps: u16) -> Result<Transaction, Box<dyn Error + Send + Sync>> {
     let client = reqwest::Client::new();
     let quote_url = format!("{}?inputMint={}&outputMint={}&amount={}&slippageBps={}", JUP_QUOTE_API, input_mint, output_mint, amount_lamports, slippage_bps);
     let quote_resp: serde_json::Value = client.get(&quote_url).send().await?.json().await?;
     if quote_resp.get("error").is_some() { return Err(format!("Errore Quote: {}", quote_resp).into()); }
     
-    let swap_req = SwapRequest { quote_response: quote_resp, user_public_key: user_pubkey.to_string(), wrap_and_unwrap_sol: true };
+    // Priority Fee Ottimizzata:
+    // - 20,000 lamports = 0.00002 SOL ≈ $0.004 (ragionevole per swap veloci)
+    // - 100,000 µLamp/CU per priorità alta senza sprecare capitale
+    let swap_req = SwapRequest { 
+        quote_response: quote_resp, 
+        user_public_key: user_pubkey.to_string(), 
+        wrap_and_unwrap_sol: true,
+        prioritization_fee_lamports: Some(20_000),        // ~$0.004 max
+        compute_unit_price_micro_lamports: Some(100_000), // Priorità alta
+    };
     let swap_resp: SwapResponse = client.post(JUP_SWAP_API).json(&swap_req).send().await?.json().await?;
     
     let tx_bytes = general_purpose::STANDARD.decode(&swap_resp.swap_transaction)?;
