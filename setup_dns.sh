@@ -68,12 +68,13 @@ echo "📌 Step 3: Test connettività IPv4..."
 echo ""
 
 # Test DNS resolution (forza IPv4 con -4)
-echo "→ Test quote-api.jup.ag (IPv4)..."
-if host -4 quote-api.jup.ag 1.1.1.1 2>/dev/null | grep -q "has address"; then
-    IP=$(host -4 quote-api.jup.ag 1.1.1.1 2>/dev/null | grep "has address" | head -1 | awk '{print $NF}')
-    echo "  ✅ quote-api.jup.ag → $IP"
+# NOTA: quote-api.jup.ag NON ha record A (IPv4)! Usiamo lite-api.jup.ag
+echo "→ Test lite-api.jup.ag (IPv4) - Jupiter Swap API..."
+if host -4 lite-api.jup.ag 1.1.1.1 2>/dev/null | grep -q "has address"; then
+    IP=$(host -4 lite-api.jup.ag 1.1.1.1 2>/dev/null | grep "has address" | head -1 | awk '{print $NF}')
+    echo "  ✅ lite-api.jup.ag → $IP"
 else
-    echo "  ❌ Errore risoluzione quote-api.jup.ag"
+    echo "  ❌ Errore risoluzione lite-api.jup.ag"
 fi
 
 echo "→ Test api.dexscreener.com (IPv4)..."
@@ -89,16 +90,19 @@ if host -4 token.jup.ag 1.1.1.1 2>/dev/null | grep -q "has address"; then
     IP=$(host -4 token.jup.ag 1.1.1.1 2>/dev/null | grep "has address" | head -1 | awk '{print $NF}')
     echo "  ✅ token.jup.ag → $IP"
 else
-    echo "  ❌ Errore risoluzione token.jup.ag"
+    # token.jup.ag potrebbe non avere A record, non è critico
+    echo "  ⚠️ token.jup.ag non ha record A (normale)"
 fi
 
-# Test connessione HTTPS
+# Test connessione HTTPS - USA lite-api.jup.ag!
 echo ""
-echo "→ Test HTTPS quote-api.jup.ag..."
-if curl -4 -s --connect-timeout 5 "https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000&slippageBps=50" > /dev/null 2>&1; then
-    echo "  ✅ Jupiter API raggiungibile!"
+echo "→ Test HTTPS lite-api.jup.ag (Jupiter Swap API)..."
+RESPONSE=$(curl -4 -s --connect-timeout 5 "https://lite-api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000&slippageBps=50" 2>&1)
+if echo "$RESPONSE" | grep -q "outAmount"; then
+    AMOUNT=$(echo "$RESPONSE" | grep -o '"outAmount":"[0-9]*"' | head -1 | cut -d'"' -f4)
+    echo "  ✅ Jupiter API OK! (1 SOL ≈ $AMOUNT USDC)"
 else
-    echo "  ❌ Jupiter API non raggiungibile"
+    echo "  ❌ Jupiter API errore: $RESPONSE"
 fi
 
 echo ""

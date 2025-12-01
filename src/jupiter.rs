@@ -17,9 +17,11 @@ const DEX_API: &str = "https://api.dexscreener.com/latest/dex/tokens/";
 const DEX_SEARCH_API: &str = "https://api.dexscreener.com/latest/dex/search?q=";
 const DEX_TRENDING_API: &str = "https://api.dexscreener.com/token-boosts/top/v1";
 const BIRDEYE_API: &str = "https://public-api.birdeye.so/defi/tokenlist?sort_by=v24hChangePercent&sort_type=desc&offset=0&limit=20";
-const JUP_QUOTE_API: &str = "https://quote-api.jup.ag/v6/quote";
-const JUP_SWAP_API: &str = "https://quote-api.jup.ag/v6/swap";
-const JUP_PRICE_API: &str = "https://price.jup.ag/v6/price";
+// IMPORTANTE: Usiamo lite-api.jup.ag invece di quote-api.jup.ag
+// quote-api.jup.ag NON ha record DNS A (IPv4), solo IPv6 che AWS non supporta!
+const JUP_QUOTE_API: &str = "https://lite-api.jup.ag/swap/v1/quote";
+const JUP_SWAP_API: &str = "https://lite-api.jup.ag/swap/v1/swap";
+const JUP_PRICE_API: &str = "https://lite-api.jup.ag/price/v2/price";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DNS RESOLVER PERSONALIZZATO - Usa Cloudflare (1.1.1.1) e Google (8.8.8.8)
