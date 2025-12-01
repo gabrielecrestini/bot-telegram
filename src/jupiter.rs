@@ -258,9 +258,17 @@ struct SwapRequest {
     compute_unit_price_micro_lamports: Option<u64>,
 }
 
+/// Risposta swap da Jupiter lite-api.jup.ag/swap/v1/swap
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct SwapResponse { swap_transaction: String }
+struct SwapResponse { 
+    swap_transaction: String,
+    // Altri campi opzionali che potremmo usare in futuro
+    #[serde(default)]
+    last_valid_block_height: Option<u64>,
+    #[serde(default)]
+    prioritization_fee_lamports: Option<u64>,
+}
 
 pub async fn fetch_all_verified_tokens() -> Result<Vec<JupiterToken>, Box<dyn Error + Send + Sync>> {
     let resp = robust_get(JUP_TOKEN_LIST_API).await?;
