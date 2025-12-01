@@ -310,7 +310,7 @@ pub async fn count_open_trades(pool: &SqlitePool, user_id: &str) -> Result<usize
 }
 
 /// Recupera trade aperti (per il ripristino al riavvio)
-pub async fn get_open_trades(pool: &SqlitePool) -> Result<Vec<(i32, String, u64, u64)>, sqlx::Error> {
+pub async fn get_open_trades_all(pool: &SqlitePool) -> Result<Vec<(i32, String, u64, u64)>, sqlx::Error> {
     let rows = sqlx::query("SELECT id, token_address, amount_in_lamports, highest_price_lamports FROM trades WHERE status = 'OPEN'")
         .fetch_all(pool)
         .await?;
@@ -324,6 +324,69 @@ pub async fn get_open_trades(pool: &SqlitePool) -> Result<Vec<(i32, String, u64,
         results.push((id, token, entry as u64, high as u64));
     }
     Ok(results)
+}
+
+/// Trade aperto per un utente specifico
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct OpenTrade {
+    pub id: i32,
+    pub token_address: String,
+    pub amount_lamports: u64,
+    pub entry_price: f64,
+}
+
+/// Recupera trade aperti per un utente specifico
+pub async fn get_open_trades(pool: &SqlitePool, user_id: &str) -> Result<Vec<OpenTrade>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, token_address, amount_in_lamports, entry_price 
+         FROM trades WHERE user_id = ? AND status = 'OPEN'"
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(OpenTrade {
+            id: row.get("id"),
+            token_address: row.get("token_address"),
+            amount_lamports: row.get::<i64, _>("amount_in_lamports") as u64,
+            entry_price: row.try_get("entry_price").unwrap_or(0.0),
+        });
+    }
+    Ok(results)
+}
+
+/// Statistiche utente
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UserStats {
+    pub total_trades: i32,
+    pub winning_trades: i32,
+    pub total_pnl: f64,
+    pub best_trade_pnl: f64,
+}
+
+/// Recupera statistiche di un utente
+pub async fn get_user_stats(pool: &SqlitePool, user_id: &str) -> Result<UserStats, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT 
+            COUNT(*) as total_trades,
+            SUM(CASE WHEN profit_loss_sol > 0 THEN 1 ELSE 0 END) as winning_trades,
+            COALESCE(SUM(profit_loss_sol), 0) as total_pnl,
+            COALESCE(MAX(profit_loss_sol), 0) as best_trade_pnl
+         FROM trades 
+         WHERE user_id = ? AND status IN ('SOLD', 'CLOSED')"
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    
+    Ok(UserStats {
+        total_trades: row.get("total_trades"),
+        winning_trades: row.try_get("winning_trades").unwrap_or(0),
+        total_pnl: row.try_get("total_pnl").unwrap_or(0.0),
+        best_trade_pnl: row.try_get("best_trade_pnl").unwrap_or(0.0),
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════

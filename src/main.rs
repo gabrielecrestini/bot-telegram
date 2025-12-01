@@ -69,10 +69,12 @@ pub struct AppState {
     pub math_signals: Mutex<Vec<api::SignalData>>,
     pub buy_cooldowns: Mutex<HashMap<String, HashMap<String, i64>>>, 
     pub processed_sigs: Mutex<HashSet<String>>,
-    // Nuovi per AMMS
+    // AMMS Engine
     pub market_data: Mutex<HashMap<String, strategy::MarketData>>,
     pub open_positions: Mutex<HashMap<String, Vec<engine::OpenPosition>>>, // user_id -> positions
     pub portfolio_stats: Mutex<HashMap<String, engine::PortfolioStats>>,   // user_id -> stats
+    // Bot Users: user_id -> (amount, strategy)
+    pub bot_active_users: Mutex<HashMap<String, (f64, String)>>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -777,6 +779,7 @@ async fn main() {
         market_data: Mutex::new(HashMap::new()),
         open_positions: Mutex::new(HashMap::new()),
         portfolio_stats: Mutex::new(HashMap::new()),
+        bot_active_users: Mutex::new(HashMap::new()),
     });
 
     // Telegram Bot

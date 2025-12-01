@@ -79,6 +79,22 @@ struct WebAuthRequest {
     action: String, // "login" o "register"
 }
 
+#[derive(Deserialize)]
+struct BotStartRequest {
+    amount: f64,      // 0 = automatico
+    strategy: String, // "DIP", "BREAKOUT", "BOTH"
+}
+
+#[derive(Serialize)]
+struct BotResponse {
+    success: bool,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profit: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trades_count: Option<i32>,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // AUTENTICAZIONE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -240,6 +256,28 @@ pub async fn start_server(pool: sqlx::SqlitePool, net: Arc<network::NetworkClien
         .and(pool_filter.clone())
         .and_then(handle_auth);
 
+    // Bot Start endpoint
+    let bot_start = warp::path!("bot" / "start")
+        .and(warp::post())
+        .and(tg_id_filter.clone())
+        .and(session_filter.clone())
+        .and(tg_data_filter.clone())
+        .and(warp::body::json())
+        .and(pool_filter.clone())
+        .and(state_filter.clone())
+        .and_then(handle_bot_start);
+
+    // Bot Stop endpoint
+    let bot_stop = warp::path!("bot" / "stop")
+        .and(warp::post())
+        .and(tg_id_filter.clone())
+        .and(session_filter.clone())
+        .and(tg_data_filter.clone())
+        .and(pool_filter.clone())
+        .and(net_filter.clone())
+        .and(state_filter.clone())
+        .and_then(handle_bot_stop);
+
     // CORS
     let cors = warp::cors()
         .allow_any_origin()
@@ -261,12 +299,14 @@ pub async fn start_server(pool: sqlx::SqlitePool, net: Arc<network::NetworkClien
         .or(trade)
         .or(withdraw)
         .or(auth)
+        .or(bot_start)
+        .or(bot_stop)
         .with(cors)
         .with(warp::log("api"));
 
-    info!("🌍 API Server LIVE: Porta 3000");
+    info!("🌍 API Server LIVE: Porta 3000 (TPU Priority)");
     info!("   ✓ Multi-user: Telegram + Web Auth");
-    info!("   ✓ Endpoints: /health, /status, /trade, /withdraw, /auth");
+    info!("   ✓ Endpoints: /health, /status, /trade, /withdraw, /auth, /bot/start, /bot/stop");
     
     warp::serve(routes).run(([0, 0, 0, 0], 3000)).await;
 }
@@ -743,5 +783,143 @@ async fn handle_auth(
         user_id: "".into(),
         session_token: "".into(),
         message: "Azione non valida".into(),
+    }))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BOT HANDLERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async fn handle_bot_start(
+    tg_id: Option<String>,
+    session: Option<String>,
+    tg_data: Option<String>,
+    req: BotStartRequest,
+    pool: sqlx::SqlitePool,
+    state: Arc<AppState>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let user_id = match extract_user_id(tg_id, session, tg_data) {
+        Some(id) => id,
+        None => {
+            return Ok(warp::reply::json(&BotResponse {
+                success: false,
+                message: "Non autenticato".into(),
+                profit: None,
+                trades_count: None,
+            }));
+        }
+    };
+
+    info!("🤖 Bot START [{}]: amount={}, strategy={}", user_id, req.amount, req.strategy);
+
+    // Salva configurazione bot per questo utente
+    let settings = serde_json::json!({
+        "bot_active": true,
+        "bot_amount": req.amount,
+        "bot_strategy": req.strategy,
+        "bot_started_at": chrono::Utc::now().timestamp()
+    });
+
+    let _ = sqlx::query("UPDATE users SET settings = ? WHERE tg_id = ?")
+        .bind(settings.to_string())
+        .bind(&user_id)
+        .execute(&pool)
+        .await;
+
+    // Attiva il flag nel state globale
+    {
+        let mut bot_users = state.bot_active_users.lock().unwrap();
+        bot_users.insert(user_id.clone(), (req.amount, req.strategy.clone()));
+    }
+
+    Ok(warp::reply::json(&BotResponse {
+        success: true,
+        message: format!("Bot avviato con strategia {}", req.strategy),
+        profit: Some(0.0),
+        trades_count: Some(0),
+    }))
+}
+
+async fn handle_bot_stop(
+    tg_id: Option<String>,
+    session: Option<String>,
+    tg_data: Option<String>,
+    pool: sqlx::SqlitePool,
+    net: Arc<network::NetworkClient>,
+    state: Arc<AppState>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let user_id = match extract_user_id(tg_id, session, tg_data) {
+        Some(id) => id,
+        None => {
+            return Ok(warp::reply::json(&BotResponse {
+                success: false,
+                message: "Non autenticato".into(),
+                profit: None,
+                trades_count: None,
+            }));
+        }
+    };
+
+    info!("🛑 Bot STOP [{}]", user_id);
+
+    // Rimuovi dal state globale
+    {
+        let mut bot_users = state.bot_active_users.lock().unwrap();
+        bot_users.remove(&user_id);
+    }
+
+    // Vendi tutte le posizioni aperte di questo utente
+    let open_trades = db::get_open_trades(&pool, &user_id).await.unwrap_or_default();
+    let mut total_profit = 0.0;
+    let mut closed_count = 0;
+
+    for trade in &open_trades {
+        // Prova a vendere tramite Jupiter
+        if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
+            let output = "So11111111111111111111111111111111111111112";
+            
+            if let Ok(mut tx) = jupiter::get_jupiter_swap_tx(
+                &payer.pubkey().to_string(),
+                &trade.token_address,
+                output,
+                trade.amount_lamports,
+                300, // slippage più alto per vendite urgenti
+            ).await {
+                if let Ok(bh) = net.rpc.get_latest_blockhash().await {
+                    tx.sign(&[&payer], bh);
+                    
+                    // TPU PRIORITY per vendite urgenti
+                    if let Ok(sig) = net.send_transaction_fast(&tx).await {
+                        let _ = db::record_sell(&pool, &user_id, &trade.token_address, &sig, 0.0).await;
+                        closed_count += 1;
+                        info!("✅ Venduto {} per bot stop", trade.token_address);
+                    }
+                }
+            }
+        }
+    }
+
+    // Calcola profitto totale sessione
+    if let Ok(stats) = db::get_user_stats(&pool, &user_id).await {
+        total_profit = stats.total_pnl;
+    }
+
+    // Aggiorna settings
+    let settings = serde_json::json!({
+        "bot_active": false,
+        "bot_stopped_at": chrono::Utc::now().timestamp()
+    });
+    
+    let _ = sqlx::query("UPDATE users SET settings = ? WHERE tg_id = ?")
+        .bind(settings.to_string())
+        .bind(&user_id)
+        .execute(&pool)
+        .await;
+
+    Ok(warp::reply::json(&BotResponse {
+        success: true,
+        message: format!("Bot fermato. Vendute {} posizioni.", closed_count),
+        profit: Some(total_profit),
+        trades_count: Some(closed_count),
     }))
 }

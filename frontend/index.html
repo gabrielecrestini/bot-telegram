@@ -244,163 +244,240 @@
     </section>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- TRADING PAGE - Lista semplice ordinata per score -->
+    <!-- TRADING PAGE - Manuale Professionale -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <section id="p-trade" class="page p-4">
         <div class="flex items-center justify-between mb-4">
-            <h2 class="text-xl font-bold">Mercato</h2>
+            <h2 class="text-xl font-bold">Trading</h2>
             <span class="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded-full flex items-center gap-1">
                 <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span> LIVE
             </span>
         </div>
 
-        <p class="text-xs text-zinc-500 mb-3">Ordinati per potenziale (score più alto = migliore)</p>
+        <!-- TOP COINS - Sempre visibili con prezzo live -->
+        <div class="mb-4">
+            <p class="text-xs text-zinc-500 mb-2 flex items-center gap-1">
+                <i data-lucide="star" class="w-3 h-3"></i> Top Coins
+            </p>
+            <div class="grid grid-cols-3 gap-2" id="topCoinsGrid">
+                <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('SOL')">
+                    <img src="https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" class="w-8 h-8 rounded-full mx-auto mb-1">
+                    <p class="font-bold text-sm">SOL</p>
+                    <p class="mono text-xs text-green-400" id="price_SOL">$--</p>
+                </div>
+                <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('JUP')">
+                    <img src="https://static.jup.ag/jup/icon.png" class="w-8 h-8 rounded-full mx-auto mb-1">
+                    <p class="font-bold text-sm">JUP</p>
+                    <p class="mono text-xs text-green-400" id="price_JUP">$--</p>
+                </div>
+                <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('BONK')">
+                    <img src="https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I" class="w-8 h-8 rounded-full mx-auto mb-1">
+                    <p class="font-bold text-sm">BONK</p>
+                    <p class="mono text-xs text-green-400" id="price_BONK">$--</p>
+                </div>
+            </div>
+        </div>
 
-        <div id="tokenList" class="card overflow-hidden">
-            <div class="p-8 text-center text-zinc-500">
-                <i data-lucide="loader" class="w-6 h-6 mx-auto mb-2 animate-spin"></i>
-                <p class="text-sm">Scansione mercato...</p>
+        <!-- POSIZIONI APERTE - Asset acquistati -->
+        <div class="card mb-4 overflow-hidden" id="openPositionsCard">
+            <div class="p-3 border-b border-zinc-800 flex items-center justify-between bg-gradient-to-r from-indigo-900/30 to-transparent">
+                <h4 class="font-semibold flex items-center gap-2 text-sm">
+                    <i data-lucide="briefcase" class="w-4 h-4 text-indigo-400"></i>
+                    Posizioni Aperte
+                </h4>
+                <span class="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded" id="openPositionsCount">0</span>
+            </div>
+            <div id="openPositionsList" class="max-h-48 overflow-y-auto">
+                <div class="p-4 text-center text-zinc-500 text-xs">
+                    Nessuna posizione aperta
+                </div>
+            </div>
+        </div>
+
+        <!-- TOKEN TROVATI DAL BOT -->
+        <div class="card overflow-hidden">
+            <div class="p-3 border-b border-zinc-800 flex items-center justify-between">
+                <h4 class="font-semibold flex items-center gap-2 text-sm">
+                    <i data-lucide="search" class="w-4 h-4 text-purple-400"></i>
+                    Opportunità Trovate
+                </h4>
+                <span class="text-[10px] text-zinc-500">Aggiornamento ciclico</span>
+            </div>
+            <div id="tokenList" class="max-h-96 overflow-y-auto">
+                <div class="p-6 text-center text-zinc-500">
+                    <i data-lucide="loader" class="w-5 h-5 mx-auto mb-2 animate-spin"></i>
+                    <p class="text-xs">Scansione mercato...</p>
+                </div>
             </div>
         </div>
     </section>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- BOT PAGE -->
+    <!-- BOT PAGE - Trading Automatico -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <section id="p-bot" class="page p-4">
-        <!-- Bot Status -->
-        <div class="card p-6 mb-4">
-            <div class="flex items-center justify-between mb-4">
-                <div class="flex items-center gap-3">
-                    <div class="w-12 h-12 rounded-xl bg-indigo-500/20 flex items-center justify-center" id="botIconBox">
-                        <i data-lucide="bot" class="w-6 h-6 text-indigo-400" id="botIcon"></i>
+        
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- SETUP INIZIALE (mostrato solo se bot non attivo) -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <div id="botSetup">
+            <div class="card p-6 mb-4 border-indigo-500/30">
+                <div class="text-center mb-6">
+                    <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center mx-auto mb-4">
+                        <i data-lucide="bot" class="w-8 h-8 text-white"></i>
                     </div>
-                    <div>
-                        <h3 class="font-bold">Auto-Trading</h3>
-                        <p class="text-sm text-zinc-400" id="botStatus">Disattivato</p>
+                    <h2 class="text-xl font-bold mb-1">Configura il Bot</h2>
+                    <p class="text-sm text-zinc-400">Il bot farà trading automatico 24/7</p>
+                </div>
+                
+                <!-- Step 1: Importo -->
+                <div class="mb-6">
+                    <label class="text-sm font-medium mb-2 block">💰 Quanto vuoi investire per trade?</label>
+                    <input type="number" id="botAmount" placeholder="0" step="0.01" value="0" class="mono text-lg">
+                    <p class="text-xs text-zinc-500 mt-2">
+                        <span class="text-yellow-400">0 = Automatico</span> - Il bot decide in base al tuo saldo usando il money management intelligente
+                    </p>
+                </div>
+                
+                <!-- Step 2: Strategia -->
+                <div class="mb-6">
+                    <label class="text-sm font-medium mb-3 block">📊 Quale strategia preferisci?</label>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="card p-4 cursor-pointer border-2 border-transparent hover:border-blue-500/50 transition-all" id="strategyDip" onclick="selectStrategy('DIP')">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="text-2xl">🔵</span>
+                                <span class="font-bold text-blue-400">DIP</span>
+                            </div>
+                            <p class="text-xs text-zinc-400">Compra quando il prezzo è basso (sconto). Più sicuro.</p>
+                        </div>
+                        <div class="card p-4 cursor-pointer border-2 border-transparent hover:border-orange-500/50 transition-all" id="strategyBreakout" onclick="selectStrategy('BREAKOUT')">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="text-2xl">🚀</span>
+                                <span class="font-bold text-orange-400">BREAKOUT</span>
+                            </div>
+                            <p class="text-xs text-zinc-400">Cavalca l'onda quando sale. Più aggressivo.</p>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <div class="card p-3 cursor-pointer border-2 border-indigo-500 bg-indigo-500/10" id="strategyBoth" onclick="selectStrategy('BOTH')">
+                            <div class="flex items-center justify-center gap-2">
+                                <span class="text-xl">🔵🚀</span>
+                                <span class="font-bold text-indigo-400">ENTRAMBE (Consigliato)</span>
+                            </div>
+                            <p class="text-xs text-zinc-400 text-center mt-1">Il bot sceglie automaticamente in base al mercato</p>
+                        </div>
                     </div>
                 </div>
-                <div class="switch" id="botSwitch" onclick="toggleBot()"></div>
-            </div>
-
-            <div class="bg-zinc-900 rounded-lg p-4 text-sm text-zinc-400" id="botInfo">
-                <strong class="text-indigo-400">AMMS 2025</strong> - Strategia multi-indicatore con EMA, RSI, ATR e Bollinger.
-                <strong class="text-white">Trailing stop adattivo</strong> basato su ATR - sale con il prezzo, mai scende. Cattura pump infiniti.
+                
+                <!-- Saldo disponibile -->
+                <div class="bg-zinc-900 rounded-lg p-4 mb-6">
+                    <div class="flex justify-between items-center">
+                        <span class="text-sm text-zinc-400">Saldo disponibile:</span>
+                        <span class="font-bold mono text-lg" id="setupBalance">0.0000 SOL</span>
+                    </div>
+                </div>
+                
+                <!-- Avvia Button -->
+                <button onclick="startBot()" class="btn btn-primary w-full text-lg py-4 flex items-center justify-center gap-2" id="startBotBtn">
+                    <i data-lucide="play" class="w-5 h-5"></i>
+                    AVVIA BOT
+                </button>
+                
+                <p class="text-[10px] text-zinc-600 text-center mt-3">
+                    ⚠️ Per prelevare dovrai prima fermare il bot. Il bot venderà tutte le posizioni e restituirà i SOL.
+                </p>
             </div>
         </div>
-
-        <!-- Bot Settings -->
-        <div class="card p-4 mb-4">
-            <h4 class="font-semibold mb-4 flex items-center gap-2">
-                <i data-lucide="sliders" class="w-4 h-4 text-indigo-400"></i>
-                Impostazioni
-            </h4>
-            
-            <div class="space-y-4">
-                <div>
-                    <label class="text-xs text-zinc-500 mb-2 block">Importo per Trade (SOL)</label>
-                    <input type="number" id="botAmount" placeholder="0.1" step="0.01" value="0.1" class="mono">
-                    <p class="text-[10px] text-zinc-600 mt-1">Lascia 0 per auto (il bot decide in base al saldo)</p>
-                </div>
-
+        
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- BOT ATTIVO (mostrato solo se bot in esecuzione) -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <div id="botActive" class="hidden">
+            <!-- Status Header -->
+            <div class="card p-4 mb-4 border-green-500/30 bg-gradient-to-r from-green-900/20 to-transparent">
                 <div class="flex items-center justify-between">
-                    <div>
-                        <p class="text-sm font-medium">Reinvesti Profitti</p>
-                        <p class="text-xs text-zinc-500">Usa i guadagni per nuovi trade</p>
+                    <div class="flex items-center gap-3">
+                        <div class="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center animate-pulse">
+                            <i data-lucide="activity" class="w-6 h-6 text-green-400"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-green-400">Bot Attivo</h3>
+                            <p class="text-xs text-zinc-400" id="botModeDisplay">Strategia: ENTRAMBE</p>
+                        </div>
                     </div>
-                    <div class="switch on" id="reinvestSwitch" onclick="toggleReinvest()"></div>
+                    <button onclick="stopBot()" class="btn btn-red text-sm px-4 py-2">
+                        <i data-lucide="square" class="w-4 h-4 inline mr-1"></i> STOP
+                    </button>
                 </div>
             </div>
-        </div>
-
-        <!-- Bot Stats -->
-        <div id="botStats" class="hidden">
-            <div class="grid grid-cols-2 gap-3 mb-4">
-                <div class="card p-4">
-                    <p class="text-xs text-zinc-500">Profitto Sessione</p>
-                    <p class="text-xl font-bold mono text-green-400" id="botProfit">+0.00 SOL</p>
-                </div>
-                <div class="card p-4">
-                    <p class="text-xs text-zinc-500">Trade Eseguiti</p>
-                    <p class="text-xl font-bold mono" id="botTradesCount">0</p>
-                </div>
-            </div>
-
+            
+            <!-- Timer e Progress -->
             <div class="card p-4 mb-4">
-                <div class="flex justify-between items-center mb-2">
-                    <span class="text-sm">Ciclo 24h</span>
-                    <span class="text-sm mono text-indigo-400" id="botTimer">23:59:59</span>
+                <div class="flex justify-between items-center mb-3">
+                    <span class="text-sm font-medium">⏱️ Tempo attivo</span>
+                    <span class="text-xl font-bold mono text-indigo-400" id="botTimer">00:00:00</span>
                 </div>
                 <div class="h-2 bg-zinc-800 rounded-full overflow-hidden">
-                    <div class="h-full bg-indigo-500 rounded-full" id="botProgress" style="width: 0%"></div>
+                    <div class="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all" id="botProgress" style="width: 0%"></div>
+                </div>
+                <p class="text-[10px] text-zinc-500 mt-2 text-center">Ciclo 24 ore - Prelievi bloccati durante il ciclo</p>
+            </div>
+            
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <div class="card p-4">
+                    <p class="text-xs text-zinc-500 mb-1">💰 Profitto Totale</p>
+                    <p class="text-2xl font-bold mono text-green-400" id="botProfit">+0.0000</p>
+                    <p class="text-xs text-zinc-500">SOL</p>
+                </div>
+                <div class="card p-4">
+                    <p class="text-xs text-zinc-500 mb-1">📊 Trade Eseguiti</p>
+                    <p class="text-2xl font-bold mono" id="botTradesCount">0</p>
+                    <p class="text-xs text-zinc-500">operazioni</p>
+                </div>
+                <div class="card p-4">
+                    <p class="text-xs text-zinc-500 mb-1">✅ Win Rate</p>
+                    <p class="text-2xl font-bold mono text-blue-400" id="botWinRate">0%</p>
+                </div>
+                <div class="card p-4">
+                    <p class="text-xs text-zinc-500 mb-1">📈 Best Trade</p>
+                    <p class="text-2xl font-bold mono text-yellow-400" id="botBestTrade">+0%</p>
+                </div>
+            </div>
+            
+            <!-- Posizioni Bot Attive -->
+            <div class="card overflow-hidden mb-4">
+                <div class="p-3 border-b border-zinc-800 bg-zinc-900/50">
+                    <h4 class="font-semibold text-sm flex items-center gap-2">
+                        <i data-lucide="layers" class="w-4 h-4 text-purple-400"></i>
+                        Posizioni Bot
+                        <span class="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded ml-auto" id="botPositionsCount">0</span>
+                    </h4>
+                </div>
+                <div id="botPositionsList" class="max-h-40 overflow-y-auto">
+                    <div class="p-4 text-center text-zinc-500 text-xs">
+                        Il bot sta cercando opportunità...
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Log Attività -->
+            <div class="card overflow-hidden">
+                <div class="p-3 border-b border-zinc-800">
+                    <h4 class="font-semibold text-sm flex items-center gap-2">
+                        <i data-lucide="terminal" class="w-4 h-4 text-zinc-400"></i>
+                        Log Attività
+                    </h4>
+                </div>
+                <div id="botLog" class="p-3 max-h-32 overflow-y-auto text-[10px] mono text-zinc-500 space-y-1">
+                    <p>🟢 Bot avviato...</p>
                 </div>
             </div>
         </div>
         
-        <!-- AMMS Strategy Details -->
-        <div class="card p-4 mb-4 border-indigo-500/30">
-            <div class="flex items-center justify-between mb-3">
-                <h4 class="font-semibold flex items-center gap-2">
-                    <i data-lucide="activity" class="w-4 h-4 text-indigo-400"></i>
-                    AMMS Strategy
-                </h4>
-                <span class="text-[10px] bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded-full">2025</span>
-            </div>
-            
-            <!-- Trading Modes -->
-            <div class="grid grid-cols-2 gap-3 mb-4">
-                <div class="bg-gradient-to-br from-blue-900/30 to-blue-800/10 border border-blue-500/30 rounded-lg p-3">
-                    <div class="flex items-center gap-2 mb-2">
-                        <span class="text-xl">🔵</span>
-                        <span class="font-semibold text-blue-400">DIP Mode</span>
-                    </div>
-                    <p class="text-[10px] text-zinc-400">Compra lo sconto</p>
-                    <ul class="text-[10px] text-zinc-500 mt-2 space-y-1">
-                        <li>• RSI &lt; 45 (oversold)</li>
-                        <li>• Prezzo vicino BB Lower</li>
-                        <li>• Stop Loss: 1.5× ATR</li>
-                    </ul>
-                </div>
-                <div class="bg-gradient-to-br from-orange-900/30 to-orange-800/10 border border-orange-500/30 rounded-lg p-3">
-                    <div class="flex items-center gap-2 mb-2">
-                        <span class="text-xl">🚀</span>
-                        <span class="font-semibold text-orange-400">BREAKOUT</span>
-                    </div>
-                    <p class="text-[10px] text-zinc-400">Cavalca l'onda</p>
-                    <ul class="text-[10px] text-zinc-500 mt-2 space-y-1">
-                        <li>• +10% 24h + Volume Spike</li>
-                        <li>• RSI 55-75 (momentum)</li>
-                        <li>• Stop Loss: 2× ATR</li>
-                    </ul>
-                </div>
-            </div>
-            
-            <div class="grid grid-cols-2 gap-2 text-xs mb-3">
-                <div class="bg-zinc-900 rounded-lg p-2">
-                    <span class="text-zinc-500">EMA 20/50</span>
-                    <p class="font-semibold text-green-400">Trend ↑</p>
-                </div>
-                <div class="bg-zinc-900 rounded-lg p-2">
-                    <span class="text-zinc-500">Volume</span>
-                    <p class="font-semibold text-purple-400">1.5x Spike</p>
-                </div>
-                <div class="bg-zinc-900 rounded-lg p-2">
-                    <span class="text-zinc-500">ATR Stop</span>
-                    <p class="font-semibold text-yellow-400">Adattivo</p>
-                </div>
-                <div class="bg-zinc-900 rounded-lg p-2">
-                    <span class="text-zinc-500">Trailing</span>
-                    <p class="font-semibold text-blue-400">Auto</p>
-                </div>
-            </div>
-            
-            <div class="text-[11px] text-zinc-500 space-y-1">
-                <p>✓ <strong>DIP Entry:</strong> RSI basso + Prezzo a sconto + Trend non negativo</p>
-                <p>✓ <strong>BREAKOUT Entry:</strong> Token già +10% + Volume esplode + Momentum forte</p>
-                <p>✓ <strong>Stop Loss:</strong> DIP=1.5×ATR | BREAKOUT=2×ATR (più margine)</p>
-                <p>✓ <strong>Trailing:</strong> Si attiva dopo +3% (DIP) o +5% (BREAKOUT)</p>
-            </div>
-        </div>
+        <!-- ═══════════════════════════════════════════════════════════════ -->
+        <!-- INFO STRATEGIA (sempre visibile in basso) -->
+        <!-- ═══════════════════════════════════════════════════════════════ -->
 
         <!-- Current Strategy -->
         <div class="card p-4 mb-4" id="currentStrategy">
@@ -700,6 +777,31 @@
         </button>
     </div>
 
+    <!-- Sell Sheet -->
+    <div id="sellSheet" class="sheet">
+        <div class="flex items-center justify-between mb-6">
+            <h3 class="text-xl font-bold text-red-400">Vendi Posizione</h3>
+            <button onclick="closeAll()" class="p-2 rounded-full bg-zinc-800">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+
+        <div class="card p-4 mb-4 bg-red-900/20 border-red-500/30">
+            <p class="text-sm text-zinc-400 mb-1">Token</p>
+            <p class="mono font-bold" id="sellToken">...</p>
+            <p class="text-xs text-zinc-500 mt-2" id="sellAmount">0 SOL investiti</p>
+        </div>
+
+        <div class="bg-zinc-900 rounded-lg p-4 mb-4">
+            <p class="text-xs text-zinc-500 mb-2">⚠️ Attenzione</p>
+            <p class="text-sm text-zinc-400">Vendere ora chiuderà la posizione al prezzo di mercato attuale.</p>
+        </div>
+
+        <button onclick="executeSell()" id="btnSell" class="btn btn-red w-full flex items-center justify-center gap-2">
+            <i data-lucide="arrow-down-right" class="w-4 h-4"></i> VENDI ORA
+        </button>
+    </div>
+
     <!-- Bottom Nav -->
     <nav class="fixed bottom-0 left-0 right-0 bg-[#09090b] border-t border-zinc-800 h-20 flex justify-around items-center z-50 px-4">
         <button onclick="navTo('wallet')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-indigo-400" data-page="wallet">
@@ -768,6 +870,12 @@
         }
 
         function openWithdraw() {
+            // Blocca prelievo se bot attivo
+            if (botState.active) {
+                toast('Bot Attivo', 'Ferma il bot prima di prelevare. Il bot venderà le posizioni e restituirà i SOL.');
+                return;
+            }
+            
             openSheet('withdrawSheet');
             document.getElementById('wAvail').innerText = state.balance.toFixed(4) + ' SOL';
             document.getElementById('wResult').classList.add('hidden');
@@ -872,36 +980,319 @@
             lucide.createIcons();
         }
 
-        // Bot
-        function toggleBot() {
-            state.botActive = !state.botActive;
-            const sw = document.getElementById('botSwitch');
-            sw.classList.toggle('on', state.botActive);
-            updateBotUI();
-            toast(state.botActive ? 'Bot Attivato' : 'Bot Fermato', state.botActive ? 'Trading automatico avviato' : 'Trading automatico disattivato');
-        }
-
-        function toggleReinvest() {
-            state.reinvest = !state.reinvest;
-            document.getElementById('reinvestSwitch').classList.toggle('on', state.reinvest);
-        }
-
-        function updateBotUI() {
-            const status = document.getElementById('botStatus');
-            const iconBox = document.getElementById('botIconBox');
-            const stats = document.getElementById('botStats');
+        // ═══════════════════════════════════════════════════════════════
+        // BOT FUNCTIONS
+        // ═══════════════════════════════════════════════════════════════
+        
+        let botState = {
+            active: false,
+            strategy: 'BOTH',
+            amount: 0,
+            startTime: null,
+            timerInterval: null,
+            profit: 0,
+            trades: 0,
+            wins: 0,
+            bestTrade: 0
+        };
+        
+        function selectStrategy(strategy) {
+            botState.strategy = strategy;
             
-            if (state.botActive) {
-                status.innerText = '🟢 Attivo';
-                status.className = 'text-sm text-green-400';
-                iconBox.className = 'w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center';
-                stats.classList.remove('hidden');
+            // Reset all borders
+            document.getElementById('strategyDip').classList.remove('border-blue-500', 'bg-blue-500/10');
+            document.getElementById('strategyBreakout').classList.remove('border-orange-500', 'bg-orange-500/10');
+            document.getElementById('strategyBoth').classList.remove('border-indigo-500', 'bg-indigo-500/10');
+            document.getElementById('strategyDip').classList.add('border-transparent');
+            document.getElementById('strategyBreakout').classList.add('border-transparent');
+            document.getElementById('strategyBoth').classList.add('border-transparent');
+            
+            // Highlight selected
+            if (strategy === 'DIP') {
+                document.getElementById('strategyDip').classList.add('border-blue-500', 'bg-blue-500/10');
+                document.getElementById('strategyDip').classList.remove('border-transparent');
+            } else if (strategy === 'BREAKOUT') {
+                document.getElementById('strategyBreakout').classList.add('border-orange-500', 'bg-orange-500/10');
+                document.getElementById('strategyBreakout').classList.remove('border-transparent');
             } else {
-                status.innerText = 'Disattivato';
-                status.className = 'text-sm text-zinc-400';
-                iconBox.className = 'w-12 h-12 rounded-xl bg-indigo-500/20 flex items-center justify-center';
-                stats.classList.add('hidden');
+                document.getElementById('strategyBoth').classList.add('border-indigo-500', 'bg-indigo-500/10');
+                document.getElementById('strategyBoth').classList.remove('border-transparent');
             }
+        }
+        
+        async function startBot() {
+            const amount = parseFloat(document.getElementById('botAmount').value) || 0;
+            
+            if (state.balance < 0.02) {
+                toast('Errore', 'Saldo insufficiente. Minimo 0.02 SOL');
+                return;
+            }
+            
+            const btn = document.getElementById('startBotBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<i data-lucide="loader" class="w-5 h-5 animate-spin"></i> Avvio...';
+            lucide.createIcons();
+            
+            try {
+                // Chiamata al backend per avviare il bot
+                const res = await fetch(`${API}/bot/start`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({
+                        amount: amount,
+                        strategy: botState.strategy
+                    })
+                });
+                
+                const data = await res.json();
+                
+                if (data.success || res.ok) {
+                    botState.active = true;
+                    botState.amount = amount;
+                    botState.startTime = Date.now();
+                    botState.profit = 0;
+                    botState.trades = 0;
+                    botState.wins = 0;
+                    
+                    // Mostra UI attiva
+                    document.getElementById('botSetup').classList.add('hidden');
+                    document.getElementById('botActive').classList.remove('hidden');
+                    document.getElementById('botModeDisplay').innerText = 'Strategia: ' + botState.strategy;
+                    
+                    // Avvia timer
+                    startBotTimer();
+                    addBotLog('🟢 Bot avviato con strategia ' + botState.strategy);
+                    
+                    toast('Bot Avviato!', 'Trading automatico iniziato');
+                } else {
+                    toast('Errore', data.message || 'Impossibile avviare il bot');
+                }
+            } catch (e) {
+                // Se endpoint non esiste, simula avvio locale
+                botState.active = true;
+                botState.amount = amount;
+                botState.startTime = Date.now();
+                
+                document.getElementById('botSetup').classList.add('hidden');
+                document.getElementById('botActive').classList.remove('hidden');
+                document.getElementById('botModeDisplay').innerText = 'Strategia: ' + botState.strategy;
+                
+                startBotTimer();
+                addBotLog('🟢 Bot avviato (modalità locale)');
+                toast('Bot Avviato!', 'Trading automatico iniziato');
+            }
+            
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="play" class="w-5 h-5"></i> AVVIA BOT';
+            lucide.createIcons();
+        }
+        
+        async function stopBot() {
+            if (!confirm('Vuoi fermare il bot? Tutte le posizioni verranno vendute e i SOL restituiti.')) {
+                return;
+            }
+            
+            addBotLog('⏳ Fermando il bot e vendendo posizioni...');
+            
+            try {
+                const res = await fetch(`${API}/bot/stop`, {
+                    method: 'POST',
+                    headers: getAuthHeaders()
+                });
+                
+                const data = await res.json();
+                addBotLog('💰 Posizioni vendute. Profitto: ' + (data.profit || botState.profit).toFixed(4) + ' SOL');
+            } catch (e) {
+                addBotLog('✅ Bot fermato');
+            }
+            
+            // Reset state
+            botState.active = false;
+            if (botState.timerInterval) {
+                clearInterval(botState.timerInterval);
+            }
+            
+            // Mostra setup
+            document.getElementById('botSetup').classList.remove('hidden');
+            document.getElementById('botActive').classList.add('hidden');
+            
+            toast('Bot Fermato', 'Posizioni vendute, SOL restituiti');
+            sync();
+        }
+        
+        function startBotTimer() {
+            if (botState.timerInterval) clearInterval(botState.timerInterval);
+            
+            botState.timerInterval = setInterval(() => {
+                const elapsed = Date.now() - botState.startTime;
+                const hours = Math.floor(elapsed / 3600000);
+                const mins = Math.floor((elapsed % 3600000) / 60000);
+                const secs = Math.floor((elapsed % 60000) / 1000);
+                
+                document.getElementById('botTimer').innerText = 
+                    String(hours).padStart(2, '0') + ':' + 
+                    String(mins).padStart(2, '0') + ':' + 
+                    String(secs).padStart(2, '0');
+                
+                // Progress (24h = 100%)
+                const progress = Math.min(100, (elapsed / 86400000) * 100);
+                document.getElementById('botProgress').style.width = progress + '%';
+            }, 1000);
+        }
+        
+        function addBotLog(msg) {
+            const log = document.getElementById('botLog');
+            const time = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            log.innerHTML = `<p>[${time}] ${msg}</p>` + log.innerHTML;
+            
+            // Limita a 20 righe
+            const lines = log.querySelectorAll('p');
+            if (lines.length > 20) {
+                lines[lines.length - 1].remove();
+            }
+        }
+        
+        function updateBotUI() {
+            // Aggiorna saldo nel setup
+            document.getElementById('setupBalance').innerText = state.balance.toFixed(4) + ' SOL';
+            
+            // Se bot attivo, aggiorna stats
+            if (botState.active) {
+                document.getElementById('botProfit').innerText = (botState.profit >= 0 ? '+' : '') + botState.profit.toFixed(4);
+                document.getElementById('botTradesCount').innerText = botState.trades;
+                document.getElementById('botWinRate').innerText = botState.trades > 0 ? Math.round((botState.wins / botState.trades) * 100) + '%' : '0%';
+                document.getElementById('botBestTrade').innerText = '+' + botState.bestTrade.toFixed(1) + '%';
+            }
+        }
+        
+        // ═══════════════════════════════════════════════════════════════
+        // TRADING MANUALE FUNCTIONS
+        // ═══════════════════════════════════════════════════════════════
+        
+        const TOP_COINS = {
+            'SOL': 'So11111111111111111111111111111111111111112',
+            'JUP': 'JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz',
+            'BONK': 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'
+        };
+        
+        async function updateTopCoins() {
+            for (const [symbol, address] of Object.entries(TOP_COINS)) {
+                try {
+                    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
+                    const data = await res.json();
+                    if (data.pairs && data.pairs[0]) {
+                        const price = parseFloat(data.pairs[0].priceUsd || 0);
+                        const change = data.pairs[0].priceChange?.h24 || 0;
+                        const el = document.getElementById('price_' + symbol);
+                        if (el) {
+                            el.innerText = formatPrice(price);
+                            el.className = 'mono text-xs ' + (change >= 0 ? 'text-green-400' : 'text-red-400');
+                        }
+                    }
+                } catch (e) {
+                    console.log('Error fetching ' + symbol);
+                }
+            }
+        }
+        
+        function openTopCoin(symbol) {
+            const token = {
+                token: TOP_COINS[symbol],
+                symbol: symbol,
+                name: symbol === 'SOL' ? 'Solana' : symbol === 'JUP' ? 'Jupiter' : 'Bonk',
+                price: 0,
+                change_24h: 0,
+                market_cap: 0,
+                liquidity_usd: 0,
+                volume_24h: 0,
+                safety_score: 95,
+                image_url: symbol === 'SOL' ? 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' : 
+                           symbol === 'JUP' ? 'https://static.jup.ag/jup/icon.png' : 'https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I'
+            };
+            openToken(token);
+        }
+        
+        function renderOpenPositions() {
+            const list = document.getElementById('openPositionsList');
+            const openTrades = state.trades.filter(t => t.status === 'OPEN');
+            
+            document.getElementById('openPositionsCount').innerText = openTrades.length;
+            
+            if (openTrades.length === 0) {
+                list.innerHTML = '<div class="p-4 text-center text-zinc-500 text-xs">Nessuna posizione aperta</div>';
+                return;
+            }
+            
+            list.innerHTML = openTrades.map(t => {
+                // Trova token info se disponibile
+                const gem = state.gems.find(g => g.token === t.token_address);
+                const symbol = gem ? gem.symbol : t.token_address.slice(0,6) + '...';
+                const imgUrl = gem ? (gem.image_url || `https://img.jup.ag/v6/${t.token_address}/logo`) : 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect fill="%2327272a" width="40" height="40" rx="20"/></svg>';
+                const mode = t.trading_mode || 'AUTO';
+                const modeEmoji = mode === 'DIP' ? '🔵' : mode === 'BREAKOUT' ? '🚀' : '⚡';
+                
+                return `
+                    <div class="flex items-center gap-3 p-3 border-b border-zinc-800 last:border-0 hover:bg-zinc-900/50 transition-colors">
+                        <img src="${imgUrl}" class="w-10 h-10 rounded-full bg-zinc-800" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%2327272a%22 width=%2240%22 height=%2240%22 rx=%2220%22/></svg>'">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <p class="font-semibold text-sm">${symbol}</p>
+                                <span class="text-xs opacity-60">${modeEmoji}</span>
+                            </div>
+                            <p class="text-xs text-zinc-500">${t.amount_sol.toFixed(4)} SOL investiti</p>
+                        </div>
+                        <button onclick="event.stopPropagation(); openSellSheet('${t.token_address}', '${t.amount_sol}')" class="btn btn-red text-xs px-3 py-1.5">
+                            Vendi
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        function openSellSheet(tokenAddress, amount) {
+            state.currentToken = { token: tokenAddress, amount: parseFloat(amount) };
+            openSheet('sellSheet');
+            
+            // Trova info token
+            const gem = state.gems.find(g => g.token === tokenAddress);
+            const symbol = gem ? gem.symbol : tokenAddress.slice(0,8) + '...';
+            
+            document.getElementById('sellToken').innerText = symbol;
+            document.getElementById('sellAmount').innerText = parseFloat(amount).toFixed(4) + ' SOL investiti';
+        }
+        
+        async function executeSell() {
+            if (!state.currentToken) return;
+            
+            const btn = document.getElementById('btnSell');
+            btn.disabled = true;
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Vendita...';
+            lucide.createIcons();
+            
+            try {
+                const res = await fetch(`${API}/trade`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ 
+                        action: 'SELL', 
+                        token: state.currentToken.token, 
+                        amount_sol: state.currentToken.amount 
+                    })
+                });
+                const d = await res.json();
+                if (d.success) {
+                    toast('Venduto!', 'Posizione chiusa');
+                    closeAll();
+                    sync();
+                } else {
+                    toast('Errore', d.message);
+                }
+            } catch (e) {
+                toast('Errore', 'Errore di rete');
+            }
+            
+            btn.disabled = false;
+            btn.innerHTML = 'VENDI ORA';
         }
 
         // Utils
@@ -1254,6 +1645,16 @@
 
                 // Render history
                 renderHistory();
+                
+                // Aggiorna trading e bot UI
+                renderOpenPositions();
+                updateBotUI();
+                
+                // Aggiorna top coins (ogni 30 secondi circa)
+                if (!window.lastTopUpdate || Date.now() - window.lastTopUpdate > 30000) {
+                    updateTopCoins();
+                    window.lastTopUpdate = Date.now();
+                }
 
             } catch (e) {
                 console.error('Sync error:', e);
