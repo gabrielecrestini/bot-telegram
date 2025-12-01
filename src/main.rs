@@ -661,6 +661,79 @@ async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppSta
 async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient>) {
     info!("💎 AMMS Gem Discovery avviato");
     
+    // FALLBACK: Monete principali sempre disponibili
+    let default_gems = vec![
+        GemData {
+            token: "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz".to_string(),
+            symbol: "JUP".to_string(),
+            name: "Jupiter".to_string(),
+            price: 0.0,
+            safety_score: 95,
+            liquidity_usd: 50_000_000.0,
+            market_cap: 1_500_000_000.0,
+            volume_24h: 100_000_000.0,
+            change_1h: 0.0,
+            change_24h: 0.0,
+            image_url: "https://static.jup.ag/jup/icon.png".to_string(),
+            timestamp: chrono::Utc::now().timestamp(),
+            source: "TOP".to_string(),
+        },
+        GemData {
+            token: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263".to_string(),
+            symbol: "BONK".to_string(),
+            name: "Bonk".to_string(),
+            price: 0.0,
+            safety_score: 90,
+            liquidity_usd: 20_000_000.0,
+            market_cap: 2_000_000_000.0,
+            volume_24h: 50_000_000.0,
+            change_1h: 0.0,
+            change_24h: 0.0,
+            image_url: "https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I".to_string(),
+            timestamp: chrono::Utc::now().timestamp(),
+            source: "TOP".to_string(),
+        },
+        GemData {
+            token: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm".to_string(),
+            symbol: "WIF".to_string(),
+            name: "dogwifhat".to_string(),
+            price: 0.0,
+            safety_score: 88,
+            liquidity_usd: 30_000_000.0,
+            market_cap: 3_000_000_000.0,
+            volume_24h: 80_000_000.0,
+            change_1h: 0.0,
+            change_24h: 0.0,
+            image_url: "https://bafkreibk3covs5ltyqxa272uodhculbr6kea6betidfwy3ajsav2vjzyum.ipfs.nftstorage.link".to_string(),
+            timestamp: chrono::Utc::now().timestamp(),
+            source: "TOP".to_string(),
+        },
+    ];
+    
+    // Inizializza con le monete di default e aggiorna i prezzi
+    {
+        let mut found = state.found_gems.lock().unwrap();
+        if found.is_empty() {
+            *found = default_gems.clone();
+            info!("📊 Caricate {} monete di fallback", found.len());
+        }
+    }
+    
+    // Aggiorna prezzi delle gems di fallback all'avvio
+    for gem in &default_gems {
+        if let Ok(mkt) = jupiter::get_token_market_data(&gem.token).await {
+            let mut found = state.found_gems.lock().unwrap();
+            if let Some(g) = found.iter_mut().find(|g| g.token == gem.token) {
+                g.price = mkt.price;
+                g.change_1h = mkt.change_1h;
+                g.change_24h = mkt.change_24h;
+                g.volume_24h = mkt.volume_24h;
+                g.market_cap = mkt.market_cap;
+                info!("💰 {} prezzo: ${:.6}", g.symbol, g.price);
+            }
+        }
+    }
+    
     let mut cycle = 0u32;
     
     loop {
@@ -728,21 +801,30 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
         }
         
         // AGGIORNA STATO
-        if !all_gems.is_empty() {
-            all_gems.sort_by(|a, b| {
-                let a_priority = if a.market_cap > 10_000_000.0 { 1 } else { 0 };
-                let b_priority = if b.market_cap > 10_000_000.0 { 1 } else { 0 };
-                
-                match b_priority.cmp(&a_priority) {
-                    std::cmp::Ordering::Equal => b.safety_score.cmp(&a.safety_score),
-                    other => other
-                }
-            });
-            
-            all_gems.truncate(25);
-            
+        {
             let mut found = state.found_gems.lock().unwrap();
-            *found = all_gems;
+            
+            if !all_gems.is_empty() {
+                // Ordina: prima le altcoin affermate, poi per score
+                all_gems.sort_by(|a, b| {
+                    let a_priority = if a.market_cap > 10_000_000.0 { 1 } else { 0 };
+                    let b_priority = if b.market_cap > 10_000_000.0 { 1 } else { 0 };
+                    
+                    match b_priority.cmp(&a_priority) {
+                        std::cmp::Ordering::Equal => b.safety_score.cmp(&a.safety_score),
+                        other => other
+                    }
+                });
+                
+                all_gems.truncate(25);
+                *found = all_gems;
+                info!("💎 Aggiornate {} gems", found.len());
+            } else if found.is_empty() {
+                // Se le API falliscono e non ci sono gems, ripristina fallback
+                *found = default_gems.clone();
+                warn!("⚠️ API non raggiungibili, usando {} gems di fallback", found.len());
+            }
+            // Se ci sono già gems ma le API falliscono, mantieni quelle esistenti
         }
         
         cycle = cycle.wrapping_add(1);
