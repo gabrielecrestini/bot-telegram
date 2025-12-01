@@ -100,50 +100,50 @@ fn generate_session_token(user_id: &str) -> String {
     hex::encode(&result[..16])
 }
 
-/// Estrae user_id da header o query param
+/// Estrae user_id da header - SOLO utenti autenticati
+/// Ritorna None se l'utente non è autenticato (nessun guest mode per sicurezza)
 fn extract_user_id(
     tg_id: Option<String>,
     session: Option<String>,
     tg_data: Option<String>,
-) -> String {
+) -> Option<String> {
     // 1. Priorità: Telegram ID diretto (da header x-telegram-id)
+    // L'ID Telegram è UNIVOCO e PERMANENTE per ogni utente
     if let Some(id) = tg_id.as_ref() {
-        if !id.is_empty() && id != "undefined" && id != "null" && id.len() > 3 {
-            return format!("tg_{}", id);
-        }
-    }
-    
-    // 2. Telegram initData (dal WebApp)
-    if let Some(data) = tg_data.as_ref() {
-        if !data.is_empty() && data != "undefined" {
-            if let Some(user_id) = parse_telegram_init_data(data) {
-                return format!("tg_{}", user_id);
+        if !id.is_empty() && id != "undefined" && id != "null" && id.len() >= 5 {
+            // Valida che sia un numero (ID Telegram sono sempre numerici)
+            if id.chars().all(|c| c.is_numeric()) {
+                info!("🔐 Auth: Telegram ID {}", id);
+                return Some(format!("tg_{}", id));
             }
         }
     }
     
-    // 3. Session token (per utenti web registrati)
-    if let Some(sess) = session.as_ref() {
-        if !sess.is_empty() && sess != "undefined" && sess.len() >= 16 {
-            // Il session token è l'ID completo per utenti web
-            return format!("sess_{}", &sess[..16.min(sess.len())]);
+    // 2. Telegram initData (dal WebApp) - più sicuro, include firma
+    if let Some(data) = tg_data.as_ref() {
+        if !data.is_empty() && data != "undefined" && data.len() > 20 {
+            if let Some(user_id) = parse_telegram_init_data(data) {
+                info!("🔐 Auth: Telegram WebApp {}", user_id);
+                return Some(format!("tg_{}", user_id));
+            }
         }
     }
     
-    // 4. Guest ID persistente (passato dal frontend)
-    // Il frontend deve generare e salvare un guest_id nel localStorage
-    // e passarlo nell'header x-session-token come "guest_XXXXX"
+    // 3. Session token (per utenti web registrati con email/password)
+    // Il session token deve essere valido (generato dal backend durante login)
     if let Some(sess) = session.as_ref() {
-        if sess.starts_with("guest_") && sess.len() > 6 {
-            return sess.clone();
+        if !sess.is_empty() && sess != "undefined" && sess.len() >= 32 {
+            // Session token valido = utente ha fatto login con email/password
+            // L'ID utente è derivato dall'hash dell'email (permanente)
+            info!("🔐 Auth: Web Session");
+            return Some(format!("sess_{}", &sess[..16]));
         }
     }
     
-    // 5. FALLBACK: Genera guest deterministico (per retrocompatibilità)
-    // NOTA: Questo causa wallet diversi ad ogni sessione
-    // Il frontend DEVE passare un guest_id persistente
-    warn!("⚠️ Utente non autenticato - wallet temporaneo");
-    format!("guest_{}", chrono::Utc::now().timestamp() % 100000)
+    // NESSUNA AUTENTICAZIONE VALIDA
+    // Non permettiamo guest mode per proteggere i fondi degli utenti
+    warn!("⚠️ Tentativo accesso senza autenticazione");
+    None
 }
 
 /// Parse Telegram initData per estrarre user_id
@@ -283,9 +283,20 @@ async fn handle_status(
     net: Arc<network::NetworkClient>,
     state: Arc<AppState>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let user_id = extract_user_id(tg_id, session, tg_data);
+    // SICUREZZA: Solo utenti autenticati
+    let user_id = match extract_user_id(tg_id, session, tg_data) {
+        Some(id) => id,
+        None => {
+            return Ok(warp::reply::json(&serde_json::json!({
+                "error": "NOT_AUTHENTICATED",
+                "message": "Devi accedere con Telegram o Email per usare il wallet",
+                "require_login": true
+            })));
+        }
+    };
     
     // Crea wallet per questo utente (se non esiste)
+    // Il wallet è legato PERMANENTEMENTE all'user_id
     let pubkey_str = wallet_manager::create_user_wallet(&pool, &user_id)
         .await
         .unwrap_or_default();
@@ -340,7 +351,18 @@ async fn handle_trade(
     pool: sqlx::SqlitePool,
     net: Arc<network::NetworkClient>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let user_id = extract_user_id(tg_id, session, tg_data);
+    // SICUREZZA: Solo utenti autenticati possono fare trading
+    let user_id = match extract_user_id(tg_id, session, tg_data) {
+        Some(id) => id,
+        None => {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Non autenticato. Accedi con Telegram o Email.".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
     info!("📨 Trade [{}]: {} {} SOL -> {}", user_id, req.action, req.amount_sol, req.token);
 
     let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
@@ -463,7 +485,18 @@ async fn handle_withdraw(
     pool: sqlx::SqlitePool,
     net: Arc<network::NetworkClient>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let user_id = extract_user_id(tg_id, session, tg_data);
+    // SICUREZZA: Solo utenti autenticati possono prelevare
+    let user_id = match extract_user_id(tg_id, session, tg_data) {
+        Some(id) => id,
+        None => {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Non autenticato. Accedi con Telegram o Email.".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
     info!("💸 Withdraw [{}]: {} {} -> {}", user_id, req.amount, req.token, req.destination_address);
 
     if req.token != "SOL" {
