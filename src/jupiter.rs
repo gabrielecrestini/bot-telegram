@@ -66,18 +66,12 @@ fn create_custom_dns_config() -> ResolverConfig {
 }
 
 /// Crea un client HTTP robusto con DNS personalizzato (Cloudflare + Google)
+/// FORZA IPv4 per evitare errori AAAA su AWS (Jupiter non supporta IPv6)
 fn create_http_client() -> reqwest::Client {
-    // Opzioni ottimizzate per AWS
-    let mut opts = ResolverOpts::default();
-    opts.timeout = Duration::from_secs(5);
-    opts.attempts = 3;
-    opts.rotate = true; // Ruota tra i DNS server
-    opts.cache_size = 256;
-    opts.use_hosts_file = false; // Ignora /etc/hosts problematico
-    opts.positive_min_ttl = Some(Duration::from_secs(60));
-    opts.negative_min_ttl = Some(Duration::from_secs(10));
+    // FORZA IPv4 - Risolve errore "no record found for Query AAAA"
+    // Jupiter quote-api.jup.ag non ha record IPv6 (AAAA), solo IPv4 (A)
+    let ipv4_addr: std::net::IpAddr = "0.0.0.0".parse().unwrap();
     
-    // Client con trust-dns e configurazione ottimizzata per AWS
     reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(15))
@@ -85,9 +79,10 @@ fn create_http_client() -> reqwest::Client {
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_keepalive(Duration::from_secs(30))
         .tcp_nodelay(true)
-        // trust-dns usa automaticamente la configurazione di sistema
-        // ma è più robusto del resolver di default
-        .trust_dns(true)
+        // FORZA IPv4 - Questo è il fix per AWS!
+        .local_address(ipv4_addr)
+        // NON usare trust-dns perché cerca anche AAAA
+        // Il resolver di sistema con local_address IPv4 funziona meglio
         .build()
         .unwrap_or_else(|_| {
             warn!("⚠️ Fallback a client HTTP di base");
