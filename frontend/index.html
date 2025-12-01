@@ -1624,35 +1624,45 @@
                 document.getElementById('strategyPct').innerText = wl.pct + '%';
                 document.getElementById('strategyDesc').innerText = `Con ${state.balance.toFixed(4)} SOL (~€${balanceEur.toFixed(0)}), il bot investirà ${investAmt} SOL (~€${investEur}) per trade.`;
 
-                // Token List
+                // Token List con tutti i dati live
                 const list = document.getElementById('tokenList');
                 if (state.gems.length > 0) {
                     list.innerHTML = state.gems.map(g => {
                         const mcapStr = formatMcap(g.market_cap);
-                        const isAltcoin = g.source === 'ALTCOIN' || g.market_cap > 10000000;
+                        const volStr = formatMcap(g.volume_24h);
+                        const liqStr = formatMcap(g.liquidity_usd);
+                        const isTop = g.source === 'TOP' || g.source === 'ALTCOIN' || g.market_cap > 10000000;
+                        const change1h = g.change_1h || 0;
+                        const change24h = g.change_24h || 0;
+                        
                         return `
                         <div class="token-row" onclick='openToken(JSON.parse(this.dataset.token))' data-token='${JSON.stringify(g)}'>
-                            <img src="${g.image_url || `https://img.jup.ag/v6/${g.token}/logo`}" class="w-10 h-10 rounded-full bg-zinc-800" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%2327272a%22 width=%2240%22 height=%2240%22 rx=%2220%22/><text x=%2220%22 y=%2226%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2216%22>${g.symbol ? g.symbol[0] : '?'}</text></svg>'">
+                            <img src="${g.image_url || `https://img.jup.ag/v6/${g.token}/logo`}" class="w-12 h-12 rounded-full bg-zinc-800" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%2327272a%22 width=%2240%22 height=%2240%22 rx=%2220%22/><text x=%2220%22 y=%2226%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2216%22>${g.symbol ? g.symbol[0] : '?'}</text></svg>'">
                             <div class="flex-1 min-w-0">
-                                <div class="flex items-center gap-2">
-                                    <span class="font-semibold">${g.symbol}</span>
-                                    ${isAltcoin ? '<span class="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded">TOP</span>' : ''}
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="font-bold">${g.symbol}</span>
+                                    ${isTop ? '<span class="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-medium">TOP</span>' : ''}
                                     <span class="score-badge ${getScoreClass(g.safety_score)}">${g.safety_score}%</span>
                                 </div>
-                                <div class="flex items-center gap-2 text-xs text-zinc-500">
-                                    <span class="truncate">${g.name || g.symbol}</span>
-                                    <span>•</span>
-                                    <span class="text-zinc-400 font-medium">${mcapStr}</span>
+                                <div class="text-[11px] text-zinc-500 truncate mb-1">${g.name || g.symbol}</div>
+                                <div class="flex items-center gap-3 text-[10px]">
+                                    <span class="text-zinc-400">MCap: <span class="text-zinc-300 font-medium">${mcapStr}</span></span>
+                                    <span class="text-zinc-400">Vol: <span class="text-zinc-300 font-medium">${volStr}</span></span>
+                                    <span class="text-zinc-400">Liq: <span class="text-zinc-300 font-medium">${liqStr}</span></span>
                                 </div>
                             </div>
-                            <div class="text-right">
-                                <p class="mono text-sm">${formatPrice(g.price)}</p>
-                                <p class="text-xs ${(g.change_24h || 0) >= 0 ? 'text-green-400' : 'text-red-400'}">${(g.change_24h || 0) >= 0 ? '+' : ''}${(g.change_24h || 0).toFixed(1)}%</p>
+                            <div class="text-right min-w-[70px]">
+                                <p class="mono font-bold text-sm">${formatPrice(g.price)}</p>
+                                <div class="flex flex-col items-end gap-0.5 mt-1">
+                                    <span class="text-[10px] ${change1h >= 0 ? 'text-green-400' : 'text-red-400'}">1h: ${change1h >= 0 ? '+' : ''}${change1h.toFixed(1)}%</span>
+                                    <span class="text-xs font-medium ${change24h >= 0 ? 'text-green-400' : 'text-red-400'}">24h: ${change24h >= 0 ? '+' : ''}${change24h.toFixed(1)}%</span>
+                                </div>
                             </div>
                         </div>
                     `}).join('');
                 } else {
-                    list.innerHTML = '<div class="p-8 text-center text-zinc-500 text-sm">Scansione mercato in corso...</div>';
+                    list.innerHTML = '<div class="p-8 text-center text-zinc-500 text-sm"><i data-lucide="loader" class="w-5 h-5 mx-auto mb-2 animate-spin"></i>Caricamento prezzi live...</div>';
+                    lucide.createIcons();
                 }
 
                 // Render history

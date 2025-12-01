@@ -719,24 +719,46 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
         }
     }
     
-    // Aggiorna prezzi delle gems di fallback all'avvio
-    for gem in &default_gems {
-        if let Ok(mkt) = jupiter::get_token_market_data(&gem.token).await {
-            let mut found = state.found_gems.lock().unwrap();
-            if let Some(g) = found.iter_mut().find(|g| g.token == gem.token) {
-                g.price = mkt.price;
-                g.change_1h = mkt.change_1h;
-                g.change_24h = mkt.change_24h;
-                g.volume_24h = mkt.volume_24h;
-                g.market_cap = mkt.market_cap;
-                info!("💰 {} prezzo: ${:.6}", g.symbol, g.price);
-            }
-        }
-    }
-    
     let mut cycle = 0u32;
     
     loop {
+        // ═══════════════════════════════════════════════════════════════
+        // AGGIORNA PREZZI LIVE di TUTTE le gems esistenti
+        // ═══════════════════════════════════════════════════════════════
+        {
+            let tokens_to_update: Vec<(String, String)> = {
+                let found = state.found_gems.lock().unwrap();
+                found.iter().map(|g| (g.token.clone(), g.symbol.clone())).collect()
+            };
+            
+            for (token, _symbol) in &tokens_to_update {
+                match jupiter::get_token_market_data(token).await {
+                    Ok(mkt) => {
+                        let mut found = state.found_gems.lock().unwrap();
+                        if let Some(g) = found.iter_mut().find(|g| &g.token == token) {
+                            g.price = mkt.price;
+                            g.change_1h = mkt.change_1h;
+                            g.change_24h = mkt.change_24h;
+                            g.volume_24h = mkt.volume_24h;
+                            g.market_cap = mkt.market_cap;
+                            g.liquidity_usd = mkt.liquidity_usd;
+                            g.image_url = if mkt.image_url.is_empty() { g.image_url.clone() } else { mkt.image_url };
+                            g.timestamp = chrono::Utc::now().timestamp();
+                        }
+                    }
+                    Err(_) => {
+                        // Se fallisce, mantieni i dati esistenti
+                    }
+                }
+                // Piccola pausa per non sovraccaricare le API
+                sleep(Duration::from_millis(100)).await;
+            }
+            
+            if !tokens_to_update.is_empty() {
+                info!("💰 Prezzi aggiornati per {} token", tokens_to_update.len());
+            }
+        }
+        
         let mut all_gems: Vec<GemData> = Vec::new();
         
         // PARTE 1: ALTCOIN AFFERMATE
