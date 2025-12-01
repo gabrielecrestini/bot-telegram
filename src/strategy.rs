@@ -15,19 +15,19 @@ const BOLLINGER_PERIOD: usize = 20;
 const BOLLINGER_MULT: f64 = 2.0;
 
 // --- SOGLIE DIP MODE (Compra lo sconto) ---
-const RSI_OVERSOLD: f64 = 30.0;
-const RSI_DIP_MAX: f64 = 45.0;           // RSI sotto 45 per DIP
+const RSI_OVERSOLD: f64 = 35.0;          // Più permissivo (era 30)
+const RSI_DIP_MAX: f64 = 50.0;           // RSI sotto 50 per DIP (era 45)
 
 // --- SOGLIE BREAKOUT MODE (Cavalca l'onda) ---
 const RSI_BREAKOUT_MIN: f64 = 55.0;      // RSI sopra 55 per BREAKOUT
 const RSI_BREAKOUT_MAX: f64 = 75.0;      // Non comprare se overbought
-const BREAKOUT_CHANGE_24H: f64 = 10.0;   // Minimo +10% in 24h
-const BREAKOUT_CHANGE_1H: f64 = 3.0;     // Minimo +3% in 1h
-const VOLUME_SPIKE_MULT: f64 = 1.5;      // Volume 1.5x sopra media
+const BREAKOUT_CHANGE_24H: f64 = 8.0;    // Minimo +8% in 24h (era 10)
+const BREAKOUT_CHANGE_1H: f64 = 2.0;     // Minimo +2% in 1h (era 3)
+const VOLUME_SPIKE_MULT: f64 = 1.3;      // Volume 1.3x sopra media (era 1.5)
 
 // --- SOGLIE COMUNI ---
-const MIN_VOLUME_USD: f64 = 50_000.0;
-const MIN_LIQUIDITY_USD: f64 = 10_000.0;
+const MIN_VOLUME_USD: f64 = 25_000.0;    // $25k minimo (era $50k)
+const MIN_LIQUIDITY_USD: f64 = 5_000.0;  // $5k minimo (era $10k)
 
 // --- STOP LOSS / TAKE PROFIT ---
 const ATR_STOP_MULTIPLIER: f64 = 1.5;

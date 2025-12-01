@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
+use std::time::Duration;
 use solana_sdk::transaction::Transaction;
 use base64::{Engine as _, engine::general_purpose};
 use reqwest;
-use log::{info, warn};
+use log::{info, warn, error};
 
+// API URLs
 const JUP_TOKEN_LIST_API: &str = "https://token.jup.ag/strict"; 
 const DEX_API: &str = "https://api.dexscreener.com/latest/dex/tokens/";
 const DEX_SEARCH_API: &str = "https://api.dexscreener.com/latest/dex/search?q=";
@@ -13,6 +15,16 @@ const BIRDEYE_API: &str = "https://public-api.birdeye.so/defi/tokenlist?sort_by=
 const JUP_QUOTE_API: &str = "https://quote-api.jup.ag/v6/quote";
 const JUP_SWAP_API: &str = "https://quote-api.jup.ag/v6/swap";
 const JUP_PRICE_API: &str = "https://price.jup.ag/v6/price";
+
+/// Crea un client HTTP robusto con timeout e retry
+fn create_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .pool_max_idle_per_host(5)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct JupiterToken { pub address: String, pub symbol: String, pub name: String }
@@ -666,25 +678,73 @@ pub async fn find_profitable_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn 
 
 /// Ottiene transazione swap da Jupiter con priority fees ottimizzate
 /// slippage_bps: 100 = 1%, 200 = 2%, ecc.
+/// Include retry automatico per errori di rete
 pub async fn get_jupiter_swap_tx(user_pubkey: &str, input_mint: &str, output_mint: &str, amount_lamports: u64, slippage_bps: u16) -> Result<Transaction, Box<dyn Error + Send + Sync>> {
-    let client = reqwest::Client::new();
-    let quote_url = format!("{}?inputMint={}&outputMint={}&amount={}&slippageBps={}", JUP_QUOTE_API, input_mint, output_mint, amount_lamports, slippage_bps);
-    let quote_resp: serde_json::Value = client.get(&quote_url).send().await?.json().await?;
-    if quote_resp.get("error").is_some() { return Err(format!("Errore Quote: {}", quote_resp).into()); }
+    let client = create_http_client();
+    let quote_url = format!("{}?inputMint={}&outputMint={}&amount={}&slippageBps={}", 
+        JUP_QUOTE_API, input_mint, output_mint, amount_lamports, slippage_bps);
     
-    // Priority Fee Ottimizzata:
-    // - 20,000 lamports = 0.00002 SOL ≈ $0.004 (ragionevole per swap veloci)
-    // - 100,000 µLamp/CU per priorità alta senza sprecare capitale
-    let swap_req = SwapRequest { 
-        quote_response: quote_resp, 
-        user_public_key: user_pubkey.to_string(), 
-        wrap_and_unwrap_sol: true,
-        prioritization_fee_lamports: Some(20_000),        // ~$0.004 max
-        compute_unit_price_micro_lamports: Some(100_000), // Priorità alta
-    };
-    let swap_resp: SwapResponse = client.post(JUP_SWAP_API).json(&swap_req).send().await?.json().await?;
+    // Retry fino a 3 volte per errori di rete/DNS
+    let mut last_error = String::new();
+    for attempt in 1..=3 {
+        match client.get(&quote_url).send().await {
+            Ok(resp) => {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(quote_resp) => {
+                        if quote_resp.get("error").is_some() { 
+                            return Err(format!("Jupiter Quote Error: {}", quote_resp).into()); 
+                        }
+                        
+                        // Priority Fee Ottimizzata:
+                        // - 20,000 lamports = 0.00002 SOL ≈ $0.004 max
+                        // - 100,000 µLamp/CU per priorità alta
+                        let swap_req = SwapRequest { 
+                            quote_response: quote_resp, 
+                            user_public_key: user_pubkey.to_string(), 
+                            wrap_and_unwrap_sol: true,
+                            prioritization_fee_lamports: Some(20_000),
+                            compute_unit_price_micro_lamports: Some(100_000),
+                        };
+                        
+                        match client.post(JUP_SWAP_API).json(&swap_req).send().await {
+                            Ok(swap_resp) => {
+                                match swap_resp.json::<SwapResponse>().await {
+                                    Ok(data) => {
+                                        let tx_bytes = general_purpose::STANDARD.decode(&data.swap_transaction)?;
+                                        let transaction: Transaction = bincode::deserialize(&tx_bytes)?;
+                                        info!("✅ Jupiter swap TX ottenuta (tentativo {})", attempt);
+                                        return Ok(transaction);
+                                    }
+                                    Err(e) => {
+                                        last_error = format!("Swap parse error: {}", e);
+                                        warn!("⚠️ Jupiter swap parse failed: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                last_error = format!("Swap request error: {}", e);
+                                warn!("⚠️ Jupiter swap request failed (attempt {}): {}", attempt, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        last_error = format!("Quote parse error: {}", e);
+                        warn!("⚠️ Jupiter quote parse failed: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                last_error = format!("Network error: {}", e);
+                warn!("⚠️ Jupiter quote request failed (attempt {}): {}", attempt, e);
+                
+                // Attendi prima del retry per errori DNS
+                if e.to_string().contains("dns") || e.to_string().contains("connect") {
+                    tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
+                }
+            }
+        }
+    }
     
-    let tx_bytes = general_purpose::STANDARD.decode(&swap_resp.swap_transaction)?;
-    let transaction: Transaction = bincode::deserialize(&tx_bytes)?;
-    Ok(transaction)
+    error!("❌ Jupiter swap fallito dopo 3 tentativi: {}", last_error);
+    Err(format!("Jupiter swap failed: {}", last_error).into())
 }

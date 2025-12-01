@@ -1176,9 +1176,21 @@
         };
         
         async function updateTopCoins() {
+            // SOL usa il prezzo dal backend (già disponibile)
+            const solEl = document.getElementById('price_SOL');
+            if (solEl && state.solPrice > 0) {
+                solEl.innerText = '$' + state.solPrice.toFixed(2);
+                solEl.className = 'mono text-xs text-green-400';
+            }
+            
+            // Altre coin da DexScreener con retry
             for (const [symbol, address] of Object.entries(TOP_COINS)) {
+                if (symbol === 'SOL') continue; // Già gestito sopra
+                
                 try {
-                    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
+                    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, {
+                        signal: AbortSignal.timeout(5000) // 5s timeout
+                    });
                     const data = await res.json();
                     if (data.pairs && data.pairs[0]) {
                         const price = parseFloat(data.pairs[0].priceUsd || 0);
@@ -1190,7 +1202,7 @@
                         }
                     }
                 } catch (e) {
-                    console.log('Error fetching ' + symbol);
+                    console.log('Error fetching ' + symbol + ':', e.message);
                 }
             }
         }
