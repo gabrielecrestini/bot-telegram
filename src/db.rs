@@ -57,7 +57,7 @@ async fn init_schema(pool: &SqlitePool) {
     );
     "#;
 
-    // Tabella TRADES (Con highest_price per Trailing Stop)
+    // Tabella TRADES (Con highest_price per Trailing Stop + trading_mode)
     let schema_trades = r#"
     CREATE TABLE IF NOT EXISTS trades (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,7 +69,8 @@ async fn init_schema(pool: &SqlitePool) {
         entry_time TEXT DEFAULT CURRENT_TIMESTAMP,
         exit_time TEXT,
         profit_loss_sol REAL DEFAULT 0.0,
-        highest_price_lamports INTEGER DEFAULT 0
+        highest_price_lamports INTEGER DEFAULT 0,
+        trading_mode TEXT DEFAULT 'AUTO' -- DIP, BREAKOUT, AUTO
     );
     "#;
 
@@ -153,7 +154,7 @@ pub async fn can_withdraw(pool: &SqlitePool, tg_id: &str) -> Result<(bool, Strin
     Ok((true, "✅ Prelievo sbloccato!".to_string()))
 }
 
-/// Registra un acquisto (Buy)
+/// Registra un acquisto (Buy) con modalità trading
 pub async fn record_buy(
     pool: &SqlitePool, 
     tg_id: &str, 
@@ -161,18 +162,31 @@ pub async fn record_buy(
     signature: &str, 
     amount: u64
 ) -> Result<(), sqlx::Error> {
+    record_buy_with_mode(pool, tg_id, token_addr, signature, amount, "AUTO").await
+}
+
+/// Registra un acquisto con modalità specifica (DIP, BREAKOUT, AUTO)
+pub async fn record_buy_with_mode(
+    pool: &SqlitePool, 
+    tg_id: &str, 
+    token_addr: &str, 
+    signature: &str, 
+    amount: u64,
+    mode: &str
+) -> Result<(), sqlx::Error> {
     let amount_i64 = amount as i64;
     // All'inizio, il prezzo più alto (highest) è uguale al prezzo di entrata
-    sqlx::query("INSERT INTO trades (user_id, token_address, tx_signature, amount_in_lamports, highest_price_lamports, status) VALUES (?, ?, ?, ?, ?, 'OPEN')")
+    sqlx::query("INSERT INTO trades (user_id, token_address, tx_signature, amount_in_lamports, highest_price_lamports, trading_mode, status) VALUES (?, ?, ?, ?, ?, ?, 'OPEN')")
         .bind(tg_id)
         .bind(token_addr)
         .bind(signature)
         .bind(amount_i64)
-        .bind(amount_i64) 
+        .bind(amount_i64)
+        .bind(mode)
         .execute(pool)
         .await?;
         
-    info!("📝 Trade registrato nel DB per {}", token_addr);
+    info!("📝 Trade {} registrato nel DB per {}", mode, token_addr);
     Ok(())
 }
 
@@ -313,6 +327,7 @@ pub struct TradeHistory {
     pub entry_time: String,
     pub exit_time: Option<String>,
     pub profit_loss_sol: f64,
+    pub trading_mode: String, // DIP, BREAKOUT, AUTO
 }
 
 /// Struttura per prelievo nello storico
@@ -329,7 +344,7 @@ pub struct WithdrawalHistory {
 /// Recupera tutti i trade di un utente (ultimi 50)
 pub async fn get_user_trades(pool: &SqlitePool, user_id: &str) -> Result<Vec<TradeHistory>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, token_address, tx_signature, amount_in_lamports, status, entry_time, exit_time, profit_loss_sol 
+        "SELECT id, token_address, tx_signature, amount_in_lamports, status, entry_time, exit_time, profit_loss_sol, trading_mode 
          FROM trades WHERE user_id = ? ORDER BY entry_time DESC LIMIT 50"
     )
     .bind(user_id)
@@ -347,6 +362,7 @@ pub async fn get_user_trades(pool: &SqlitePool, user_id: &str) -> Result<Vec<Tra
             entry_time: row.get("entry_time"),
             exit_time: row.try_get("exit_time").ok(),
             profit_loss_sol: row.try_get("profit_loss_sol").unwrap_or(0.0),
+            trading_mode: row.try_get("trading_mode").unwrap_or_else(|_| "AUTO".to_string()),
         });
     }
     Ok(results)

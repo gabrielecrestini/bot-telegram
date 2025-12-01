@@ -112,13 +112,19 @@ async fn execute_amms_auto_buy(
     state: &Arc<AppState>,
     token_mint: &Pubkey,
     external_data: Option<&strategy::ExternalData>,
+    trading_mode: strategy::TradingMode,
 ) {
     let users = sqlx::query("SELECT tg_id FROM users WHERE is_active = 1").fetch_all(pool).await;
     if let Ok(rows) = users {
         if rows.is_empty() { return; }
         
         let mint_str = token_mint.to_string();
-        info!("🤖 AMMS AUTO-BUY CHECK: {} utenti per {}", rows.len(), &mint_str[..8]);
+        let mode_str = match trading_mode {
+            strategy::TradingMode::Dip => "DIP",
+            strategy::TradingMode::Breakout => "BREAKOUT",
+            strategy::TradingMode::None => "AUTO",
+        };
+        info!("🤖 AMMS {} BUY: {} utenti per {}", mode_str, rows.len(), &mint_str[..8]);
 
         // Fetch Pool Keys UNA volta
         let pool_keys = match raydium::fetch_pool_keys_by_mint(net, token_mint).await {
@@ -141,6 +147,7 @@ async fn execute_amms_auto_buy(
             let mint_key = *token_mint;
             let state_c = state.clone();
             let ext_data = external_data.cloned();
+            let mode = trading_mode;
 
             tokio::spawn(async move {
                 if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool_c, &uid).await {
@@ -156,7 +163,11 @@ async fn execute_amms_auto_buy(
                             .map(|a| (a.atr / ext_data.as_ref().map(|e| e.price).unwrap_or(1.0)) * 100.0)
                     } else { None };
 
-                    let mut amt_sol = strategy::calculate_investment_amount(bal_sol, atr_pct);
+                    // BREAKOUT usa importo più cauto
+                    let mut amt_sol = match mode {
+                        strategy::TradingMode::Breakout => strategy::calculate_breakout_investment(bal_sol, atr_pct),
+                        _ => strategy::calculate_investment_amount(bal_sol, atr_pct),
+                    };
                     
                     // Tetto sicurezza auto-trade
                     amt_sol = amt_sol.min(0.5);
@@ -180,8 +191,13 @@ async fn execute_amms_auto_buy(
                             let bh = net_c.rpc.get_latest_blockhash().await.unwrap();
                             tx.sign(&[&payer], bh);
                             if let Ok(sig) = net_c.rpc.send_transaction(&tx).await {
-                                info!("✅ AMMS BUY JUPITER ({}) -> TX: {}", uid, sig);
-                                let _ = db::record_buy(&pool_c, &uid, &token_c, &sig.to_string(), amt_lam).await;
+                                let mode_str = match mode {
+                                    strategy::TradingMode::Dip => "DIP",
+                                    strategy::TradingMode::Breakout => "BREAKOUT",
+                                    _ => "AUTO",
+                                };
+                                info!("✅ 🔵{} JUPITER ({}) -> TX: {}", mode_str, uid, sig);
+                                let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig.to_string(), amt_lam, mode_str).await;
                                 success = true;
                                 tx_sig = sig.to_string();
                                 entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
@@ -192,8 +208,13 @@ async fn execute_amms_auto_buy(
                         if !success {
                             if let Some(keys) = keys_c {
                                 if let Ok(sig) = raydium::execute_swap(&net_c, &payer, &keys, mint_key, amt_lam, 200).await {
-                                    info!("⚡ AMMS BUY RAYDIUM ({}) -> TX: {}", uid, sig);
-                                    let _ = db::record_buy(&pool_c, &uid, &token_c, &sig, amt_lam).await;
+                                    let mode_str = match mode {
+                                        strategy::TradingMode::Dip => "DIP",
+                                        strategy::TradingMode::Breakout => "BREAKOUT",
+                                        _ => "AUTO",
+                                    };
+                                    info!("⚡ 🚀{} RAYDIUM ({}) -> TX: {}", mode_str, uid, sig);
+                                    let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
                                     success = true;
                                     tx_sig = sig.clone();
                                     entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
@@ -210,6 +231,12 @@ async fn execute_amms_auto_buy(
                                     .unwrap_or(entry_price * 0.03)
                             } else { entry_price * 0.03 };
                             
+                            // Multipliers diversi per DIP e BREAKOUT
+                            let (sl_mult, tp_mult) = match mode {
+                                strategy::TradingMode::Breakout => (2.0, 3.0),
+                                _ => (1.5, 2.0),
+                            };
+                            
                             if let Ok(mut positions) = state_c.open_positions.lock() {
                                 let user_positions = positions.entry(uid.clone()).or_insert_with(Vec::new);
                                 let pos = engine::OpenPosition::new(
@@ -219,10 +246,17 @@ async fn execute_amms_auto_buy(
                                     atr,
                                     amt_sol,
                                     amt_lam,
+                                    mode,
                                 );
                                 user_positions.push(pos);
-                                info!("📊 Posizione registrata per {} | SL: ${:.8} | TP: ${:.8}", 
-                                    uid, entry_price - (1.5 * atr), entry_price + (2.0 * atr));
+                                
+                                let mode_str = match mode {
+                                    strategy::TradingMode::Dip => "DIP",
+                                    strategy::TradingMode::Breakout => "BREAKOUT",
+                                    _ => "AUTO",
+                                };
+                                info!("📊 {} Posizione [{}] | SL: ${:.8} | TP: ${:.8}", 
+                                    mode_str, uid, entry_price - (sl_mult * atr), entry_price + (tp_mult * atr));
                             }
                         }
                     }
@@ -301,13 +335,13 @@ async fn run_position_manager(
                                             // Registra nel DB
                                             let _ = db::record_sell(&pool, &user_id, &pos.token_address, &sig.to_string(), pnl_pct).await;
                                             
-                                            // Update stats
+                                            // Update stats con modalità
                                             let hold_time = (chrono::Utc::now().timestamp() - pos.entry_time) as f64 / 60.0;
                                             let pnl_sol = pos.amount_sol * (pnl_pct / 100.0);
                                             
                                             if let Ok(mut stats) = state.portfolio_stats.lock() {
                                                 let user_stats = stats.entry(user_id.clone()).or_default();
-                                                user_stats.record_trade(pnl_pct, pnl_sol, hold_time);
+                                                user_stats.record_trade(pnl_pct, pnl_sol, hold_time, pos.mode);
                                             }
                                             
                                             // Rimuovi posizione
@@ -444,7 +478,12 @@ async fn run_market_strategy(net: Arc<network::NetworkClient>, state: Arc<AppSta
                     }
                     
                     if should_buy {
-                        info!("📈 AMMS SEGNALE: {} - {}", mkt.symbol, reason);
+                        let mode_str = match analysis.mode {
+                            strategy::TradingMode::Dip => "🔵 DIP",
+                            strategy::TradingMode::Breakout => "🚀 BREAKOUT",
+                            strategy::TradingMode::None => "SIGNAL",
+                        };
+                        info!("📈 AMMS {} SEGNALE: {} - {}", mode_str, mkt.symbol, reason);
                         
                         // Salva segnale
                         if let Ok(mut signals) = state.math_signals.lock() {
@@ -463,15 +502,16 @@ async fn run_market_strategy(net: Arc<network::NetworkClient>, state: Arc<AppSta
                             }
                         }
                         
-                        // Auto-Buy
+                        // Auto-Buy con modalità corretta
                         if let Ok(pk) = Pubkey::from_str(token) {
                             let p = pool.clone();
                             let n = net.clone();
                             let s = state.clone();
                             let ext = external.clone();
+                            let mode = analysis.mode;
                             
                             tokio::spawn(async move {
-                                execute_amms_auto_buy(&p, &n, &s, &pk, Some(&ext)).await;
+                                execute_amms_auto_buy(&p, &n, &s, &pk, Some(&ext), mode).await;
                             });
                         }
                     }
@@ -576,7 +616,7 @@ async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppSta
                                                                         if g.len() > 30 { g.pop(); }
                                                                     }
                                                                     
-                                                                    // Auto buy con dati esterni
+                                                                    // Auto buy con dati esterni - Sniper = nuovi token = BREAKOUT mode
                                                                     let ext = strategy::ExternalData {
                                                                         price: mkt.price,
                                                                         change_5m: 5.0, // Nuovo = pump
@@ -587,7 +627,8 @@ async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppSta
                                                                         market_cap: mkt.market_cap,
                                                                     };
                                                                     
-                                                                    execute_amms_auto_buy(&p_an, &n_an, &s_an, &pk, Some(&ext)).await;
+                                                                    // Nuovi token = BREAKOUT (cavalcano l'onda del lancio)
+                                                                    execute_amms_auto_buy(&p_an, &n_an, &s_an, &pk, Some(&ext), strategy::TradingMode::Breakout).await;
                                                                 }
                                                             }
                                                         }
