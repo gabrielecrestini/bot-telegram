@@ -730,10 +730,18 @@
         </div>
 
         <!-- Token Info -->
-        <div class="grid grid-cols-2 gap-3 mb-4">
-            <div class="card p-3">
+        <div class="grid grid-cols-3 gap-2 mb-4">
+            <div class="card p-3 col-span-2">
                 <p class="text-xs text-zinc-500">Prezzo</p>
-                <p class="mono font-bold" id="tsPrice">$0.00</p>
+                <p class="mono font-bold text-lg" id="tsPrice">$0.00</p>
+            </div>
+            <div class="card p-3">
+                <p class="text-xs text-zinc-500">Score</p>
+                <p class="mono font-bold text-lg" id="tsScore">0</p>
+            </div>
+            <div class="card p-3">
+                <p class="text-xs text-zinc-500">1h</p>
+                <p class="mono font-bold text-green-400" id="tsChange1h">+0%</p>
             </div>
             <div class="card p-3">
                 <p class="text-xs text-zinc-500">24h</p>
@@ -752,8 +760,8 @@
                 <p class="mono font-bold text-sm" id="tsVol">$0</p>
             </div>
             <div class="card p-3">
-                <p class="text-xs text-zinc-500">Score</p>
-                <p class="mono font-bold" id="tsScore">0</p>
+                <p class="text-xs text-zinc-500">Indirizzo</p>
+                <p class="mono text-[10px] text-zinc-400 truncate" id="tsAddr">...</p>
             </div>
         </div>
 
@@ -882,22 +890,58 @@
             document.getElementById('btnWithdraw').disabled = false;
         }
 
-        // Token Trading
+        // Token Trading - Apri per indice (più affidabile)
+        function openTokenByIndex(idx) {
+            if (idx >= 0 && idx < state.gems.length) {
+                openToken(state.gems[idx]);
+            } else {
+                toast('Errore', 'Token non trovato');
+            }
+        }
+        
         function openToken(token) {
+            console.log('📊 Opening token:', token);
+            
+            if (!token) {
+                toast('Errore', 'Token non valido');
+                return;
+            }
+            
             state.currentToken = token;
             openSheet('tradeSheet');
-            document.getElementById('tsSymbol').innerText = token.symbol;
-            document.getElementById('tsName').innerText = token.name;
-            document.getElementById('tsPrice').innerText = formatPrice(token.price);
-            document.getElementById('tsChange').innerText = (token.change_24h >= 0 ? '+' : '') + (token.change_24h || 0).toFixed(1) + '%';
-            document.getElementById('tsChange').className = 'mono font-bold ' + ((token.change_24h || 0) >= 0 ? 'text-green-400' : 'text-red-400');
-            document.getElementById('tsMcap').innerText = formatMcap(token.market_cap);
-            document.getElementById('tsLiq').innerText = formatMcap(token.liquidity_usd);
-            document.getElementById('tsVol').innerText = formatMcap(token.volume_24h);
+            
+            // Popola tutti i campi con fallback
+            document.getElementById('tsSymbol').innerText = token.symbol || 'N/A';
+            document.getElementById('tsName').innerText = token.name || token.symbol || 'Unknown';
+            document.getElementById('tsPrice').innerText = formatPrice(token.price || 0);
+            
+            // Cambio 1h
+            const change1h = token.change_1h || 0;
+            document.getElementById('tsChange1h').innerText = (change1h >= 0 ? '+' : '') + change1h.toFixed(1) + '%';
+            document.getElementById('tsChange1h').className = 'mono font-bold ' + (change1h >= 0 ? 'text-green-400' : 'text-red-400');
+            
+            // Cambio 24h
+            const change24h = token.change_24h || 0;
+            document.getElementById('tsChange').innerText = (change24h >= 0 ? '+' : '') + change24h.toFixed(1) + '%';
+            document.getElementById('tsChange').className = 'mono font-bold ' + (change24h >= 0 ? 'text-green-400' : 'text-red-400');
+            
+            document.getElementById('tsMcap').innerText = formatMcap(token.market_cap || 0);
+            document.getElementById('tsLiq').innerText = formatMcap(token.liquidity_usd || 0);
+            document.getElementById('tsVol').innerText = formatMcap(token.volume_24h || 0);
             document.getElementById('tsScore').innerText = (token.safety_score || 0) + '/100';
-            document.getElementById('tsMax').innerText = (state.balance - 0.005).toFixed(4);
-            document.getElementById('tsImg').src = token.image_url || `https://img.jup.ag/v6/${token.token}/logo`;
-            document.getElementById('tsImg').onerror = function() { this.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect fill="%2327272a" width="40" height="40" rx="20"/><text x="20" y="26" text-anchor="middle" fill="white" font-size="16">' + (token.symbol ? token.symbol[0] : '?') + '</text></svg>'; };
+            document.getElementById('tsAddr').innerText = token.token || '...';
+            document.getElementById('tsMax').innerText = Math.max(0, state.balance - 0.005).toFixed(4);
+            
+            // Immagine con fallback
+            const imgUrl = token.image_url || `https://img.jup.ag/v6/${token.token}/logo`;
+            const imgEl = document.getElementById('tsImg');
+            imgEl.src = imgUrl;
+            imgEl.onerror = function() { 
+                this.onerror = null;
+                this.src = `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect fill="%2327272a" width="40" height="40" rx="20"/><text x="20" y="26" text-anchor="middle" fill="white" font-size="16">${(token.symbol || '?')[0]}</text></svg>`; 
+            };
+            
+            lucide.createIcons();
         }
 
         function setTradePct(pct) {
@@ -1627,24 +1671,26 @@
                 // Token List con tutti i dati live
                 const list = document.getElementById('tokenList');
                 if (state.gems.length > 0) {
-                    list.innerHTML = state.gems.map(g => {
+                    list.innerHTML = state.gems.map((g, idx) => {
                         const mcapStr = formatMcap(g.market_cap);
                         const volStr = formatMcap(g.volume_24h);
                         const liqStr = formatMcap(g.liquidity_usd);
                         const isTop = g.source === 'TOP' || g.source === 'ALTCOIN' || g.market_cap > 10000000;
                         const change1h = g.change_1h || 0;
                         const change24h = g.change_24h || 0;
+                        const imgUrl = g.image_url || `https://img.jup.ag/v6/${g.token}/logo`;
+                        const fallbackImg = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><rect fill='%2327272a' width='40' height='40' rx='20'/><text x='20' y='26' text-anchor='middle' fill='white' font-size='16'>${(g.symbol || '?')[0]}</text></svg>`;
                         
                         return `
-                        <div class="token-row" onclick='openToken(JSON.parse(this.dataset.token))' data-token='${JSON.stringify(g)}'>
-                            <img src="${g.image_url || `https://img.jup.ag/v6/${g.token}/logo`}" class="w-12 h-12 rounded-full bg-zinc-800" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%2327272a%22 width=%2240%22 height=%2240%22 rx=%2220%22/><text x=%2220%22 y=%2226%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2216%22>${g.symbol ? g.symbol[0] : '?'}</text></svg>'">
+                        <div class="token-row" onclick="openTokenByIndex(${idx})">
+                            <img src="${imgUrl}" class="w-12 h-12 rounded-full bg-zinc-800" onerror="this.onerror=null; this.src='${fallbackImg}'">
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2 mb-1">
-                                    <span class="font-bold">${g.symbol}</span>
+                                    <span class="font-bold">${g.symbol || 'N/A'}</span>
                                     ${isTop ? '<span class="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded font-medium">TOP</span>' : ''}
-                                    <span class="score-badge ${getScoreClass(g.safety_score)}">${g.safety_score}%</span>
+                                    <span class="score-badge ${getScoreClass(g.safety_score)}">${g.safety_score || 0}%</span>
                                 </div>
-                                <div class="text-[11px] text-zinc-500 truncate mb-1">${g.name || g.symbol}</div>
+                                <div class="text-[11px] text-zinc-500 truncate mb-1">${g.name || g.symbol || 'Unknown'}</div>
                                 <div class="flex items-center gap-3 text-[10px]">
                                     <span class="text-zinc-400">MCap: <span class="text-zinc-300 font-medium">${mcapStr}</span></span>
                                     <span class="text-zinc-400">Vol: <span class="text-zinc-300 font-medium">${volStr}</span></span>
