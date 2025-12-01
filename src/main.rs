@@ -411,6 +411,38 @@ async fn run_market_strategy(net: Arc<network::NetworkClient>, state: Arc<AppSta
                     
                     let (should_buy, reason) = strategy::check_entry_conditions(&analysis, &external);
                     
+                    // Aggiungi sempre alla lista gems se passa i filtri di base
+                    if mkt.score >= 50 {
+                        let gem = GemData {
+                            token: token.clone(),
+                            symbol: mkt.symbol.clone(),
+                            name: mkt.name.clone(),
+                            price: mkt.price,
+                            safety_score: if should_buy { 90 } else { mkt.score },
+                            liquidity_usd: mkt.liquidity_usd,
+                            market_cap: mkt.market_cap,
+                            volume_24h: mkt.volume_24h,
+                            change_1h: mkt.change_1h,
+                            change_24h: mkt.change_24h,
+                            image_url: mkt.image_url.clone(),
+                            timestamp: chrono::Utc::now().timestamp(),
+                            source: if should_buy { "SIGNAL".into() } else { "WATCH".into() },
+                        };
+                        
+                        if let Ok(mut gems) = state.found_gems.lock() {
+                            // Aggiorna o aggiungi
+                            if let Some(existing) = gems.iter_mut().find(|g| g.token == *token) {
+                                existing.price = gem.price;
+                                existing.change_1h = gem.change_1h;
+                                existing.change_24h = gem.change_24h;
+                                existing.safety_score = gem.safety_score;
+                                existing.timestamp = gem.timestamp;
+                            } else if gems.len() < 30 {
+                                gems.push(gem);
+                            }
+                        }
+                    }
+                    
                     if should_buy {
                         info!("📈 AMMS SEGNALE: {} - {}", mkt.symbol, reason);
                         
