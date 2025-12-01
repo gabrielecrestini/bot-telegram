@@ -94,4 +94,18 @@ impl NetworkClient {
             Err(e) => Err(format!("Errore invio TX: {}", e).into())
         }
     }
+    
+    /// Invia VersionedTransaction (Jupiter V6) con retry automatico
+    pub async fn send_versioned_transaction(&self, transaction: &solana_sdk::transaction::VersionedTransaction) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let sig = transaction.signatures[0].to_string();
+        
+        // RPC standard per VersionedTransaction (TPU non supporta direttamente)
+        match self.rpc.send_transaction(transaction).await {
+            Ok(s) => {
+                info!("📡 Versioned TX inviata via RPC: {}", s);
+                Ok(s.to_string())
+            }
+            Err(e) => Err(format!("Errore invio Versioned TX: {}", e).into())
+        }
+    }
 }

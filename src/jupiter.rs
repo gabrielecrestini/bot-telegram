@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::time::Duration;
-use solana_sdk::transaction::Transaction;
+use solana_sdk::transaction::{Transaction, VersionedTransaction};
+use solana_sdk::message::VersionedMessage;
+use solana_sdk::signature::{Keypair, Signer};
 use base64::{Engine as _, engine::general_purpose};
 use reqwest;
 use log::{info, warn, error};
@@ -680,7 +682,8 @@ pub async fn find_profitable_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn 
 /// Ottiene transazione swap da Jupiter con priority fees ottimizzate
 /// slippage_bps: 100 = 1%, 200 = 2%, ecc.
 /// Include retry automatico per errori di rete
-pub async fn get_jupiter_swap_tx(user_pubkey: &str, input_mint: &str, output_mint: &str, amount_lamports: u64, slippage_bps: u16) -> Result<Transaction, Box<dyn Error + Send + Sync>> {
+/// IMPORTANTE: Jupiter V6 restituisce VersionedTransaction
+pub async fn get_jupiter_swap_tx(user_pubkey: &str, input_mint: &str, output_mint: &str, amount_lamports: u64, slippage_bps: u16) -> Result<VersionedTransaction, Box<dyn Error + Send + Sync>> {
     let client = create_http_client();
     let quote_url = format!("{}?inputMint={}&outputMint={}&amount={}&slippageBps={}", 
         JUP_QUOTE_API, input_mint, output_mint, amount_lamports, slippage_bps);
@@ -712,7 +715,8 @@ pub async fn get_jupiter_swap_tx(user_pubkey: &str, input_mint: &str, output_min
                                 match swap_resp.json::<SwapResponse>().await {
                                     Ok(data) => {
                                         let tx_bytes = general_purpose::STANDARD.decode(&data.swap_transaction)?;
-                                        let transaction: Transaction = bincode::deserialize(&tx_bytes)?;
+                                        // Jupiter V6 restituisce VersionedTransaction
+                                        let transaction: VersionedTransaction = bincode::deserialize(&tx_bytes)?;
                                         info!("✅ Jupiter swap TX ottenuta (tentativo {})", attempt);
                                         return Ok(transaction);
                                     }
@@ -748,4 +752,28 @@ pub async fn get_jupiter_swap_tx(user_pubkey: &str, input_mint: &str, output_min
     
     error!("❌ Jupiter swap fallito dopo 3 tentativi: {}", last_error);
     Err(format!("Jupiter swap failed: {}", last_error).into())
+}
+
+/// Firma una VersionedTransaction con un Keypair
+pub fn sign_versioned_transaction(
+    tx: &VersionedTransaction,
+    payer: &Keypair,
+    recent_blockhash: solana_sdk::hash::Hash,
+) -> Result<VersionedTransaction, Box<dyn Error + Send + Sync>> {
+    // Crea una copia del messaggio con il nuovo blockhash
+    let mut message = tx.message.clone();
+    
+    match &mut message {
+        VersionedMessage::Legacy(m) => {
+            m.recent_blockhash = recent_blockhash;
+        }
+        VersionedMessage::V0(m) => {
+            m.recent_blockhash = recent_blockhash;
+        }
+    }
+    
+    // Crea la transazione firmata
+    let signed_tx = VersionedTransaction::try_new(message, &[payer])?;
+    
+    Ok(signed_tx)
 }

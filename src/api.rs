@@ -434,32 +434,38 @@ async fn handle_trade(
 
         let input = "So11111111111111111111111111111111111111112";
         match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), input, &req.token, amount_lamports, 100).await {
-            Ok(mut tx) => {
+            Ok(tx) => {
                 if let Ok(bh) = net.rpc.get_latest_blockhash().await {
-                    tx.sign(&[&payer], bh);
-                    
-                    match net.send_transaction_fast(&tx).await {
-                        Ok(sig) => {
-                            let _ = db::record_buy(&pool, &user_id, &req.token, &sig, amount_lamports).await;
-                            return Ok(warp::reply::json(&ApiResponse {
-                                success: true,
-                                message: "Buy Eseguito".into(),
-                                tx_signature: sig.clone(),
-                                solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
-                            }));
+                    // Firma la VersionedTransaction con il nuovo blockhash
+                    match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                        Ok(signed_tx) => {
+                            match net.send_versioned_transaction(&signed_tx).await {
+                                Ok(sig) => {
+                                    let _ = db::record_buy(&pool, &user_id, &req.token, &sig, amount_lamports).await;
+                                    info!("✅ BUY completato per {} | {} SOL | TX: {}", user_id, req.amount_sol, sig);
+                                    return Ok(warp::reply::json(&ApiResponse {
+                                        success: true,
+                                        message: "Buy Eseguito".into(),
+                                        tx_signature: sig.clone(),
+                                        solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
+                                    }));
+                                }
+                                Err(e) => warn!("⚠️ Jupiter TX fallita: {}", e),
+                            }
                         }
-                        Err(e) => warn!("⚠️ Jupiter TX fallita: {}", e),
+                        Err(e) => warn!("⚠️ Firma TX fallita: {}", e),
                     }
                 }
             }
             Err(e) => warn!("⚠️ Jupiter quote: {}", e),
         }
 
-        // Raydium fallback
+        // Raydium fallback (usa Transaction normale)
         if let Ok(mint) = Pubkey::from_str(&req.token) {
             if let Ok(keys) = raydium::fetch_pool_keys_by_mint(&net, &mint).await {
                 if let Ok(sig) = raydium::execute_swap(&net, &payer, &keys, mint, amount_lamports, 200).await {
                     let _ = db::record_buy(&pool, &user_id, &req.token, &sig, amount_lamports).await;
+                    info!("✅ BUY (Raydium) completato per {} | {} SOL | TX: {}", user_id, req.amount_sol, sig);
                     return Ok(warp::reply::json(&ApiResponse {
                         success: true,
                         message: "Buy Eseguito (Raydium)".into(),
@@ -480,21 +486,25 @@ async fn handle_trade(
     } else if req.action == "SELL" {
         let output = "So11111111111111111111111111111111111111112";
         match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), &req.token, output, amount_lamports, 200).await {
-            Ok(mut tx) => {
+            Ok(tx) => {
                 if let Ok(bh) = net.rpc.get_latest_blockhash().await {
-                    tx.sign(&[&payer], bh);
-                    
-                    match net.send_transaction_fast(&tx).await {
-                        Ok(sig) => {
-                            let _ = db::record_sell(&pool, &user_id, &req.token, &sig, 0.0).await;
-                            return Ok(warp::reply::json(&ApiResponse {
-                                success: true,
-                                message: "Vendita Eseguita".into(),
-                                tx_signature: sig.clone(),
-                                solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
-                            }));
+                    match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                        Ok(signed_tx) => {
+                            match net.send_versioned_transaction(&signed_tx).await {
+                                Ok(sig) => {
+                                    let _ = db::record_sell(&pool, &user_id, &req.token, &sig, 0.0).await;
+                                    info!("✅ SELL completato per {} | TX: {}", user_id, sig);
+                                    return Ok(warp::reply::json(&ApiResponse {
+                                        success: true,
+                                        message: "Vendita Eseguita".into(),
+                                        tx_signature: sig.clone(),
+                                        solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
+                                    }));
+                                }
+                                Err(e) => error!("❌ Sell TX: {}", e),
+                            }
                         }
-                        Err(e) => error!("❌ Sell TX: {}", e),
+                        Err(e) => error!("❌ Firma Sell TX: {}", e),
                     }
                 }
             }
@@ -877,11 +887,11 @@ async fn handle_bot_stop(
     let mut closed_count = 0;
 
     for trade in &open_trades {
-        // Prova a vendere tramite Jupiter
+        // Prova a vendere tramite Jupiter (con VersionedTransaction)
         if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
             let output = "So11111111111111111111111111111111111111112";
             
-            if let Ok(mut tx) = jupiter::get_jupiter_swap_tx(
+            if let Ok(tx) = jupiter::get_jupiter_swap_tx(
                 &payer.pubkey().to_string(),
                 &trade.token_address,
                 output,
@@ -889,13 +899,13 @@ async fn handle_bot_stop(
                 300, // slippage più alto per vendite urgenti
             ).await {
                 if let Ok(bh) = net.rpc.get_latest_blockhash().await {
-                    tx.sign(&[&payer], bh);
-                    
-                    // TPU PRIORITY per vendite urgenti
-                    if let Ok(sig) = net.send_transaction_fast(&tx).await {
-                        let _ = db::record_sell(&pool, &user_id, &trade.token_address, &sig, 0.0).await;
-                        closed_count += 1;
-                        info!("✅ Venduto {} per bot stop", trade.token_address);
+                    if let Ok(signed_tx) = jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                        // Invia vendita
+                        if let Ok(sig) = net.send_versioned_transaction(&signed_tx).await {
+                            let _ = db::record_sell(&pool, &user_id, &trade.token_address, &sig, 0.0).await;
+                            closed_count += 1;
+                            info!("✅ Venduto {} per bot stop", trade.token_address);
+                        }
                     }
                 }
             }
