@@ -43,6 +43,8 @@ dotenv = "0.15"
 log = "0.4"
 env_logger = "0.10"
 base64 = "0.21"
+sha2 = "0.10"
+urlencoding = "2.1"
 # Pin base64ct to avoid edition2024 requirement
 base64ct = "=1.7.3"
 # --- TELEGRAM BOT ---

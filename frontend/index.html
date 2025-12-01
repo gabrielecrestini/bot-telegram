@@ -56,10 +56,63 @@
 </head>
 <body>
 
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
         const API = "https://api.domisia.it";
         const SOLSCAN = "https://solscan.io/tx/";
         const SOLSCAN_ADDR = "https://solscan.io/account/";
+        
+        // ═══════════════════════════════════════════════════════════════
+        // AUTENTICAZIONE
+        // ═══════════════════════════════════════════════════════════════
+        
+        // Rileva se siamo in Telegram Web App
+        const isTelegram = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData;
+        let telegramId = null;
+        let telegramData = null;
+        let sessionToken = localStorage.getItem('session_token') || '';
+        let userId = localStorage.getItem('user_id') || '';
+        
+        if (isTelegram) {
+            const tg = window.Telegram.WebApp;
+            tg.ready();
+            tg.expand();
+            
+            telegramData = tg.initData;
+            if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+                telegramId = tg.initDataUnsafe.user.id.toString();
+                userId = 'tg_' + telegramId;
+                console.log('📱 Telegram User:', telegramId);
+            }
+            
+            // Applica tema Telegram
+            document.body.style.backgroundColor = tg.backgroundColor || '#09090b';
+        }
+        
+        // Headers per le richieste API
+        function getAuthHeaders() {
+            const headers = {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            };
+            
+            if (telegramId) {
+                headers['X-Telegram-Id'] = telegramId;
+            }
+            if (telegramData) {
+                headers['X-Telegram-Data'] = telegramData;
+            }
+            if (sessionToken) {
+                headers['X-Session-Token'] = sessionToken;
+            }
+            
+            return headers;
+        }
+        
+        // Check se utente è autenticato
+        function isAuthenticated() {
+            return !!telegramId || !!sessionToken;
+        }
     </script>
 
     <!-- Toast -->
@@ -385,6 +438,22 @@
     <section id="p-settings" class="page p-4">
         <h2 class="text-xl font-bold mb-4">Impostazioni</h2>
 
+        <!-- Account Info -->
+        <div class="card p-4 mb-4">
+            <div class="flex items-center gap-3 mb-3">
+                <div class="w-12 h-12 rounded-full bg-indigo-500/20 flex items-center justify-center">
+                    <i data-lucide="user" class="w-6 h-6 text-indigo-400"></i>
+                </div>
+                <div>
+                    <p class="font-medium" id="accountType">Caricamento...</p>
+                    <p class="text-xs text-zinc-500 mono" id="accountId">-</p>
+                </div>
+            </div>
+            <button onclick="logout()" id="logoutBtn" class="hidden btn bg-red-500/20 text-red-400 w-full text-sm">
+                <i data-lucide="log-out" class="w-4 h-4 inline mr-2"></i> Esci
+            </button>
+        </div>
+
         <div class="space-y-3">
             <div class="card p-4 flex items-center justify-between">
                 <div>
@@ -405,6 +474,47 @@
         <div class="mt-8 text-center text-zinc-600 text-xs">
             <p>GOD SNIPER PRO v2.1</p>
             <p>Powered by Solana</p>
+        </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- LOGIN PAGE (Solo per utenti web non autenticati) -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <section id="p-login" class="page p-4">
+        <div class="max-w-sm mx-auto pt-8">
+            <div class="text-center mb-8">
+                <div class="w-20 h-20 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center mx-auto mb-4">
+                    <i data-lucide="zap" class="w-10 h-10 text-white"></i>
+                </div>
+                <h1 class="text-2xl font-bold mb-2">GOD SNIPER</h1>
+                <p class="text-zinc-500 text-sm">Trading Bot Automatico su Solana</p>
+            </div>
+
+            <div class="card p-6">
+                <div class="flex gap-2 mb-6">
+                    <button onclick="setAuthMode('login')" class="auth-tab flex-1 py-2 rounded-lg text-sm font-medium bg-indigo-500 text-white" data-mode="login">Accedi</button>
+                    <button onclick="setAuthMode('register')" class="auth-tab flex-1 py-2 rounded-lg text-sm font-medium bg-zinc-800 text-zinc-400" data-mode="register">Registrati</button>
+                </div>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="text-xs text-zinc-500 mb-2 block">Email</label>
+                        <input type="email" id="authEmail" placeholder="email@example.com" class="w-full">
+                    </div>
+                    <div>
+                        <label class="text-xs text-zinc-500 mb-2 block">Password</label>
+                        <input type="password" id="authPassword" placeholder="••••••••" class="w-full">
+                    </div>
+                    <button onclick="doAuth()" id="authBtn" class="btn btn-primary w-full">
+                        Accedi
+                    </button>
+                    <p class="text-xs text-red-400 text-center hidden" id="authError"></p>
+                </div>
+            </div>
+
+            <p class="text-center text-zinc-600 text-xs mt-6">
+                💡 Accedi da <strong>Telegram Bot</strong> per autenticazione automatica
+            </p>
         </div>
     </section>
 
@@ -653,7 +763,7 @@
             try {
                 const res = await fetch(`${API}/trade`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({ action: 'BUY', token: state.currentToken.token, amount_sol: amt })
                 });
                 const d = await res.json();
@@ -692,7 +802,7 @@
             try {
                 const res = await fetch(`${API}/withdraw`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({ amount: amt, token: 'SOL', destination_address: addr })
                 });
                 const d = await res.json();
@@ -866,18 +976,133 @@
             return 'score-low';
         }
 
-        // Sync
+        // ═══════════════════════════════════════════════════════════════
+        // AUTH FUNCTIONS
+        // ═══════════════════════════════════════════════════════════════
+        
+        let authMode = 'login';
+        
+        function setAuthMode(mode) {
+            authMode = mode;
+            document.querySelectorAll('.auth-tab').forEach(tab => {
+                const isActive = tab.dataset.mode === mode;
+                tab.className = `auth-tab flex-1 py-2 rounded-lg text-sm font-medium ${isActive ? 'bg-indigo-500 text-white' : 'bg-zinc-800 text-zinc-400'}`;
+            });
+            document.getElementById('authBtn').innerText = mode === 'login' ? 'Accedi' : 'Registrati';
+            document.getElementById('authError').classList.add('hidden');
+        }
+        
+        async function doAuth() {
+            const email = document.getElementById('authEmail').value.trim();
+            const password = document.getElementById('authPassword').value;
+            const errorEl = document.getElementById('authError');
+            const btn = document.getElementById('authBtn');
+            
+            if (!email || !password) {
+                errorEl.innerText = 'Compila tutti i campi';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.innerText = 'Caricamento...';
+            
+            try {
+                const res = await fetch(`${API}/auth`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, action: authMode })
+                });
+                
+                const data = await res.json();
+                
+                if (data.success) {
+                    sessionToken = data.session_token;
+                    userId = data.user_id;
+                    localStorage.setItem('session_token', sessionToken);
+                    localStorage.setItem('user_id', userId);
+                    
+                    toast('Successo', data.message);
+                    showMainApp();
+                    sync();
+                } else {
+                    errorEl.innerText = data.message;
+                    errorEl.classList.remove('hidden');
+                }
+            } catch (e) {
+                errorEl.innerText = 'Errore di connessione';
+                errorEl.classList.remove('hidden');
+            } finally {
+                btn.disabled = false;
+                btn.innerText = authMode === 'login' ? 'Accedi' : 'Registrati';
+            }
+        }
+        
+        function logout() {
+            sessionToken = '';
+            userId = '';
+            localStorage.removeItem('session_token');
+            localStorage.removeItem('user_id');
+            
+            if (!isTelegram) {
+                showLoginPage();
+            }
+            toast('Info', 'Logout effettuato');
+        }
+        
+        function showLoginPage() {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById('p-login').classList.add('active');
+            document.querySelector('nav').style.display = 'none';
+        }
+        
+        function showMainApp() {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.getElementById('p-wallet').classList.add('active');
+            document.querySelector('nav').style.display = 'flex';
+            updateAccountInfo();
+        }
+        
+        function updateAccountInfo() {
+            const typeEl = document.getElementById('accountType');
+            const idEl = document.getElementById('accountId');
+            const logoutBtn = document.getElementById('logoutBtn');
+            
+            if (telegramId) {
+                typeEl.innerText = '📱 Telegram';
+                idEl.innerText = 'ID: ' + telegramId;
+                logoutBtn.classList.add('hidden');
+            } else if (sessionToken) {
+                typeEl.innerText = '🌐 Account Web';
+                idEl.innerText = userId;
+                logoutBtn.classList.remove('hidden');
+            } else {
+                typeEl.innerText = '👤 Guest';
+                idEl.innerText = 'Non autenticato';
+                logoutBtn.classList.add('hidden');
+            }
+        }
+        
+        // ═══════════════════════════════════════════════════════════════
+        // SYNC
+        // ═══════════════════════════════════════════════════════════════
+
         async function sync() {
             document.getElementById('syncIcon').classList.add('animate-spin');
             
             try {
                 const res = await fetch(`${API}/status`, {
                     method: 'GET',
-                    headers: { 'Accept': 'application/json' }
+                    headers: getAuthHeaders()
                 });
                 
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
+                
+                // Aggiorna userId se ritornato dal server
+                if (data.user_id) {
+                    userId = data.user_id;
+                }
 
                 state.balance = data.balance_sol || 0;
                 state.address = data.wallet_address || '';
@@ -977,10 +1202,38 @@
             return '$' + mcap.toFixed(0);
         }
 
-        // Init
-        sync();
-        setInterval(sync, 3000);
-        updateBotUI();
+        // ═══════════════════════════════════════════════════════════════
+        // INIT
+        // ═══════════════════════════════════════════════════════════════
+        
+        function init() {
+            lucide.createIcons();
+            
+            // Se è Telegram, vai direttamente all'app
+            if (isTelegram) {
+                console.log('📱 Modalità Telegram');
+                showMainApp();
+                sync();
+                setInterval(sync, 5000);
+            }
+            // Se ha session token salvato, vai all'app
+            else if (sessionToken) {
+                console.log('🌐 Session token trovato');
+                showMainApp();
+                sync();
+                setInterval(sync, 5000);
+            }
+            // Altrimenti mostra login
+            else {
+                console.log('👤 Nessuna autenticazione, mostra login');
+                showLoginPage();
+            }
+            
+            updateBotUI();
+        }
+        
+        // Avvia app
+        init();
     </script>
 </body>
 </html>

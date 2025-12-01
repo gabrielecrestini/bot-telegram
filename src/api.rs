@@ -10,6 +10,8 @@ use solana_sdk::signer::Signer;
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use std::str::FromStr;
 use log::{info, error, warn};
+use sha2::{Sha256, Digest};
+use sqlx::Row;
 
 const SOLSCAN_TX_URL: &str = "https://solscan.io/tx/";
 
@@ -25,6 +27,7 @@ pub struct SignalData {
 
 #[derive(Serialize)]
 struct DashboardData {
+    user_id: String,
     wallet_address: String,
     balance_sol: f64,
     balance_usd: f64,
@@ -61,12 +64,97 @@ struct ApiResponse {
     solscan_url: Option<String>,
 }
 
-/// Ottiene il prezzo SOL in tempo reale da Jupiter
+#[derive(Serialize)]
+struct AuthResponse {
+    success: bool,
+    user_id: String,
+    session_token: String,
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct WebAuthRequest {
+    email: String,
+    password: String,
+    action: String, // "login" o "register"
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUTENTICAZIONE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Genera un user_id sicuro da email (hash)
+fn hash_email_to_id(email: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(email.as_bytes());
+    let result = hasher.finalize();
+    format!("web_{}", hex::encode(&result[..8])) // Primi 16 caratteri hex
+}
+
+/// Genera session token
+fn generate_session_token(user_id: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(user_id.as_bytes());
+    hasher.update(chrono::Utc::now().timestamp().to_string().as_bytes());
+    let result = hasher.finalize();
+    hex::encode(&result[..16])
+}
+
+/// Estrae user_id da header o query param
+fn extract_user_id(
+    tg_id: Option<String>,
+    session: Option<String>,
+    tg_data: Option<String>,
+) -> String {
+    // 1. Priorità: Telegram ID diretto (da header x-telegram-id)
+    if let Some(id) = tg_id {
+        if !id.is_empty() && id != "undefined" && id != "null" {
+            return format!("tg_{}", id);
+        }
+    }
+    
+    // 2. Telegram initData (dal WebApp)
+    if let Some(data) = tg_data {
+        if let Some(user_id) = parse_telegram_init_data(&data) {
+            return format!("tg_{}", user_id);
+        }
+    }
+    
+    // 3. Session token (per utenti web)
+    if let Some(sess) = session {
+        if !sess.is_empty() && sess.len() > 10 {
+            return format!("sess_{}", &sess[..16]);
+        }
+    }
+    
+    // 4. Fallback: guest con timestamp (ogni visita = nuovo wallet temporaneo)
+    // In produzione potresti voler bloccare gli utenti non autenticati
+    format!("guest_{}", chrono::Utc::now().timestamp() % 1000000)
+}
+
+/// Parse Telegram initData per estrarre user_id
+fn parse_telegram_init_data(data: &str) -> Option<String> {
+    // initData è URL-encoded: user=%7B%22id%22%3A123456...
+    if let Ok(decoded) = urlencoding::decode(data) {
+        // Cerca "id": nel JSON user
+        if let Some(start) = decoded.find("\"id\":") {
+            let rest = &decoded[start + 5..];
+            if let Some(end) = rest.find(|c: char| !c.is_numeric()) {
+                let id = &rest[..end];
+                if !id.is_empty() {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Ottiene il prezzo SOL in tempo reale
 async fn get_sol_price() -> f64 {
     match jupiter::get_token_market_data("So11111111111111111111111111111111111111112").await {
         Ok(data) => data.price,
         Err(_) => {
-            // Fallback: prova CoinGecko
             match reqwest::get("https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd").await {
                 Ok(resp) => {
                     if let Ok(json) = resp.json::<serde_json::Value>().await {
@@ -79,80 +167,112 @@ async fn get_sol_price() -> f64 {
     }
 }
 
-// --- SERVER ---
+// ═══════════════════════════════════════════════════════════════════════════════
+// SERVER
+// ═══════════════════════════════════════════════════════════════════════════════
+
 pub async fn start_server(pool: sqlx::SqlitePool, net: Arc<network::NetworkClient>, state: Arc<AppState>) {
     let pool_filter = warp::any().map(move || pool.clone());
     let net_filter = warp::any().map(move || net.clone());
     let state_filter = warp::any().map(move || state.clone());
 
-    // Health check endpoint
+    // Header filters per autenticazione
+    let tg_id_filter = warp::header::optional::<String>("x-telegram-id");
+    let session_filter = warp::header::optional::<String>("x-session-token");
+    let tg_data_filter = warp::header::optional::<String>("x-telegram-data");
+
+    // Health check
     let health = warp::path("health")
         .and(warp::get())
-        .map(|| warp::reply::json(&serde_json::json!({"status": "ok"})));
+        .map(|| warp::reply::json(&serde_json::json!({"status": "ok", "version": "2.0"})));
 
+    // Status endpoint (con autenticazione)
     let status = warp::path("status")
         .and(warp::get())
+        .and(tg_id_filter.clone())
+        .and(session_filter.clone())
+        .and(tg_data_filter.clone())
         .and(pool_filter.clone())
         .and(net_filter.clone())
         .and(state_filter.clone())
         .and_then(handle_status);
 
+    // Trade endpoint
     let trade = warp::path("trade")
         .and(warp::post())
+        .and(tg_id_filter.clone())
+        .and(session_filter.clone())
+        .and(tg_data_filter.clone())
         .and(warp::body::json())
         .and(pool_filter.clone())
         .and(net_filter.clone())
         .and_then(handle_trade);
 
+    // Withdraw endpoint
     let withdraw = warp::path("withdraw")
         .and(warp::post())
+        .and(tg_id_filter.clone())
+        .and(session_filter.clone())
+        .and(tg_data_filter.clone())
         .and(warp::body::json())
         .and(pool_filter.clone())
         .and(net_filter.clone())
         .and_then(handle_withdraw);
 
-    // CORS - allow_any_origin per massima compatibilità in produzione
+    // Web Auth endpoint (email/password)
+    let auth = warp::path("auth")
+        .and(warp::post())
+        .and(warp::body::json())
+        .and(pool_filter.clone())
+        .and_then(handle_auth);
+
+    // CORS
     let cors = warp::cors()
         .allow_any_origin()
         .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
         .allow_headers(vec![
-            "Content-Type", 
-            "content-type",
-            "Authorization", 
-            "authorization",
-            "X-User-Id",
-            "x-user-id",
-            "Accept",
-            "Origin",
+            "Content-Type", "content-type",
+            "Authorization", "authorization",
+            "X-Telegram-Id", "x-telegram-id",
+            "X-Session-Token", "x-session-token",
+            "X-Telegram-Data", "x-telegram-data",
+            "Accept", "Origin",
             "Access-Control-Request-Method",
             "Access-Control-Request-Headers",
         ])
-        .max_age(86400); // Cache preflight per 24h
+        .max_age(86400);
 
     let routes = health
         .or(status)
         .or(trade)
         .or(withdraw)
+        .or(auth)
         .with(cors)
         .with(warp::log("api"));
 
     info!("🌍 API Server LIVE: Porta 3000");
-    info!("   ✓ CORS: any origin");
-    info!("   ✓ Endpoints: /health, /status, /trade, /withdraw");
+    info!("   ✓ Multi-user: Telegram + Web Auth");
+    info!("   ✓ Endpoints: /health, /status, /trade, /withdraw, /auth");
     
     warp::serve(routes).run(([0, 0, 0, 0], 3000)).await;
 }
 
-// --- HANDLERS ---
+// ═══════════════════════════════════════════════════════════════════════════════
+// HANDLERS
+// ═══════════════════════════════════════════════════════════════════════════════
 
 async fn handle_status(
+    tg_id: Option<String>,
+    session: Option<String>,
+    tg_data: Option<String>,
     pool: sqlx::SqlitePool,
     net: Arc<network::NetworkClient>,
     state: Arc<AppState>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let user_id = "admin";
-
-    let pubkey_str = wallet_manager::create_user_wallet(&pool, user_id)
+    let user_id = extract_user_id(tg_id, session, tg_data);
+    
+    // Crea wallet per questo utente (se non esiste)
+    let pubkey_str = wallet_manager::create_user_wallet(&pool, &user_id)
         .await
         .unwrap_or_default();
 
@@ -161,42 +281,29 @@ async fn handle_status(
         balance = net.get_balance_fast(&pk).await as f64 / LAMPORTS_PER_SOL as f64;
     }
 
-    // Prezzo SOL in tempo reale
     let sol_price = get_sol_price().await;
     let balance_usd = balance * sol_price;
-
-    // Calcola livello ricchezza basato su EUR (SOL ~= USD per semplicità)
-    let balance_eur = balance_usd * 0.92; // Conversione approssimativa
-    let wealth_level = if balance_eur < 5.0 {
-        "MICRO".to_string()
-    } else if balance_eur < 15.0 {
-        "POOR".to_string()
-    } else if balance_eur < 50.0 {
-        "LOW_MEDIUM".to_string()
-    } else if balance_eur < 100.0 {
-        "MEDIUM".to_string()
-    } else if balance_eur < 200.0 {
-        "HIGH_MEDIUM".to_string()
-    } else {
-        "RICH".to_string()
-    };
+    let balance_eur = balance_usd * 0.92;
+    
+    let wealth_level = if balance_eur < 5.0 { "MICRO" }
+        else if balance_eur < 15.0 { "POOR" }
+        else if balance_eur < 50.0 { "LOW_MEDIUM" }
+        else if balance_eur < 100.0 { "MEDIUM" }
+        else if balance_eur < 200.0 { "HIGH_MEDIUM" }
+        else { "RICH" }.to_string();
 
     let mut gems = state.found_gems.lock().unwrap().clone();
     gems.sort_by(|a, b| b.safety_score.cmp(&a.safety_score));
     
     let signals = state.math_signals.lock().unwrap().clone();
 
-    let active_trades = match db::get_open_trades(&pool).await {
-        Ok(t) => t.len(),
-        Err(_) => 0,
-    };
+    let active_trades = db::count_open_trades(&pool, &user_id).await.unwrap_or(0);
 
-    let (trades_history, withdrawals_history) = match db::get_all_history(&pool, user_id).await {
-        Ok((t, w)) => (t, w),
-        Err(_) => (vec![], vec![]),
-    };
+    let (trades_history, withdrawals_history) = db::get_all_history(&pool, &user_id).await
+        .unwrap_or((vec![], vec![]));
 
     Ok(warp::reply::json(&DashboardData {
+        user_id: user_id.clone(),
         wallet_address: pubkey_str,
         balance_sol: balance,
         balance_usd,
@@ -212,20 +319,23 @@ async fn handle_status(
 }
 
 async fn handle_trade(
+    tg_id: Option<String>,
+    session: Option<String>,
+    tg_data: Option<String>,
     req: TradeRequest,
     pool: sqlx::SqlitePool,
     net: Arc<network::NetworkClient>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let user_id = "admin";
-    info!("📨 Trade Request: {} {} SOL -> {}", req.action, req.amount_sol, req.token);
+    let user_id = extract_user_id(tg_id, session, tg_data);
+    info!("📨 Trade [{}]: {} {} SOL -> {}", user_id, req.action, req.amount_sol, req.token);
 
-    let payer = match wallet_manager::get_decrypted_wallet(&pool, user_id).await {
+    let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
         Ok(k) => k,
         Err(e) => {
-            error!("❌ Errore recupero wallet: {}", e);
+            error!("❌ Wallet error per {}: {}", user_id, e);
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: "Wallet Error".into(),
+                message: "Wallet non trovato. Ricarica la pagina.".into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
@@ -236,55 +346,44 @@ async fn handle_trade(
     let amount_lamports = (req.amount_sol * LAMPORTS_PER_SOL as f64) as u64;
 
     if req.action == "BUY" {
-        // Verifica fondi con margine per fee
-        let min_required = amount_lamports + 10_000; // 0.00001 SOL per fee
+        let min_required = amount_lamports + 10_000;
         if bal < min_required {
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: format!("Fondi Insufficienti. Hai {:.4} SOL, servono {:.4} SOL", 
-                    bal as f64 / LAMPORTS_PER_SOL as f64,
-                    min_required as f64 / LAMPORTS_PER_SOL as f64),
+                message: format!("Fondi Insufficienti. Hai {:.4} SOL", bal as f64 / LAMPORTS_PER_SOL as f64),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
         }
 
-        // JUPITER SWAP (Priority) - 1% slippage
         let input = "So11111111111111111111111111111111111111112";
         match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), input, &req.token, amount_lamports, 100).await {
             Ok(mut tx) => {
                 if let Ok(bh) = net.rpc.get_latest_blockhash().await {
                     tx.sign(&[&payer], bh);
                     
-                    // Usa TPU per velocità massima
                     match net.send_transaction_fast(&tx).await {
                         Ok(sig) => {
-                            let _ = db::record_buy(&pool, user_id, &req.token, &sig, amount_lamports).await;
-                            info!("✅ BUY completato via Jupiter: {}", sig);
+                            let _ = db::record_buy(&pool, &user_id, &req.token, &sig, amount_lamports).await;
                             return Ok(warp::reply::json(&ApiResponse {
                                 success: true,
-                                message: "Buy Eseguito (Jupiter)".into(),
+                                message: "Buy Eseguito".into(),
                                 tx_signature: sig.clone(),
                                 solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
                             }));
                         }
-                        Err(e) => {
-                            warn!("⚠️ Jupiter TX fallita: {}", e);
-                        }
+                        Err(e) => warn!("⚠️ Jupiter TX fallita: {}", e),
                     }
                 }
             }
-            Err(e) => {
-                warn!("⚠️ Jupiter quote fallita: {}, provo Raydium...", e);
-            }
+            Err(e) => warn!("⚠️ Jupiter quote: {}", e),
         }
 
-        // RAYDIUM FALLBACK - 2% slippage
+        // Raydium fallback
         if let Ok(mint) = Pubkey::from_str(&req.token) {
             if let Ok(keys) = raydium::fetch_pool_keys_by_mint(&net, &mint).await {
                 if let Ok(sig) = raydium::execute_swap(&net, &payer, &keys, mint, amount_lamports, 200).await {
-                    let _ = db::record_buy(&pool, user_id, &req.token, &sig, amount_lamports).await;
-                    info!("✅ BUY completato via Raydium: {}", sig);
+                    let _ = db::record_buy(&pool, &user_id, &req.token, &sig, amount_lamports).await;
                     return Ok(warp::reply::json(&ApiResponse {
                         success: true,
                         message: "Buy Eseguito (Raydium)".into(),
@@ -297,14 +396,13 @@ async fn handle_trade(
 
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
-            message: "Trade fallito. Token non trovato o liquidità insufficiente.".into(),
+            message: "Trade fallito. Riprova.".into(),
             tx_signature: "".into(),
             solscan_url: None,
         }));
 
     } else if req.action == "SELL" {
-        // SELL via Jupiter
-        let output = "So11111111111111111111111111111111111111112"; // SOL
+        let output = "So11111111111111111111111111111111111111112";
         match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), &req.token, output, amount_lamports, 200).await {
             Ok(mut tx) => {
                 if let Ok(bh) = net.rpc.get_latest_blockhash().await {
@@ -312,8 +410,7 @@ async fn handle_trade(
                     
                     match net.send_transaction_fast(&tx).await {
                         Ok(sig) => {
-                            let _ = db::record_sell(&pool, user_id, &req.token, &sig, 0.0).await;
-                            info!("✅ SELL completato: {}", sig);
+                            let _ = db::record_sell(&pool, &user_id, &req.token, &sig, 0.0).await;
                             return Ok(warp::reply::json(&ApiResponse {
                                 success: true,
                                 message: "Vendita Eseguita".into(),
@@ -321,20 +418,16 @@ async fn handle_trade(
                                 solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
                             }));
                         }
-                        Err(e) => {
-                            error!("❌ Sell TX fallita: {}", e);
-                        }
+                        Err(e) => error!("❌ Sell TX: {}", e),
                     }
                 }
             }
-            Err(e) => {
-                error!("❌ Jupiter sell quote fallita: {}", e);
-            }
+            Err(e) => error!("❌ Jupiter sell: {}", e),
         }
 
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
-            message: "Vendita fallita. Prova su Jupiter DApp.".into(),
+            message: "Vendita fallita".into(),
             tx_signature: "".into(),
             solscan_url: None,
         }));
@@ -349,25 +442,26 @@ async fn handle_trade(
 }
 
 async fn handle_withdraw(
+    tg_id: Option<String>,
+    session: Option<String>,
+    tg_data: Option<String>,
     req: WithdrawRequest,
     pool: sqlx::SqlitePool,
     net: Arc<network::NetworkClient>,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let user_id = "admin";
-    info!("💸 Withdraw Request: {} {} -> {}", req.amount, req.token, req.destination_address);
+    let user_id = extract_user_id(tg_id, session, tg_data);
+    info!("💸 Withdraw [{}]: {} {} -> {}", user_id, req.amount, req.token, req.destination_address);
 
-    // 1. Sicurezza: Solo SOL
     if req.token != "SOL" {
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
-            message: "Per sicurezza, preleva solo SOL. Converti gli altri token prima.".into(),
+            message: "Solo prelievi SOL".into(),
             tx_signature: "".into(),
             solscan_url: None,
         }));
     }
 
-    // 2. Check Blocco 24h
-    match db::can_withdraw(&pool, user_id).await {
+    match db::can_withdraw(&pool, &user_id).await {
         Ok((allowed, msg)) => {
             if !allowed {
                 return Ok(warp::reply::json(&ApiResponse {
@@ -379,24 +473,22 @@ async fn handle_withdraw(
             }
         }
         Err(e) => {
-            error!("❌ Errore DB can_withdraw: {}", e);
+            error!("❌ DB error: {}", e);
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: "Errore verifica stato prelievo".into(),
+                message: "Errore verifica".into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
         }
     }
 
-    // 3. Recupera wallet
-    let payer = match wallet_manager::get_decrypted_wallet(&pool, user_id).await {
+    let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
         Ok(k) => k,
-        Err(e) => {
-            error!("❌ Errore recupero wallet: {}", e);
+        Err(_) => {
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: "Errore accesso wallet".into(),
+                message: "Wallet non trovato".into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
@@ -406,60 +498,52 @@ async fn handle_withdraw(
     let bal = net.get_balance_fast(&payer.pubkey()).await;
     let amount = (req.amount * LAMPORTS_PER_SOL as f64) as u64;
 
-    // 4. Check Fondi (lascia margine per fee)
-    let fee_reserve = 10_000; // 0.00001 SOL
-    if bal < (amount + fee_reserve) {
+    if bal < (amount + 10_000) {
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
-            message: format!("Fondi Insufficienti. Disponibili: {:.4} SOL", bal as f64 / LAMPORTS_PER_SOL as f64),
+            message: format!("Fondi insufficienti: {:.4} SOL", bal as f64 / LAMPORTS_PER_SOL as f64),
             tx_signature: "".into(),
             solscan_url: None,
         }));
     }
 
-    // 5. Valida indirizzo destinazione
     let dest = match Pubkey::from_str(&req.destination_address) {
         Ok(pk) => pk,
         Err(_) => {
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: "Indirizzo destinazione non valido".into(),
+                message: "Indirizzo non valido".into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
         }
     };
 
-    // 6. Registra richiesta prelievo PRIMA di inviare (Crash Protection)
-    let withdrawal_id = match db::record_withdrawal_request(&pool, user_id, amount, &req.destination_address).await {
+    let withdrawal_id = match db::record_withdrawal_request(&pool, &user_id, amount, &req.destination_address).await {
         Ok(id) => id,
-        Err(e) => {
-            error!("❌ Errore registrazione prelievo nel DB: {}", e);
+        Err(_) => {
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: "Errore registrazione prelievo".into(),
+                message: "Errore DB".into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
         }
     };
-    info!("📝 Prelievo registrato con ID: {}", withdrawal_id);
 
-    // 7. Prepara transazione CON PRIORITY FEES
     let instructions = vec![
-        ComputeBudgetInstruction::set_compute_unit_price(100_000), // Priority fee
+        ComputeBudgetInstruction::set_compute_unit_price(100_000),
         ComputeBudgetInstruction::set_compute_unit_limit(50_000),
         system_instruction::transfer(&payer.pubkey(), &dest, amount),
     ];
 
     let bh = match net.rpc.get_latest_blockhash().await {
         Ok(hash) => hash,
-        Err(e) => {
-            error!("❌ Errore get_latest_blockhash: {}", e);
+        Err(_) => {
             let _ = db::mark_withdrawal_failed(&pool, withdrawal_id).await;
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: "Errore rete Solana".into(),
+                message: "Errore rete".into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
@@ -468,28 +552,149 @@ async fn handle_withdraw(
 
     let tx = Transaction::new_signed_with_payer(&instructions, Some(&payer.pubkey()), &[&payer], bh);
 
-    // 8. Invia via TPU (più veloce) con fallback RPC
     match net.send_transaction_fast(&tx).await {
         Ok(sig) => {
             let _ = db::confirm_withdrawal(&pool, withdrawal_id, &sig).await;
-            let solscan_link = format!("{}{}", SOLSCAN_TX_URL, sig);
-            info!("✅ Prelievo completato: {} (ID: {})", sig, withdrawal_id);
             Ok(warp::reply::json(&ApiResponse {
                 success: true,
                 message: "Prelievo Inviato!".into(),
-                tx_signature: sig,
-                solscan_url: Some(solscan_link),
+                tx_signature: sig.clone(),
+                solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
             }))
         }
         Err(e) => {
-            error!("❌ Errore invio transazione prelievo: {}", e);
             let _ = db::mark_withdrawal_failed(&pool, withdrawal_id).await;
             Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: format!("Errore invio: {}", e),
+                message: format!("Errore: {}", e),
                 tx_signature: "".into(),
                 solscan_url: None,
             }))
         }
     }
+}
+
+/// Handler per autenticazione web (email/password)
+async fn handle_auth(
+    req: WebAuthRequest,
+    pool: sqlx::SqlitePool,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    // Validazione base
+    if req.email.len() < 5 || !req.email.contains('@') {
+        return Ok(warp::reply::json(&AuthResponse {
+            success: false,
+            user_id: "".into(),
+            session_token: "".into(),
+            message: "Email non valida".into(),
+        }));
+    }
+    
+    if req.password.len() < 6 {
+        return Ok(warp::reply::json(&AuthResponse {
+            success: false,
+            user_id: "".into(),
+            session_token: "".into(),
+            message: "Password minimo 6 caratteri".into(),
+        }));
+    }
+
+    let user_id = hash_email_to_id(&req.email);
+    let password_hash = {
+        let mut hasher = Sha256::new();
+        hasher.update(req.password.as_bytes());
+        hex::encode(hasher.finalize())
+    };
+
+    if req.action == "register" {
+        // Verifica se esiste già
+        let exists = sqlx::query("SELECT 1 FROM users WHERE tg_id = ?")
+            .bind(&user_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap_or(None)
+            .is_some();
+        
+        if exists {
+            return Ok(warp::reply::json(&AuthResponse {
+                success: false,
+                user_id: "".into(),
+                session_token: "".into(),
+                message: "Email già registrata. Usa Login.".into(),
+            }));
+        }
+
+        // Crea wallet per nuovo utente
+        match wallet_manager::create_user_wallet(&pool, &user_id).await {
+            Ok(pubkey) => {
+                // Salva password hash nei settings
+                let settings = serde_json::json!({"password_hash": password_hash}).to_string();
+                let _ = sqlx::query("UPDATE users SET settings = ? WHERE tg_id = ?")
+                    .bind(&settings)
+                    .bind(&user_id)
+                    .execute(&pool)
+                    .await;
+
+                let session = generate_session_token(&user_id);
+                info!("✅ Nuovo utente web registrato: {} -> {}", req.email, pubkey);
+                
+                return Ok(warp::reply::json(&AuthResponse {
+                    success: true,
+                    user_id: user_id.clone(),
+                    session_token: session,
+                    message: "Registrazione completata!".into(),
+                }));
+            }
+            Err(e) => {
+                error!("❌ Errore creazione wallet: {}", e);
+                return Ok(warp::reply::json(&AuthResponse {
+                    success: false,
+                    user_id: "".into(),
+                    session_token: "".into(),
+                    message: "Errore creazione account".into(),
+                }));
+            }
+        }
+    } else if req.action == "login" {
+        // Verifica credenziali
+        let row = sqlx::query("SELECT settings FROM users WHERE tg_id = ?")
+            .bind(&user_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap_or(None);
+        
+        if let Some(row) = row {
+            let settings: Option<String> = row.try_get("settings").ok();
+            if let Some(settings_str) = settings {
+                if let Ok(settings_json) = serde_json::from_str::<serde_json::Value>(&settings_str) {
+                    if let Some(stored_hash) = settings_json["password_hash"].as_str() {
+                        if stored_hash == password_hash {
+                            let session = generate_session_token(&user_id);
+                            info!("✅ Login web: {}", req.email);
+                            
+                            return Ok(warp::reply::json(&AuthResponse {
+                                success: true,
+                                user_id: user_id.clone(),
+                                session_token: session,
+                                message: "Login riuscito!".into(),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        
+        return Ok(warp::reply::json(&AuthResponse {
+            success: false,
+            user_id: "".into(),
+            session_token: "".into(),
+            message: "Email o password errati".into(),
+        }));
+    }
+
+    Ok(warp::reply::json(&AuthResponse {
+        success: false,
+        user_id: "".into(),
+        session_token: "".into(),
+        message: "Azione non valida".into(),
+    }))
 }
