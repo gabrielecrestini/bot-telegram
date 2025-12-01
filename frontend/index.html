@@ -72,6 +72,14 @@
         let telegramData = null;
         let sessionToken = localStorage.getItem('session_token') || '';
         let userId = localStorage.getItem('user_id') || '';
+        let guestId = localStorage.getItem('guest_id') || '';
+        
+        // Genera guest ID persistente se non esiste
+        if (!guestId) {
+            guestId = 'guest_' + Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
+            localStorage.setItem('guest_id', guestId);
+            console.log('👤 Nuovo Guest ID generato:', guestId);
+        }
         
         if (isTelegram) {
             const tg = window.Telegram.WebApp;
@@ -102,16 +110,26 @@
             if (telegramData) {
                 headers['X-Telegram-Data'] = telegramData;
             }
-            if (sessionToken) {
+            
+            // Priorità: session token > guest id
+            if (sessionToken && sessionToken.length > 10) {
                 headers['X-Session-Token'] = sessionToken;
+            } else if (guestId) {
+                // Passa guest ID come session token per mantenere wallet persistente
+                headers['X-Session-Token'] = guestId;
             }
             
             return headers;
         }
         
-        // Check se utente è autenticato
+        // Check se utente è autenticato (non guest)
         function isAuthenticated() {
-            return !!telegramId || !!sessionToken;
+            return !!telegramId || (!!sessionToken && !sessionToken.startsWith('guest_'));
+        }
+        
+        // Check se ha un wallet (anche guest)
+        function hasWallet() {
+            return !!telegramId || !!sessionToken || !!guestId;
         }
     </script>
 
@@ -1117,13 +1135,17 @@
                 typeEl.innerText = '📱 Telegram';
                 idEl.innerText = 'ID: ' + telegramId;
                 logoutBtn.classList.add('hidden');
-            } else if (sessionToken) {
+            } else if (sessionToken && !sessionToken.startsWith('guest_')) {
                 typeEl.innerText = '🌐 Account Web';
                 idEl.innerText = userId;
                 logoutBtn.classList.remove('hidden');
-            } else {
+            } else if (guestId) {
                 typeEl.innerText = '👤 Guest';
-                idEl.innerText = 'Non autenticato';
+                idEl.innerText = 'Wallet: ' + guestId.slice(0, 12) + '...';
+                logoutBtn.classList.add('hidden');
+            } else {
+                typeEl.innerText = '❓ Sconosciuto';
+                idEl.innerText = 'Nessun wallet';
                 logoutBtn.classList.add('hidden');
             }
         }
@@ -1254,25 +1276,21 @@
         function init() {
             lucide.createIcons();
             
-            // Se è Telegram, vai direttamente all'app
+            // TUTTI hanno un wallet (anche guest con ID persistente)
+            // Questo permette di depositare subito senza registrazione
+            
             if (isTelegram) {
                 console.log('📱 Modalità Telegram');
-                showMainApp();
-                sync();
-                setInterval(sync, 5000);
+            } else if (sessionToken && !sessionToken.startsWith('guest_')) {
+                console.log('🌐 Utente Web registrato');
+            } else {
+                console.log('👤 Modalità Guest (wallet persistente)');
             }
-            // Se ha session token salvato, vai all'app
-            else if (sessionToken) {
-                console.log('🌐 Session token trovato');
-                showMainApp();
-                sync();
-                setInterval(sync, 5000);
-            }
-            // Altrimenti mostra login
-            else {
-                console.log('👤 Nessuna autenticazione, mostra login');
-                showLoginPage();
-            }
+            
+            // Vai sempre al wallet - il guest ha un ID persistente
+            showMainApp();
+            sync();
+            setInterval(sync, 5000);
             
             updateBotUI();
         }

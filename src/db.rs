@@ -98,7 +98,21 @@ async fn init_schema(pool: &SqlitePool) {
         error!("❌ Errore Critico Tabella WITHDRAWALS: {}", e);
     }
     
-    info!("✅ Schema Database verificato (Full Features).");
+    // ═══════════════════════════════════════════════════════════════
+    // MIGRAZIONI - Aggiunge colonne mancanti a tabelle esistenti
+    // ═══════════════════════════════════════════════════════════════
+    
+    // Migrazione: Aggiungi trading_mode se non esiste
+    let _ = sqlx::query("ALTER TABLE trades ADD COLUMN trading_mode TEXT DEFAULT 'AUTO'")
+        .execute(pool)
+        .await; // Ignora errore se colonna esiste già
+    
+    // Migrazione: Aggiungi settings a users se non esiste
+    let _ = sqlx::query("ALTER TABLE users ADD COLUMN settings TEXT")
+        .execute(pool)
+        .await;
+    
+    info!("✅ Schema Database verificato (Full Features + Migrazioni).");
 }
 
 // --- FUNZIONI OPERATIVE (Tutte PUBBLICHE) ---

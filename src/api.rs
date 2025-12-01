@@ -107,29 +107,43 @@ fn extract_user_id(
     tg_data: Option<String>,
 ) -> String {
     // 1. Priorità: Telegram ID diretto (da header x-telegram-id)
-    if let Some(id) = tg_id {
-        if !id.is_empty() && id != "undefined" && id != "null" {
+    if let Some(id) = tg_id.as_ref() {
+        if !id.is_empty() && id != "undefined" && id != "null" && id.len() > 3 {
             return format!("tg_{}", id);
         }
     }
     
     // 2. Telegram initData (dal WebApp)
-    if let Some(data) = tg_data {
-        if let Some(user_id) = parse_telegram_init_data(&data) {
-            return format!("tg_{}", user_id);
+    if let Some(data) = tg_data.as_ref() {
+        if !data.is_empty() && data != "undefined" {
+            if let Some(user_id) = parse_telegram_init_data(data) {
+                return format!("tg_{}", user_id);
+            }
         }
     }
     
-    // 3. Session token (per utenti web)
-    if let Some(sess) = session {
-        if !sess.is_empty() && sess.len() > 10 {
-            return format!("sess_{}", &sess[..16]);
+    // 3. Session token (per utenti web registrati)
+    if let Some(sess) = session.as_ref() {
+        if !sess.is_empty() && sess != "undefined" && sess.len() >= 16 {
+            // Il session token è l'ID completo per utenti web
+            return format!("sess_{}", &sess[..16.min(sess.len())]);
         }
     }
     
-    // 4. Fallback: guest con timestamp (ogni visita = nuovo wallet temporaneo)
-    // In produzione potresti voler bloccare gli utenti non autenticati
-    format!("guest_{}", chrono::Utc::now().timestamp() % 1000000)
+    // 4. Guest ID persistente (passato dal frontend)
+    // Il frontend deve generare e salvare un guest_id nel localStorage
+    // e passarlo nell'header x-session-token come "guest_XXXXX"
+    if let Some(sess) = session.as_ref() {
+        if sess.starts_with("guest_") && sess.len() > 6 {
+            return sess.clone();
+        }
+    }
+    
+    // 5. FALLBACK: Genera guest deterministico (per retrocompatibilità)
+    // NOTA: Questo causa wallet diversi ad ogni sessione
+    // Il frontend DEVE passare un guest_id persistente
+    warn!("⚠️ Utente non autenticato - wallet temporaneo");
+    format!("guest_{}", chrono::Utc::now().timestamp() % 100000)
 }
 
 /// Parse Telegram initData per estrarre user_id
