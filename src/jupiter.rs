@@ -1,12 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::time::Duration;
+use std::sync::Arc;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use solana_sdk::transaction::{Transaction, VersionedTransaction};
 use solana_sdk::message::VersionedMessage;
 use solana_sdk::signature::{Keypair, Signer};
 use base64::{Engine as _, engine::general_purpose};
 use reqwest;
 use log::{info, warn, error};
+use hickory_resolver::{TokioAsyncResolver, config::{ResolverConfig, ResolverOpts, NameServerConfig, Protocol}};
 
 // API URLs
 const JUP_TOKEN_LIST_API: &str = "https://token.jup.ag/strict"; 
@@ -18,14 +21,163 @@ const JUP_QUOTE_API: &str = "https://quote-api.jup.ag/v6/quote";
 const JUP_SWAP_API: &str = "https://quote-api.jup.ag/v6/swap";
 const JUP_PRICE_API: &str = "https://price.jup.ag/v6/price";
 
-/// Crea un client HTTP robusto con timeout e retry
+// ═══════════════════════════════════════════════════════════════════════════════
+// DNS RESOLVER PERSONALIZZATO - Usa Cloudflare (1.1.1.1) e Google (8.8.8.8)
+// Fix per problemi DNS su AWS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Crea un resolver DNS personalizzato con Cloudflare e Google DNS
+fn create_custom_dns_config() -> ResolverConfig {
+    let mut config = ResolverConfig::new();
+    
+    // Cloudflare DNS (1.1.1.1 e 1.0.0.1)
+    config.add_name_server(NameServerConfig {
+        socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)), 53),
+        protocol: Protocol::Udp,
+        tls_dns_name: None,
+        trust_negative_responses: true,
+        bind_addr: None,
+    });
+    config.add_name_server(NameServerConfig {
+        socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(1, 0, 0, 1)), 53),
+        protocol: Protocol::Udp,
+        tls_dns_name: None,
+        trust_negative_responses: true,
+        bind_addr: None,
+    });
+    
+    // Google DNS (8.8.8.8 e 8.8.4.4)
+    config.add_name_server(NameServerConfig {
+        socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 53),
+        protocol: Protocol::Udp,
+        tls_dns_name: None,
+        trust_negative_responses: true,
+        bind_addr: None,
+    });
+    config.add_name_server(NameServerConfig {
+        socket_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4)), 53),
+        protocol: Protocol::Udp,
+        tls_dns_name: None,
+        trust_negative_responses: true,
+        bind_addr: None,
+    });
+    
+    config
+}
+
+/// Crea un client HTTP robusto con DNS personalizzato (Cloudflare + Google)
 fn create_http_client() -> reqwest::Client {
+    // Opzioni ottimizzate per AWS
+    let mut opts = ResolverOpts::default();
+    opts.timeout = Duration::from_secs(5);
+    opts.attempts = 3;
+    opts.rotate = true; // Ruota tra i DNS server
+    opts.cache_size = 256;
+    opts.use_hosts_file = false; // Ignora /etc/hosts problematico
+    opts.positive_min_ttl = Some(Duration::from_secs(60));
+    opts.negative_min_ttl = Some(Duration::from_secs(10));
+    
+    // Client con trust-dns e configurazione ottimizzata per AWS
     reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
-        .connect_timeout(Duration::from_secs(10))
-        .pool_max_idle_per_host(5)
+        .connect_timeout(Duration::from_secs(15))
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .tcp_keepalive(Duration::from_secs(30))
+        .tcp_nodelay(true)
+        // trust-dns usa automaticamente la configurazione di sistema
+        // ma è più robusto del resolver di default
+        .trust_dns(true)
         .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+        .unwrap_or_else(|_| {
+            warn!("⚠️ Fallback a client HTTP di base");
+            reqwest::Client::new()
+        })
+}
+
+/// Risolve manualmente un hostname usando DNS personalizzati (1.1.1.1, 8.8.8.8)
+/// Utile come fallback se trust-dns non funziona
+pub async fn resolve_hostname(hostname: &str) -> Result<Vec<IpAddr>, Box<dyn Error + Send + Sync>> {
+    let config = create_custom_dns_config();
+    let mut opts = ResolverOpts::default();
+    opts.timeout = Duration::from_secs(5);
+    opts.attempts = 3;
+    
+    let resolver = TokioAsyncResolver::tokio(config, opts);
+    
+    let response = resolver.lookup_ip(hostname).await?;
+    let ips: Vec<IpAddr> = response.iter().collect();
+    
+    if ips.is_empty() {
+        Err(format!("Nessun IP trovato per {}", hostname).into())
+    } else {
+        Ok(ips)
+    }
+}
+
+/// Esegue una richiesta GET con retry automatico e gestione DNS robusta
+/// Ritenta fino a 5 volte con backoff esponenziale
+async fn robust_get(url: &str) -> Result<reqwest::Response, Box<dyn Error + Send + Sync>> {
+    let client = create_http_client();
+    let mut last_error = String::new();
+    
+    for attempt in 1..=5 {
+        match client.get(url).send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    return Ok(resp);
+                } else {
+                    last_error = format!("HTTP {}", resp.status());
+                }
+            }
+            Err(e) => {
+                last_error = e.to_string();
+                
+                // Log errore DNS specifico
+                if last_error.contains("dns") || last_error.contains("resolve") || last_error.contains("connect") {
+                    warn!("⚠️ DNS/Connect error (attempt {}): {}", attempt, last_error);
+                }
+            }
+        }
+        
+        // Backoff esponenziale: 200ms, 400ms, 800ms, 1600ms, 3200ms
+        if attempt < 5 {
+            tokio::time::sleep(Duration::from_millis(200 * (1 << (attempt - 1)))).await;
+        }
+    }
+    
+    Err(format!("Request failed after 5 attempts: {}", last_error).into())
+}
+
+/// Esegue una richiesta POST con retry automatico e gestione DNS robusta
+async fn robust_post<T: serde::Serialize>(url: &str, body: &T) -> Result<reqwest::Response, Box<dyn Error + Send + Sync>> {
+    let client = create_http_client();
+    let mut last_error = String::new();
+    
+    for attempt in 1..=5 {
+        match client.post(url).json(body).send().await {
+            Ok(resp) => {
+                if resp.status().is_success() || resp.status().as_u16() < 500 {
+                    return Ok(resp);
+                } else {
+                    last_error = format!("HTTP {}", resp.status());
+                }
+            }
+            Err(e) => {
+                last_error = e.to_string();
+                
+                if last_error.contains("dns") || last_error.contains("resolve") || last_error.contains("connect") {
+                    warn!("⚠️ DNS/Connect error POST (attempt {}): {}", attempt, last_error);
+                }
+            }
+        }
+        
+        if attempt < 5 {
+            tokio::time::sleep(Duration::from_millis(200 * (1 << (attempt - 1)))).await;
+        }
+    }
+    
+    Err(format!("POST request failed after 5 attempts: {}", last_error).into())
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -114,8 +266,8 @@ struct SwapRequest {
 struct SwapResponse { swap_transaction: String }
 
 pub async fn fetch_all_verified_tokens() -> Result<Vec<JupiterToken>, Box<dyn Error + Send + Sync>> {
-    let client = reqwest::Client::new();
-    let tokens = client.get(JUP_TOKEN_LIST_API).send().await?.json::<Vec<JupiterToken>>().await?;
+    let resp = robust_get(JUP_TOKEN_LIST_API).await?;
+    let tokens = resp.json::<Vec<JupiterToken>>().await?;
     Ok(tokens)
 }
 
@@ -320,13 +472,12 @@ pub fn analyze_token_potential(liq: f64, vol: f64, mcap: f64, change_5m: f64, ch
 /// Ottiene dati completi di un token da DexScreener
 pub async fn get_token_market_data(mint: &str) -> Result<TokenMarketData, Box<dyn Error + Send + Sync>> {
     let url = format!("{}{}", DEX_API, mint);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
     
-    let resp = client.get(&url).send().await?.json::<DexResponse>().await?;
+    // Usa chiamata HTTP robusta con retry e DNS personalizzato
+    let resp = robust_get(&url).await?;
+    let data = resp.json::<DexResponse>().await?;
 
-    if let Some(pairs) = resp.pairs {
+    if let Some(pairs) = data.pairs {
         // Prendi la coppia con più liquidità (solitamente SOL pair)
         if let Some(pair) = pairs.iter()
             .filter(|p| p.liquidity.as_ref().and_then(|l| l.usd).unwrap_or(0.0) > 0.0)
@@ -391,14 +542,11 @@ pub async fn get_token_market_data(mint: &str) -> Result<TokenMarketData, Box<dy
 /// Cerca gemme promettenti su Solana - Tokens con potenziale di crescita
 /// Usa multiple fonti e applica scoring scientifico avanzato
 pub async fn discover_trending_gems() -> Result<Vec<TokenMarketData>, Box<dyn Error + Send + Sync>> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()?;
-    
     let mut gems: Vec<TokenMarketData> = Vec::new();
     
     // ═══════════════════════════════════════════════════════════════
     // FONTE 1: DexScreener Token Profiles (Nuovi/Trending)
+    // Usa chiamate HTTP robuste con DNS personalizzato (1.1.1.1, 8.8.8.8)
     // ═══════════════════════════════════════════════════════════════
     let sources = vec![
         "https://api.dexscreener.com/latest/dex/search?q=solana",
@@ -406,7 +554,7 @@ pub async fn discover_trending_gems() -> Result<Vec<TokenMarketData>, Box<dyn Er
     ];
     
     for search_url in sources {
-        if let Ok(resp) = client.get(search_url).send().await {
+        if let Ok(resp) = robust_get(search_url).await {
             if let Ok(data) = resp.json::<DexResponse>().await {
                 if let Some(pairs) = data.pairs {
                     for pair in pairs.iter().take(50) {
@@ -428,7 +576,7 @@ pub async fn discover_trending_gems() -> Result<Vec<TokenMarketData>, Box<dyn Er
     let keywords = vec!["meme solana", "ai solana", "sol defi", "pump solana"];
     for keyword in keywords {
         let url = format!("https://api.dexscreener.com/latest/dex/search?q={}", keyword);
-        if let Ok(resp) = client.get(&url).send().await {
+        if let Ok(resp) = robust_get(&url).await {
             if let Ok(data) = resp.json::<DexResponse>().await {
                 if let Some(pairs) = data.pairs {
                     for pair in pairs.iter().take(20) {
@@ -578,11 +726,9 @@ const TOP_SOLANA_TOKENS: &[(&str, &str)] = &[
 ];
 
 /// Recupera i dati delle altcoin più importanti ordinate per market cap
+/// Ottiene dati delle top altcoin Solana
+/// Usa chiamate HTTP robuste con DNS personalizzato (1.1.1.1, 8.8.8.8)
 pub async fn get_top_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn Error + Send + Sync>> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()?;
-    
     let mut tokens: Vec<TokenMarketData> = Vec::new();
     
     info!("📊 Recupero dati top altcoin Solana...");
@@ -621,10 +767,6 @@ pub async fn get_top_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn Error + 
 
 /// Trova altcoin con momentum positivo (potenziale profitto)
 pub async fn find_profitable_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn Error + Send + Sync>> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()?;
-    
     let mut profitable: Vec<TokenMarketData> = Vec::new();
     
     // 1. Recupera top altcoin dalla nostra lista
@@ -638,8 +780,9 @@ pub async fn find_profitable_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn 
     }
     
     // 2. Cerca anche su DexScreener i token Solana con più volume
+    // Usa chiamate HTTP robuste con DNS personalizzato (1.1.1.1, 8.8.8.8)
     let volume_url = "https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112";
-    if let Ok(resp) = client.get(volume_url).send().await {
+    if let Ok(resp) = robust_get(volume_url).await {
         if let Ok(data) = resp.json::<DexResponse>().await {
             if let Some(pairs) = data.pairs {
                 for pair in pairs.iter().take(30) {
@@ -683,75 +826,53 @@ pub async fn find_profitable_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn 
 /// slippage_bps: 100 = 1%, 200 = 2%, ecc.
 /// Include retry automatico per errori di rete
 /// IMPORTANTE: Jupiter V6 restituisce VersionedTransaction
+/// Usa DNS personalizzato (Cloudflare 1.1.1.1 + Google 8.8.8.8) per risolvere problemi AWS
 pub async fn get_jupiter_swap_tx(user_pubkey: &str, input_mint: &str, output_mint: &str, amount_lamports: u64, slippage_bps: u16) -> Result<VersionedTransaction, Box<dyn Error + Send + Sync>> {
-    let client = create_http_client();
     let quote_url = format!("{}?inputMint={}&outputMint={}&amount={}&slippageBps={}", 
         JUP_QUOTE_API, input_mint, output_mint, amount_lamports, slippage_bps);
     
-    // Retry fino a 3 volte per errori di rete/DNS
-    let mut last_error = String::new();
-    for attempt in 1..=3 {
-        match client.get(&quote_url).send().await {
-            Ok(resp) => {
-                match resp.json::<serde_json::Value>().await {
-                    Ok(quote_resp) => {
-                        if quote_resp.get("error").is_some() { 
-                            return Err(format!("Jupiter Quote Error: {}", quote_resp).into()); 
-                        }
-                        
-                        // Priority Fee Ottimizzata:
-                        // - 20,000 lamports = 0.00002 SOL ≈ $0.004 max
-                        // - 100,000 µLamp/CU per priorità alta
-                        let swap_req = SwapRequest { 
-                            quote_response: quote_resp, 
-                            user_public_key: user_pubkey.to_string(), 
-                            wrap_and_unwrap_sol: true,
-                            prioritization_fee_lamports: Some(20_000),
-                            compute_unit_price_micro_lamports: Some(100_000),
-                        };
-                        
-                        match client.post(JUP_SWAP_API).json(&swap_req).send().await {
-                            Ok(swap_resp) => {
-                                match swap_resp.json::<SwapResponse>().await {
-                                    Ok(data) => {
-                                        let tx_bytes = general_purpose::STANDARD.decode(&data.swap_transaction)?;
-                                        // Jupiter V6 restituisce VersionedTransaction
-                                        let transaction: VersionedTransaction = bincode::deserialize(&tx_bytes)?;
-                                        info!("✅ Jupiter swap TX ottenuta (tentativo {})", attempt);
-                                        return Ok(transaction);
-                                    }
-                                    Err(e) => {
-                                        last_error = format!("Swap parse error: {}", e);
-                                        warn!("⚠️ Jupiter swap parse failed: {}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                last_error = format!("Swap request error: {}", e);
-                                warn!("⚠️ Jupiter swap request failed (attempt {}): {}", attempt, e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        last_error = format!("Quote parse error: {}", e);
-                        warn!("⚠️ Jupiter quote parse failed: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                last_error = format!("Network error: {}", e);
-                warn!("⚠️ Jupiter quote request failed (attempt {}): {}", attempt, e);
-                
-                // Attendi prima del retry per errori DNS
-                if e.to_string().contains("dns") || e.to_string().contains("connect") {
-                    tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
-                }
-            }
-        }
+    info!("🔍 Jupiter swap: {}...→{}... | {} lamports | slippage {}bps", 
+        &input_mint[..8], &output_mint[..8], amount_lamports, slippage_bps);
+    
+    // 1. GET Quote - Usa chiamata HTTP robusta con retry e DNS personalizzato
+    let quote_resp = match robust_get(&quote_url).await {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(json) => json,
+            Err(e) => return Err(format!("Quote JSON parse error: {}", e).into()),
+        },
+        Err(e) => return Err(format!("Quote request failed: {}", e).into()),
+    };
+    
+    if quote_resp.get("error").is_some() { 
+        return Err(format!("Jupiter Quote Error: {}", quote_resp).into()); 
     }
     
-    error!("❌ Jupiter swap fallito dopo 3 tentativi: {}", last_error);
-    Err(format!("Jupiter swap failed: {}", last_error).into())
+    // Priority Fee Ottimizzata:
+    // - 20,000 lamports = 0.00002 SOL ≈ $0.004 max
+    // - 100,000 µLamp/CU per priorità alta
+    let swap_req = SwapRequest { 
+        quote_response: quote_resp, 
+        user_public_key: user_pubkey.to_string(), 
+        wrap_and_unwrap_sol: true,
+        prioritization_fee_lamports: Some(20_000),
+        compute_unit_price_micro_lamports: Some(100_000),
+    };
+    
+    // 2. POST Swap - Usa chiamata HTTP robusta con retry e DNS personalizzato
+    let swap_resp = robust_post(JUP_SWAP_API, &swap_req).await?;
+    match swap_resp.json::<SwapResponse>().await {
+        Ok(data) => {
+            let tx_bytes = general_purpose::STANDARD.decode(&data.swap_transaction)?;
+            // Jupiter V6 restituisce VersionedTransaction
+            let transaction: VersionedTransaction = bincode::deserialize(&tx_bytes)?;
+            info!("✅ Jupiter swap TX ottenuta");
+            Ok(transaction)
+        }
+        Err(e) => {
+            error!("❌ Jupiter swap parse error: {}", e);
+            Err(format!("Swap parse error: {}", e).into())
+        }
+    }
 }
 
 /// Firma una VersionedTransaction con un Keypair

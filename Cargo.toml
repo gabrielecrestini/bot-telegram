@@ -21,7 +21,9 @@ chrono = { version = "0.4", features = ["serde"] }
 # --- NETWORK & ASYNC ---
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
-reqwest = { version = "0.11", features = ["json", "blocking"] }
+reqwest = { version = "0.11", features = ["json", "blocking", "trust-dns"] }
+# DNS resolver personalizzato (Cloudflare 1.1.1.1 + Google 8.8.8.8)
+hickory-resolver = "0.24"
 # --- SERIALIZZAZIONE & DATI ---
 # FORZIAMO SERDE ALL'ULTIMA VERSIONE PER RISOLVERE IL CONFLITTO
 serde = { version = "1.0.210", features = ["derive"] }
