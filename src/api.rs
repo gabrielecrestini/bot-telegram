@@ -432,6 +432,12 @@ async fn handle_trade(
             }));
         }
 
+        // Recupera dati token per PnL e immagine
+        let token_data = jupiter::get_token_market_data(&req.token).await.ok();
+        let entry_price = token_data.as_ref().map(|t| t.price).unwrap_or(0.0);
+        let token_symbol = token_data.as_ref().map(|t| t.symbol.clone()).unwrap_or_default();
+        let token_image = token_data.as_ref().map(|t| t.image_url.clone()).unwrap_or_default();
+
         let input = "So11111111111111111111111111111111111111112";
         match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), input, &req.token, amount_lamports, 100).await {
             Ok(tx) => {
@@ -441,11 +447,15 @@ async fn handle_trade(
                         Ok(signed_tx) => {
                             match net.send_versioned_transaction(&signed_tx).await {
                                 Ok(sig) => {
-                                    let _ = db::record_buy(&pool, &user_id, &req.token, &sig, amount_lamports).await;
-                                    info!("✅ BUY completato per {} | {} SOL | TX: {}", user_id, req.amount_sol, sig);
+                                    // Salva con tutti i dettagli per mostrare PnL
+                                    let _ = db::record_buy_complete(
+                                        &pool, &user_id, &req.token, &sig, amount_lamports,
+                                        "MANUAL", entry_price, &token_symbol, &token_image
+                                    ).await;
+                                    info!("✅ BUY {} @ ${:.8} | {} SOL | TX: {}", token_symbol, entry_price, req.amount_sol, sig);
                                     return Ok(warp::reply::json(&ApiResponse {
                                         success: true,
-                                        message: "Buy Eseguito".into(),
+                                        message: format!("Buy {} Eseguito", token_symbol),
                                         tx_signature: sig.clone(),
                                         solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
                                     }));
@@ -464,7 +474,10 @@ async fn handle_trade(
         if let Ok(mint) = Pubkey::from_str(&req.token) {
             if let Ok(keys) = raydium::fetch_pool_keys_by_mint(&net, &mint).await {
                 if let Ok(sig) = raydium::execute_swap(&net, &payer, &keys, mint, amount_lamports, 200).await {
-                    let _ = db::record_buy(&pool, &user_id, &req.token, &sig, amount_lamports).await;
+                    let _ = db::record_buy_complete(
+                        &pool, &user_id, &req.token, &sig, amount_lamports,
+                        "MANUAL", entry_price, &token_symbol, &token_image
+                    ).await;
                     info!("✅ BUY (Raydium) completato per {} | {} SOL | TX: {}", user_id, req.amount_sol, sig);
                     return Ok(warp::reply::json(&ApiResponse {
                         success: true,
