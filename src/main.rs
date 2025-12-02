@@ -29,16 +29,23 @@ pub mod jupiter;
 pub mod engine;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// WATCHLIST - Token monitorati per segnali
+// WATCHLIST - Token monitorati per segnali (NO stablecoins, NO SOL)
 // ═══════════════════════════════════════════════════════════════════════════════
 const WATCHLIST: &[&str] = &[
-    "So11111111111111111111111111111111111111112", 
-    "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz",
-    "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", 
-    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", 
-    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
-    "HZ1JovNiVvGrGNiiYvv3XW5KKge5Wbtf2dqsfYfFq5pump", 
-    "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn", 
+    "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz",  // JUP
+    "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", // WIF
+    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK
+    "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", // POPCAT
+    "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",  // RENDER
+    "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn", // jitoSOL
+];
+
+// Token da ESCLUDERE sempre (SOL, stablecoins)
+const EXCLUDED_TOKENS: &[&str] = &[
+    "So11111111111111111111111111111111111111112",  // SOL - non puoi comprare SOL con SOL
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
+    "USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX",  // USDH
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -118,11 +125,22 @@ async fn execute_amms_auto_buy(
     external_data: Option<&strategy::ExternalData>,
     trading_mode: strategy::TradingMode,
 ) {
+    let mint_str = token_mint.to_string();
+    
+    // Verifica che non sia un token escluso
+    if EXCLUDED_TOKENS.contains(&mint_str.as_str()) {
+        debug!("⏭️ Token escluso: {}", &mint_str[..8]);
+        return;
+    }
+    
+    // Ottieni utenti attivi (bot_active O manualmente attivato)
     let users = sqlx::query("SELECT tg_id FROM users WHERE is_active = 1").fetch_all(pool).await;
     if let Ok(rows) = users {
-        if rows.is_empty() { return; }
+        if rows.is_empty() { 
+            debug!("⏭️ Nessun utente attivo per auto-buy");
+            return; 
+        }
         
-        let mint_str = token_mint.to_string();
         let mode_str = match trading_mode {
             strategy::TradingMode::Dip => "DIP",
             strategy::TradingMode::Breakout => "BREAKOUT",
@@ -130,10 +148,13 @@ async fn execute_amms_auto_buy(
         };
         info!("🤖 AMMS {} BUY: {} utenti per {}", mode_str, rows.len(), &mint_str[..8]);
 
-        // Fetch Pool Keys UNA volta
+        // Fetch Pool Keys UNA volta (per Raydium fallback)
         let pool_keys = match raydium::fetch_pool_keys_by_mint(net, token_mint).await {
             Ok(k) => Some(k),
-            Err(_) => None,
+            Err(e) => {
+                debug!("⚠️ Pool keys non disponibili (Jupiter only): {}", e);
+                None
+            }
         };
 
         for row in rows {
@@ -154,79 +175,107 @@ async fn execute_amms_auto_buy(
             let mode = trading_mode;
 
             tokio::spawn(async move {
-                if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool_c, &uid).await {
-                    let bal = net_c.get_balance_fast(&payer.pubkey()).await;
-                    let bal_sol = bal as f64 / 1_000_000_000.0;
-                    
-                    if bal_sol < 0.02 { return; } // Riserva minima
+                match wallet_manager::get_decrypted_wallet(&pool_c, &uid).await {
+                    Ok(payer) => {
+                        let bal = net_c.get_balance_fast(&payer.pubkey()).await;
+                        let bal_sol = bal as f64 / 1_000_000_000.0;
+                        
+                        // Verifica saldo minimo per trading (0.01 SOL = ~$2)
+                        if bal_sol < 0.01 { 
+                            debug!("⏭️ {} saldo insufficiente: {:.4} SOL", uid, bal_sol);
+                            return; 
+                        }
 
-                    // Calcola ATR se abbiamo market data
-                    let atr_pct = if let Ok(mkt_data) = state_c.market_data.lock() {
-                        mkt_data.get(&token_c)
-                            .and_then(|d| strategy::analyze_market_full(d))
-                            .map(|a| (a.atr / ext_data.as_ref().map(|e| e.price).unwrap_or(1.0)) * 100.0)
-                    } else { None };
+                        // Calcola ATR se abbiamo market data
+                        let atr_pct = if let Ok(mkt_data) = state_c.market_data.lock() {
+                            mkt_data.get(&token_c)
+                                .and_then(|d| strategy::analyze_market_full(d))
+                                .map(|a| (a.atr / ext_data.as_ref().map(|e| e.price).unwrap_or(1.0)) * 100.0)
+                        } else { None };
 
-                    // BREAKOUT usa importo più cauto
-                    let mut amt_sol = match mode {
-                        strategy::TradingMode::Breakout => strategy::calculate_breakout_investment(bal_sol, atr_pct),
-                        _ => strategy::calculate_investment_amount(bal_sol, atr_pct),
-                    };
-                    
-                    // Tetto sicurezza auto-trade
-                    amt_sol = amt_sol.min(0.5);
-                    
-                    let amt_lam = (amt_sol * 1_000_000_000.0) as u64;
+                        // Calcola importo da investire basato sulla strategia
+                        let mut amt_sol = match mode {
+                            strategy::TradingMode::Breakout => strategy::calculate_breakout_investment(bal_sol, atr_pct),
+                            _ => strategy::calculate_investment_amount(bal_sol, atr_pct),
+                        };
+                        
+                        // Assicurati che l'importo sia valido e non superi il 95% del saldo
+                        amt_sol = amt_sol.min(bal_sol * 0.95).min(0.5); // Max 0.5 SOL per auto-trade
+                        
+                        // Minimo 0.005 SOL per trade
+                        if amt_sol < 0.005 {
+                            debug!("⏭️ {} importo troppo basso: {:.6} SOL", uid, amt_sol);
+                            return;
+                        }
+                        
+                        let amt_lam = (amt_sol * 1_000_000_000.0) as u64;
+                        let input = "So11111111111111111111111111111111111111112";
+                        let mut success = false;
+                        let mut entry_price = 0.0;
+                        let mut tx_sig = String::new();
+                        
+                        info!("🛒 BUY {} | User: {} | Amount: {:.4} SOL", &token_c[..8], uid, amt_sol);
 
-                        if amt_lam > 0 {
-                            let input = "So11111111111111111111111111111111111111112";
-                            let mut success = false;
-                            let mut entry_price = 0.0;
-                            let mut tx_sig = String::new();
-
-                            // JUPITER FIRST (con VersionedTransaction)
-                            if let Ok(tx) = jupiter::get_jupiter_swap_tx(
-                                &payer.pubkey().to_string(), 
-                                input, 
-                                &token_c, 
-                                amt_lam, 
-                                100
-                            ).await {
-                                if let Ok(bh) = net_c.rpc.get_latest_blockhash().await {
-                                    if let Ok(signed_tx) = jupiter::sign_versioned_transaction(&tx, &payer, bh) {
-                                        if let Ok(sig) = net_c.send_versioned_transaction(&signed_tx).await {
-                                            let mode_str = match mode {
-                                                strategy::TradingMode::Dip => "DIP",
-                                                strategy::TradingMode::Breakout => "BREAKOUT",
-                                                _ => "AUTO",
-                                            };
-                                            info!("✅ 🔵{} JUPITER ({}) -> TX: {}", mode_str, uid, sig);
-                                            let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
-                                            success = true;
-                                            tx_sig = sig;
-                                            entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
+                        // JUPITER FIRST (con VersionedTransaction) - slippage 1.5%
+                        match jupiter::get_jupiter_swap_tx(
+                            &payer.pubkey().to_string(), 
+                            input, 
+                            &token_c, 
+                            amt_lam, 
+                            150  // 1.5% slippage
+                        ).await {
+                            Ok(tx) => {
+                                match net_c.rpc.get_latest_blockhash().await {
+                                    Ok(bh) => {
+                                        match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                                            Ok(signed_tx) => {
+                                                match net_c.send_versioned_transaction(&signed_tx).await {
+                                                    Ok(sig) => {
+                                                        let mode_str = match mode {
+                                                            strategy::TradingMode::Dip => "DIP",
+                                                            strategy::TradingMode::Breakout => "BREAKOUT",
+                                                            _ => "AUTO",
+                                                        };
+                                                        info!("✅ {} JUPITER ({}) | {:.4} SOL | TX: {}", mode_str, uid, amt_sol, sig);
+                                                        let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
+                                                        success = true;
+                                                        tx_sig = sig;
+                                                        entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
+                                                    },
+                                                    Err(e) => warn!("❌ Jupiter TX send fallita: {}", e),
+                                                }
+                                            },
+                                            Err(e) => warn!("❌ Jupiter TX sign fallita: {}", e),
                                         }
-                                    }
+                                    },
+                                    Err(e) => warn!("❌ Blockhash fallito: {}", e),
                                 }
-                            }
+                            },
+                            Err(e) => debug!("⚠️ Jupiter quote fallita, provo Raydium: {}", e),
+                        }
 
-                            // RAYDIUM FALLBACK
-                            if !success {
-                                if let Some(keys) = keys_c {
-                                    if let Ok(sig) = raydium::execute_swap(&net_c, &payer, &keys, mint_key, amt_lam, 200).await {
+                        // RAYDIUM FALLBACK - solo se Jupiter ha fallito
+                        if !success {
+                            if let Some(keys) = keys_c {
+                                match raydium::execute_swap(&net_c, &payer, &keys, mint_key, amt_lam, 200).await {
+                                    Ok(sig) => {
                                         let mode_str = match mode {
                                             strategy::TradingMode::Dip => "DIP",
                                             strategy::TradingMode::Breakout => "BREAKOUT",
                                             _ => "AUTO",
                                         };
-                                        info!("⚡ 🚀{} RAYDIUM ({}) -> TX: {}", mode_str, uid, sig);
+                                        info!("✅ {} RAYDIUM ({}) | {:.4} SOL | TX: {}", mode_str, uid, amt_sol, sig);
                                         let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
                                         success = true;
                                         tx_sig = sig.clone();
                                         entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
-                                    }
+                                    },
+                                    Err(e) => warn!("❌ Raydium swap fallito: {}", e),
                                 }
+                            } else {
+                                debug!("⚠️ Raydium non disponibile per questo token");
                             }
+                        }
 
                         // Registra posizione per tracking AMMS
                         if success && entry_price > 0.0 {
@@ -264,7 +313,12 @@ async fn execute_amms_auto_buy(
                                 info!("📊 {} Posizione [{}] | SL: ${:.8} | TP: ${:.8}", 
                                     mode_str, uid, entry_price - (sl_mult * atr), entry_price + (tp_mult * atr));
                             }
+                        } else if !success {
+                            warn!("❌ Trade fallito per {} su {}", uid, &token_c[..8]);
                         }
+                    },
+                    Err(e) => {
+                        warn!("❌ Wallet error per {}: {}", uid, e);
                     }
                 }
             });
@@ -752,28 +806,58 @@ async fn run_daily_report_task(
 // GEM DISCOVERY - Trova token promettenti
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Verifica se un token deve essere escluso
+fn is_excluded_token(address: &str, symbol: &str) -> bool {
+    // Token esclusi per indirizzo
+    if EXCLUDED_TOKENS.contains(&address) {
+        return true;
+    }
+    // Stablecoins escluse per simbolo
+    let stable_symbols = ["USDC", "USDT", "USDH", "DAI", "USDD", "BUSD", "TUSD"];
+    if stable_symbols.contains(&symbol.to_uppercase().as_str()) {
+        return true;
+    }
+    false
+}
+
+/// Ottieni URL immagine con fallback DexScreener
+fn get_image_url(original: &str, token_address: &str) -> String {
+    if original.is_empty() || original.contains("undefined") || original.contains("null") {
+        format!("https://dd.dexscreener.com/ds-data/tokens/solana/{}.png", token_address)
+    } else {
+        original.to_string()
+    }
+}
+
 async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient>) {
     info!("💎 AMMS Gem Discovery avviato");
     
-    // TOP ALTCOIN - Solo indirizzi, dati REALI dalle API
+    // TOP ALTCOIN - Solo indirizzi, dati REALI dalle API (NO SOL, NO stablecoins)
     let top_token_addresses = vec![
-        "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz",  // JUP
-        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK  
-        "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", // WIF
-        "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", // POPCAT
-        "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",  // RENDER
+        ("JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz", "JUP"),
+        ("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "BONK"),
+        ("EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "WIF"),
+        ("7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", "POPCAT"),
+        ("rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof", "RENDER"),
+        ("4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "RAY"),
+        ("orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE", "ORCA"),
     ];
     
     // Carica dati LIVE per le top altcoin all'avvio
     info!("📊 Caricamento dati LIVE per {} top altcoin...", top_token_addresses.len());
     
-    for token_addr in &top_token_addresses {
+    for (token_addr, fallback_symbol) in &top_token_addresses {
+        // Salta token esclusi
+        if is_excluded_token(token_addr, fallback_symbol) {
+            continue;
+        }
+        
         match jupiter::get_token_market_data(token_addr).await {
             Ok(mkt) => {
-                if mkt.price > 0.0 {
+                if mkt.price > 0.0 && mkt.liquidity_usd > 5000.0 {
                     let gem = GemData {
                         token: mkt.address.clone(),
-                        symbol: mkt.symbol.clone(),
+                        symbol: if mkt.symbol == "UNK" { fallback_symbol.to_string() } else { mkt.symbol.clone() },
                         name: mkt.name.clone(),
                         price: mkt.price,
                         safety_score: mkt.score.max(85), // Top altcoin hanno score alto
@@ -782,7 +866,7 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
                         volume_24h: mkt.volume_24h,
                         change_1h: mkt.change_1h,
                         change_24h: mkt.change_24h,
-                        image_url: mkt.image_url.clone(),
+                        image_url: get_image_url(&mkt.image_url, token_addr),
                         timestamp: chrono::Utc::now().timestamp(),
                         source: "TOP".to_string(),
                     };
@@ -790,16 +874,16 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
                     let mut found = state.found_gems.lock().unwrap();
                     if !found.iter().any(|g| g.token == gem.token) {
                         info!("✅ {} | ${:.6} | MCap: ${:.0}M | Vol: ${:.0}K", 
-                            mkt.symbol, mkt.price, mkt.market_cap / 1_000_000.0, mkt.volume_24h / 1_000.0);
+                            gem.symbol, mkt.price, mkt.market_cap / 1_000_000.0, mkt.volume_24h / 1_000.0);
                         found.push(gem);
                     }
                 }
             }
             Err(e) => {
-                warn!("⚠️ API error per {}: {}", &token_addr[..8], e);
+                warn!("⚠️ API error per {}: {}", fallback_symbol, e);
             }
         }
-        sleep(Duration::from_millis(300)).await;
+        sleep(Duration::from_millis(200)).await;
     }
     
     {
@@ -849,11 +933,15 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
         
         let mut all_gems: Vec<GemData> = Vec::new();
         
-        // PARTE 1: ALTCOIN AFFERMATE
+        // PARTE 1: ALTCOIN AFFERMATE (filtrate)
         match jupiter::find_profitable_altcoins().await {
             Ok(altcoins) => {
                 debug!("📊 {} altcoin affermate trovate", altcoins.len());
                 for coin in altcoins {
+                    // Salta token esclusi (SOL, stablecoins)
+                    if is_excluded_token(&coin.address, &coin.symbol) {
+                        continue;
+                    }
                     all_gems.push(GemData {
                         token: coin.address.clone(),
                         symbol: coin.symbol.clone(),
@@ -865,7 +953,7 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
                         volume_24h: coin.volume_24h,
                         change_1h: coin.change_1h,
                         change_24h: coin.change_24h,
-                        image_url: coin.image_url.clone(),
+                        image_url: get_image_url(&coin.image_url, &coin.address),
                         timestamp: chrono::Utc::now().timestamp(),
                         source: "ALTCOIN".into(),
                     });
@@ -874,13 +962,18 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
             Err(e) => debug!("⚠️ Altcoin fetch: {}", e),
         }
         
-        // PARTE 2: NUOVE GEMME (ogni 3 cicli)
+        // PARTE 2: NUOVE GEMME (ogni 3 cicli) - filtrate
         if cycle % 3 == 0 {
             match jupiter::discover_trending_gems().await {
                 Ok(gems) => {
                     debug!("💎 {} nuove gemme trovate", gems.len());
                     
                     for gem in gems {
+                        // Salta token esclusi (SOL, stablecoins)
+                        if is_excluded_token(&gem.address, &gem.symbol) {
+                            continue;
+                        }
+                        
                         if let Ok(pk) = Pubkey::from_str(&gem.address) {
                             if let Ok(report) = safety::check_token_safety(&net, &pk).await {
                                 if report.is_safe && gem.score >= 45 {
@@ -896,7 +989,7 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
                                             volume_24h: gem.volume_24h,
                                             change_1h: gem.change_1h,
                                             change_24h: gem.change_24h,
-                                            image_url: gem.image_url.clone(),
+                                            image_url: get_image_url(&gem.image_url, &gem.address),
                                             timestamp: chrono::Utc::now().timestamp(),
                                             source: "DISCOVERY".into(),
                                         });
@@ -976,38 +1069,52 @@ async fn main() {
     // ═══════════════════════════════════════════════════════════════
     info!("💎 Precaricamento gemme per UI...");
     {
-        // Top token da caricare subito
+        // Top token da caricare subito (NO SOL, NO stablecoins)
         let top_tokens = vec![
-            "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz",  // JUP
-            "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK
-            "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", // WIF
-            "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", // POPCAT
-            "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",  // RENDER
+            ("JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz", "JUP", "https://static.jup.ag/jup/icon.png"),
+            ("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "BONK", "https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I"),
+            ("EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "WIF", "https://dd.dexscreener.com/ds-data/tokens/solana/EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm.png"),
+            ("7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", "POPCAT", "https://dd.dexscreener.com/ds-data/tokens/solana/7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr.png"),
+            ("rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof", "RENDER", "https://dd.dexscreener.com/ds-data/tokens/solana/rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof.png"),
+            ("4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "RAY", "https://dd.dexscreener.com/ds-data/tokens/solana/4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R.png"),
+            ("orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE", "ORCA", "https://dd.dexscreener.com/ds-data/tokens/solana/orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE.png"),
         ];
         
         let mut preloaded_gems: Vec<GemData> = Vec::new();
-        for addr in &top_tokens {
-            if let Ok(mkt) = jupiter::get_token_market_data(addr).await {
-                if mkt.price > 0.0 {
-                    preloaded_gems.push(GemData {
-                        token: mkt.address.clone(),
-                        symbol: mkt.symbol.clone(),
-                        name: mkt.name.clone(),
-                        price: mkt.price,
-                        safety_score: mkt.score.max(85),
-                        liquidity_usd: mkt.liquidity_usd,
-                        market_cap: mkt.market_cap,
-                        volume_24h: mkt.volume_24h,
-                        change_1h: mkt.change_1h,
-                        change_24h: mkt.change_24h,
-                        image_url: mkt.image_url.clone(),
-                        timestamp: chrono::Utc::now().timestamp(),
-                        source: "TOP".to_string(),
-                    });
-                    info!("  ✓ {} | ${:.6}", mkt.symbol, mkt.price);
+        for (addr, fallback_symbol, fallback_img) in &top_tokens {
+            match jupiter::get_token_market_data(addr).await {
+                Ok(mkt) => {
+                    if mkt.price > 0.0 && mkt.liquidity_usd > 5000.0 {
+                        // Usa immagine DexScreener se API non restituisce immagine valida
+                        let image = if mkt.image_url.is_empty() || mkt.image_url.contains("undefined") {
+                            fallback_img.to_string()
+                        } else {
+                            mkt.image_url.clone()
+                        };
+                        
+                        preloaded_gems.push(GemData {
+                            token: mkt.address.clone(),
+                            symbol: if mkt.symbol == "UNK" { fallback_symbol.to_string() } else { mkt.symbol.clone() },
+                            name: mkt.name.clone(),
+                            price: mkt.price,
+                            safety_score: mkt.score.max(85),
+                            liquidity_usd: mkt.liquidity_usd,
+                            market_cap: mkt.market_cap,
+                            volume_24h: mkt.volume_24h,
+                            change_1h: mkt.change_1h,
+                            change_24h: mkt.change_24h,
+                            image_url: image,
+                            timestamp: chrono::Utc::now().timestamp(),
+                            source: "TOP".to_string(),
+                        });
+                        info!("  ✓ {} | ${:.6} | Liq: ${:.0}K", mkt.symbol, mkt.price, mkt.liquidity_usd/1000.0);
+                    }
+                },
+                Err(e) => {
+                    warn!("  ⚠️ {} - Errore: {}", fallback_symbol, e);
                 }
             }
-            sleep(Duration::from_millis(100)).await;
+            sleep(Duration::from_millis(150)).await;
         }
         
         if !preloaded_gems.is_empty() {

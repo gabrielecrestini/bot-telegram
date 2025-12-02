@@ -358,7 +358,22 @@ async fn handle_status(
         else if balance_eur < 200.0 { "HIGH_MEDIUM" }
         else { "RICH" }.to_string();
 
+    // Token da escludere dalle raccomandazioni (SOL, stablecoins)
+    const EXCLUDED_TOKENS: &[&str] = &[
+        "So11111111111111111111111111111111111111112",  // SOL (non puoi tradare SOL per SOL)
+        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
+        "USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX",  // USDH
+    ];
+    
     let mut gems = state.found_gems.lock().unwrap().clone();
+    // Filtra token esclusi e senza dati validi
+    gems.retain(|g| {
+        !EXCLUDED_TOKENS.contains(&g.token.as_str()) &&
+        g.price > 0.0 &&
+        g.liquidity_usd >= 5000.0 &&
+        !["USDC", "USDT", "USDH", "DAI"].contains(&g.symbol.to_uppercase().as_str())
+    });
     gems.sort_by(|a, b| b.safety_score.cmp(&a.safety_score));
     
     let signals = state.math_signals.lock().unwrap().clone();
@@ -913,8 +928,10 @@ async fn handle_bot_start(
         "bot_started_at": chrono::Utc::now().timestamp()
     });
 
-    let _ = sqlx::query("UPDATE users SET settings = ? WHERE tg_id = ?")
+    // IMPORTANTE: Attiva is_active = 1 per permettere auto-trading
+    let _ = sqlx::query("UPDATE users SET settings = ?, is_active = 1, bot_started_at = ? WHERE tg_id = ?")
         .bind(settings.to_string())
+        .bind(chrono::Utc::now().to_rfc3339())
         .bind(&user_id)
         .execute(&pool)
         .await;
@@ -925,9 +942,11 @@ async fn handle_bot_start(
         bot_users.insert(user_id.clone(), (req.amount, req.strategy.clone()));
     }
 
+    info!("✅ Bot attivato per {} | Strategia: {} | Amount: {}", user_id, req.strategy, req.amount);
+
     Ok(warp::reply::json(&BotResponse {
         success: true,
-        message: format!("Bot avviato con strategia {}", req.strategy),
+        message: format!("Bot avviato! Strategia: {}", req.strategy),
         profit: Some(0.0),
         trades_count: Some(0),
     }))
@@ -1020,17 +1039,19 @@ async fn handle_bot_stop(
         total_profit = stats.total_pnl;
     }
 
-    // Aggiorna settings
+    // Aggiorna settings e DISATTIVA is_active
     let settings = serde_json::json!({
         "bot_active": false,
         "bot_stopped_at": chrono::Utc::now().timestamp()
     });
     
-    let _ = sqlx::query("UPDATE users SET settings = ? WHERE tg_id = ?")
+    let _ = sqlx::query("UPDATE users SET settings = ?, is_active = 0 WHERE tg_id = ?")
         .bind(settings.to_string())
         .bind(&user_id)
         .execute(&pool)
         .await;
+    
+    info!("🛑 Bot disattivato per {} | Posizioni vendute: {}", user_id, closed_count);
 
     Ok(warp::reply::json(&BotResponse {
         success: true,

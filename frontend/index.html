@@ -278,6 +278,21 @@
             </div>
         </div>
 
+        <!-- SALDO DISPONIBILE PER TRADING -->
+        <div class="card p-4 mb-4 border-green-500/30 bg-gradient-to-r from-green-900/10 to-transparent">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs text-zinc-400 mb-1">💰 Saldo Disponibile per Trading</p>
+                    <p class="text-2xl font-bold mono text-green-400" id="tradingBalance">0.0000 SOL</p>
+                    <p class="text-xs text-zinc-500" id="tradingBalanceUsd">≈ $0.00</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-xs text-zinc-500 mb-1">Max per Trade</p>
+                    <p class="mono font-semibold text-green-300" id="maxTradeAmount">0.0000 SOL</p>
+                </div>
+            </div>
+        </div>
+
         <!-- POSIZIONI APERTE - Asset acquistati -->
         <div class="card mb-4 overflow-hidden" id="openPositionsCard">
             <div class="p-3 border-b border-zinc-800 flex items-center justify-between bg-gradient-to-r from-indigo-900/30 to-transparent">
@@ -932,16 +947,33 @@
             document.getElementById('tsAddr').innerText = token.token || '...';
             document.getElementById('tsMax').innerText = Math.max(0, state.balance - 0.005).toFixed(4);
             
-            // Immagine con fallback robusto
+            // Immagine con fallback robusto a catena
             const symbol = token.symbol || '?';
-            const letterFallback = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><rect fill='%236366f1' width='48' height='48' rx='24'/><text x='24' y='31' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold' font-size='20'>${symbol[0]}</text></svg>`;
+            const firstLetter = encodeURIComponent(symbol[0] || '?');
+            const letterFallback = `https://ui-avatars.com/api/?name=${firstLetter}&background=6366f1&color=fff&size=96&bold=true`;
+            const jupiterImg = `https://img.jup.ag/v6/${token.token}/logo`;
+            const dexImg = `https://dd.dexscreener.com/ds-data/tokens/solana/${token.token}.png`;
             
             const imgEl = document.getElementById('tsImg');
+            // Catena di fallback: immagine fornita -> dexscreener -> jupiter -> avatar lettera
             imgEl.onerror = function() { 
-                this.onerror = null;
-                this.src = letterFallback; 
+                if (this.src.includes('dexscreener')) {
+                    this.src = jupiterImg;
+                } else if (this.src.includes('jup.ag')) {
+                    this.src = letterFallback;
+                } else {
+                    this.src = letterFallback;
+                }
             };
-            imgEl.src = token.image_url || letterFallback;
+            
+            // Priorità: API immagine valida -> DexScreener
+            if (token.image_url && token.image_url.length > 10 && 
+                !token.image_url.includes('undefined') && 
+                token.image_url.startsWith('http')) {
+                imgEl.src = token.image_url;
+            } else {
+                imgEl.src = dexImg;
+            }
             
             lucide.createIcons();
         }
@@ -1339,9 +1371,13 @@
                 
                 // Simbolo: prima dal trade (DB), poi da gems, poi abbreviato
                 const symbol = t.token_symbol || (gem ? gem.symbol : t.token_address.slice(0,6) + '...');
+                const firstLetter = encodeURIComponent((symbol || '?')[0]);
                 
-                // Immagine: prima dal trade (DB), poi da gems, poi Jupiter fallback
-                const imgUrl = t.token_image || (gem ? gem.image_url : '') || `https://img.jup.ag/v6/${t.token_address}/logo`;
+                // Immagine con catena di fallback robusta
+                const dexImg = `https://dd.dexscreener.com/ds-data/tokens/solana/${t.token_address}.png`;
+                const jupImg = `https://img.jup.ag/v6/${t.token_address}/logo`;
+                const avatarImg = `https://ui-avatars.com/api/?name=${firstLetter}&background=6366f1&color=fff&size=40&bold=true`;
+                const imgUrl = t.token_image || (gem ? gem.image_url : '') || dexImg;
                 
                 const mode = t.trading_mode || 'AUTO';
                 const modeEmoji = mode === 'DIP' ? '🔵' : mode === 'BREAKOUT' ? '🚀' : mode === 'MANUAL' ? '✋' : '⚡';
@@ -1362,7 +1398,7 @@
                 
                 return `
                     <div class="flex items-center gap-3 p-3 border-b border-zinc-800 last:border-0 hover:bg-zinc-900/50 transition-colors">
-                        <img src="${imgUrl}" class="w-10 h-10 rounded-full bg-zinc-800" onerror="this.src='https://img.jup.ag/v6/${t.token_address}/logo'" onload="if(!this.complete || this.naturalHeight === 0) this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><rect fill=%22%2327272a%22 width=%2240%22 height=%2240%22 rx=%2220%22/><text x=%2220%22 y=%2226%22 text-anchor=%22middle%22 fill=%22%2371717a%22 font-size=%2214%22>${symbol.slice(0,2)}</text></svg>'">
+                        <img src="${imgUrl}" class="w-10 h-10 rounded-full bg-zinc-800" onerror="if(this.src.includes('dexscreener')){this.src='${jupImg}';}else{this.src='${avatarImg}';}">
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2">
                                 <p class="font-semibold text-sm">${symbol}</p>
@@ -1742,10 +1778,38 @@
                 document.getElementById('strategyPct').innerText = wl.pct + '%';
                 document.getElementById('strategyDesc').innerText = `Con ${state.balance.toFixed(4)} SOL (~€${balanceEur.toFixed(0)}), il bot investirà ${investAmt} SOL (~€${investEur}) per trade.`;
 
+                // AGGIORNA SALDO TRADING (disponibile per trading manuale)
+                const availableBalance = Math.max(0, state.balance - 0.005); // Riserva per gas
+                document.getElementById('tradingBalance').innerText = availableBalance.toFixed(4) + ' SOL';
+                document.getElementById('tradingBalanceUsd').innerText = '≈ $' + (availableBalance * state.solPrice).toFixed(2);
+                document.getElementById('maxTradeAmount').innerText = Math.max(0, availableBalance * 0.95).toFixed(4) + ' SOL';
+
+                // FILTRA GEMS - Escludi SOL, stablecoins, e token senza dati validi
+                const EXCLUDED_TOKENS = [
+                    'So11111111111111111111111111111111111111112',  // SOL (non puoi tradare SOL per SOL)
+                    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+                    'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+                    'USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX',  // USDH
+                    'USDhMjJtHuxNdq9LKq3YLZaNexSHk4tEfjefRhqhpump', // Other stables
+                ];
+                
+                const filteredGems = state.gems.filter(g => {
+                    // Escludi token nella blacklist
+                    if (EXCLUDED_TOKENS.includes(g.token)) return false;
+                    // Escludi token senza prezzo valido
+                    if (!g.price || g.price <= 0) return false;
+                    // Escludi token senza liquidità
+                    if (!g.liquidity_usd || g.liquidity_usd < 1000) return false;
+                    // Escludi stablecoins per simbolo
+                    if (['USDC', 'USDT', 'USDH', 'DAI', 'USDD'].includes(g.symbol?.toUpperCase())) return false;
+                    return true;
+                });
+
                 // Token List con tutti i dati live
                 const list = document.getElementById('tokenList');
-                if (state.gems.length > 0) {
-                    list.innerHTML = state.gems.map((g, idx) => {
+                if (filteredGems.length > 0) {
+                    state.gems = filteredGems; // Aggiorna state con lista filtrata
+                    list.innerHTML = filteredGems.map((g, idx) => {
                         const mcapStr = formatMcap(g.market_cap);
                         const volStr = formatMcap(g.volume_24h);
                         const liqStr = formatMcap(g.liquidity_usd);
@@ -1753,23 +1817,30 @@
                         const change1h = g.change_1h || 0;
                         const change24h = g.change_24h || 0;
                         
-                        // Immagine con fallback multipli: DB -> Jupiter CDN -> DexScreener -> Lettera
-                        const symbol = g.symbol || '?';
-                        const letterFallback = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><rect fill='%236366f1' width='48' height='48' rx='24'/><text x='24' y='31' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold' font-size='20'>${symbol[0]}</text></svg>`;
-                        const jupiterImg = `https://img.jup.ag/v6/${g.token}/logo`;
-                        // Usa immagine dal DB se valida, altrimenti Jupiter
-                        const imgSrc = (g.image_url && g.image_url.length > 10 && !g.image_url.includes('undefined')) 
-                            ? g.image_url 
-                            : jupiterImg;
-                        
-                        return `
-                        <div class="token-row" onclick="openTokenByIndex(${idx})">
-                            <div class="w-12 h-12 rounded-full bg-zinc-800 overflow-hidden flex-shrink-0">
-                                <img src="${imgSrc}" 
-                                     class="w-full h-full object-cover" 
-                                     onerror="this.onerror=null; this.src='${jupiterImg}'; this.onerror=function(){this.src='${letterFallback}';}"
-                                     loading="lazy">
-                            </div>
+                        // Immagine con fallback multipli robusto
+                                        const symbol = g.symbol || '?';
+                                        const firstLetter = encodeURIComponent(symbol[0] || '?');
+                                        const letterFallback = `https://ui-avatars.com/api/?name=${firstLetter}&background=6366f1&color=fff&size=48&bold=true`;
+                                        const jupiterImg = `https://img.jup.ag/v6/${g.token}/logo`;
+                                        const dexImg = `https://dd.dexscreener.com/ds-data/tokens/solana/${g.token}.png`;
+                                        
+                                        // Priorità: DexScreener -> API immagine -> Jupiter -> Avatar lettera
+                                        let imgSrc = dexImg;
+                                        if (g.image_url && g.image_url.length > 10 && 
+                                            !g.image_url.includes('undefined') && 
+                                            !g.image_url.includes('null') &&
+                                            g.image_url.startsWith('http')) {
+                                            imgSrc = g.image_url;
+                                        }
+                                        
+                                        return `
+                                        <div class="token-row" onclick="openTokenByIndex(${idx})">
+                                            <div class="w-12 h-12 rounded-full bg-zinc-800 overflow-hidden flex-shrink-0">
+                                                <img src="${imgSrc}" 
+                                                     class="w-full h-full object-cover" 
+                                                     onerror="this.onerror=function(){this.src='${letterFallback}';}; this.src='${jupiterImg}';"
+                                                     loading="lazy">
+                                            </div>
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2 mb-1">
                                     <span class="font-bold">${symbol}</span>
