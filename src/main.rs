@@ -24,6 +24,9 @@ pub mod strategy;
 pub mod api;
 pub mod jupiter;
 pub mod engine;
+pub mod raydium;  // Fallback per Jupiter
+pub mod jito;     // Velocità estrema + MEV protection
+pub mod birdeye;  // Dati mercato professionali
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WATCHLIST - Token monitorati per segnali (NO stablecoins, NO SOL)
