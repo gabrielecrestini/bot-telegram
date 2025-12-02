@@ -13,6 +13,7 @@ use std::str::FromStr;
 use solana_transaction_status::UiTransactionEncoding;
 use solana_transaction_status::option_serializer::OptionSerializer;
 use solana_sdk::signature::Signer;
+use spl_associated_token_account;
 
 // MODULI
 pub mod raydium;
@@ -318,15 +319,30 @@ async fn run_position_manager(
                         // Esegui vendita
                         if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
                             if let Ok(mint) = Pubkey::from_str(&pos.token_address) {
-                                // Tenta Jupiter sell (con VersionedTransaction)
+                                // Ottieni il bilancio REALE del token nel wallet
+                                let ata = spl_associated_token_account::get_associated_token_address(&payer.pubkey(), &mint);
+                                let token_balance = match net.rpc.get_token_account_balance(&ata).await {
+                                    Ok(balance) => balance.amount.parse::<u64>().unwrap_or(0),
+                                    Err(_) => {
+                                        warn!("⚠️ Nessun token trovato per {}", &pos.token_address[..8]);
+                                        continue;
+                                    }
+                                };
+                                
+                                if token_balance == 0 {
+                                    warn!("⚠️ Bilancio token = 0 per {}", &pos.token_address[..8]);
+                                    continue;
+                                }
+                                
+                                // Tenta Jupiter sell con quantità REALE di token
                                 let output = "So11111111111111111111111111111111111111112";
-                                let sell_amount = pos.amount_lamports;
+                                info!("💰 Auto-sell {} token (balance: {})", &pos.token_address[..8], token_balance);
                                 
                                 match jupiter::get_jupiter_swap_tx(
                                     &payer.pubkey().to_string(),
                                     &pos.token_address,
                                     output,
-                                    sell_amount,
+                                    token_balance, // USA IL BILANCIO REALE!
                                     200 // 2% slippage per sell
                                 ).await {
                                     Ok(tx) => {

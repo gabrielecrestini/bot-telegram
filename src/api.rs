@@ -969,22 +969,45 @@ async fn handle_bot_stop(
     for trade in &open_trades {
         // Prova a vendere tramite Jupiter (con VersionedTransaction)
         if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
-            let output = "So11111111111111111111111111111111111111112";
-            
-            if let Ok(tx) = jupiter::get_jupiter_swap_tx(
-                &payer.pubkey().to_string(),
-                &trade.token_address,
-                output,
-                trade.amount_lamports,
-                300, // slippage più alto per vendite urgenti
-            ).await {
-                if let Ok(bh) = net.rpc.get_latest_blockhash().await {
-                    if let Ok(signed_tx) = jupiter::sign_versioned_transaction(&tx, &payer, bh) {
-                        // Invia vendita
-                        if let Ok(sig) = net.send_versioned_transaction(&signed_tx).await {
-                            let _ = db::record_sell(&pool, &user_id, &trade.token_address, &sig, 0.0).await;
-                            closed_count += 1;
-                            info!("✅ Venduto {} per bot stop", trade.token_address);
+            // Ottieni il bilancio REALE del token nel wallet
+            if let Ok(mint) = Pubkey::from_str(&trade.token_address) {
+                let ata = spl_associated_token_account::get_associated_token_address(&payer.pubkey(), &mint);
+                let token_balance = match net.rpc.get_token_account_balance(&ata).await {
+                    Ok(balance) => balance.amount.parse::<u64>().unwrap_or(0),
+                    Err(_) => continue, // Token non trovato, salta
+                };
+                
+                if token_balance == 0 {
+                    // Nessun token, marca come venduto comunque
+                    let _ = db::record_sell(&pool, &user_id, &trade.token_address, "no_tokens", 0.0).await;
+                    continue;
+                }
+                
+                let output = "So11111111111111111111111111111111111111112";
+                info!("💰 Bot stop: vendita {} token (balance: {})", &trade.token_address[..8], token_balance);
+                
+                if let Ok(tx) = jupiter::get_jupiter_swap_tx(
+                    &payer.pubkey().to_string(),
+                    &trade.token_address,
+                    output,
+                    token_balance, // USA IL BILANCIO REALE!
+                    300, // slippage più alto per vendite urgenti
+                ).await {
+                    if let Ok(bh) = net.rpc.get_latest_blockhash().await {
+                        if let Ok(signed_tx) = jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                            // Invia vendita
+                            if let Ok(sig) = net.send_versioned_transaction(&signed_tx).await {
+                                // Calcola PnL
+                                let current_price = jupiter::get_token_market_data(&trade.token_address)
+                                    .await.ok().map(|m| m.price).unwrap_or(0.0);
+                                let pnl_pct = if trade.entry_price > 0.0 && current_price > 0.0 {
+                                    ((current_price - trade.entry_price) / trade.entry_price) * 100.0
+                                } else { 0.0 };
+                                
+                                let _ = db::record_sell(&pool, &user_id, &trade.token_address, &sig, pnl_pct).await;
+                                closed_count += 1;
+                                info!("✅ Venduto {} | PnL: {:+.1}% | TX: {}", &trade.token_address[..8], pnl_pct, sig);
+                            }
                         }
                     }
                 }
