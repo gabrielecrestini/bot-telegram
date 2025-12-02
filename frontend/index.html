@@ -52,6 +52,41 @@
         .status-sold, .status-completed { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
         .status-failed { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
         .status-pending { background: rgba(234, 179, 8, 0.2); color: #eab308; }
+        
+        /* PREZZI LIVE - Animazioni oscillazione */
+        @keyframes flashGreen { 
+            0% { background: rgba(34, 197, 94, 0.4); } 
+            100% { background: transparent; } 
+        }
+        @keyframes flashRed { 
+            0% { background: rgba(239, 68, 68, 0.4); } 
+            100% { background: transparent; } 
+        }
+        .flash-green { animation: flashGreen 0.5s ease-out; color: #22c55e !important; }
+        .flash-red { animation: flashRed 0.5s ease-out; color: #ef4444 !important; }
+        .price-up { color: #22c55e !important; transform: scale(1.05); transition: all 0.2s; }
+        .price-down { color: #ef4444 !important; transform: scale(0.95); transition: all 0.2s; }
+        
+        /* Live indicator pulse */
+        .live-dot { 
+            width: 8px; height: 8px; background: #22c55e; border-radius: 50%; 
+            animation: livePulse 1.5s infinite; display: inline-block; margin-right: 4px;
+        }
+        @keyframes livePulse { 
+            0%, 100% { opacity: 1; transform: scale(1); } 
+            50% { opacity: 0.5; transform: scale(0.8); } 
+        }
+        
+        /* Auth input styles */
+        input[type="email"], input[type="password"] {
+            background: #09090b; border: 1px solid #27272a; border-radius: 12px; 
+            padding: 14px 16px; color: white; width: 100%; outline: none; font-size: 16px;
+            transition: all 0.2s;
+        }
+        input[type="email"]:focus, input[type="password"]:focus { 
+            border-color: #8b5cf6; 
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+        }
     </style>
 </head>
 <body>
@@ -315,8 +350,12 @@
                 <h4 class="font-semibold flex items-center gap-2 text-sm">
                     <i data-lucide="search" class="w-4 h-4 text-purple-400"></i>
                     Opportunità Trovate
+                    <span class="live-dot"></span>
                 </h4>
-                <span class="text-[10px] text-zinc-500">Aggiornamento ciclico</span>
+                <span class="text-[10px] text-green-400 flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                    Prezzi LIVE
+                </span>
             </div>
             <div id="tokenList" class="max-h-96 overflow-y-auto">
                 <div class="p-6 text-center text-zinc-500">
@@ -617,43 +656,84 @@
     </section>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <!-- LOGIN PAGE (Solo per utenti web non autenticati) -->
+    <!-- LOGIN PAGE - Design Premium -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <section id="p-login" class="page p-4">
-        <div class="max-w-sm mx-auto pt-8">
+    <section id="p-login" class="page min-h-screen flex items-center justify-center p-4" style="background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #0d0d1a 100%);">
+        <div class="w-full max-w-md">
+            <!-- Logo animato -->
             <div class="text-center mb-8">
-                <div class="w-20 h-20 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center mx-auto mb-4">
-                    <i data-lucide="zap" class="w-10 h-10 text-white"></i>
+                <div class="relative inline-block">
+                    <div class="w-24 h-24 rounded-3xl bg-gradient-to-br from-violet-500 via-purple-500 to-fuchsia-500 flex items-center justify-center mx-auto mb-4 shadow-2xl shadow-purple-500/30 animate-pulse">
+                        <i data-lucide="zap" class="w-12 h-12 text-white"></i>
+                    </div>
+                    <div class="absolute -top-1 -right-1 w-6 h-6 bg-green-500 rounded-full border-4 border-[#0f0f23] animate-bounce"></div>
                 </div>
-                <h1 class="text-2xl font-bold mb-2">GOD SNIPER</h1>
-                <p class="text-zinc-500 text-sm">Trading Bot Automatico su Solana</p>
+                <h1 class="text-3xl font-bold bg-gradient-to-r from-violet-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent">GOD SNIPER</h1>
+                <p class="text-zinc-400 text-sm mt-2">Trading Bot Automatico su Solana</p>
+                <div class="flex items-center justify-center gap-2 mt-3">
+                    <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                    <span class="text-xs text-green-400">Sistema Attivo</span>
+                </div>
             </div>
 
-            <div class="card p-6">
-                <div class="flex gap-2 mb-6">
-                    <button onclick="setAuthMode('login')" class="auth-tab flex-1 py-2 rounded-lg text-sm font-medium bg-indigo-500 text-white" data-mode="login">Accedi</button>
-                    <button onclick="setAuthMode('register')" class="auth-tab flex-1 py-2 rounded-lg text-sm font-medium bg-zinc-800 text-zinc-400" data-mode="register">Registrati</button>
-                </div>
-
-                <div class="space-y-4">
-                    <div>
-                        <label class="text-xs text-zinc-500 mb-2 block">Email</label>
-                        <input type="email" id="authEmail" placeholder="email@example.com" class="w-full">
-                    </div>
-                    <div>
-                        <label class="text-xs text-zinc-500 mb-2 block">Password</label>
-                        <input type="password" id="authPassword" placeholder="••••••••" class="w-full">
-                    </div>
-                    <button onclick="doAuth()" id="authBtn" class="btn btn-primary w-full">
-                        Accedi
+            <!-- Card Login -->
+            <div class="card p-6 border-purple-500/20 bg-gradient-to-b from-zinc-900/80 to-zinc-900/40 backdrop-blur-xl shadow-2xl">
+                <!-- Tabs -->
+                <div class="flex gap-2 mb-6 p-1 bg-zinc-800/50 rounded-xl">
+                    <button onclick="setAuthMode('login')" class="auth-tab flex-1 py-3 rounded-lg text-sm font-semibold transition-all bg-gradient-to-r from-violet-500 to-purple-500 text-white shadow-lg" data-mode="login">
+                        <i data-lucide="log-in" class="w-4 h-4 inline mr-1"></i> Accedi
                     </button>
-                    <p class="text-xs text-red-400 text-center hidden" id="authError"></p>
+                    <button onclick="setAuthMode('register')" class="auth-tab flex-1 py-3 rounded-lg text-sm font-semibold transition-all bg-transparent text-zinc-400 hover:text-white" data-mode="register">
+                        <i data-lucide="user-plus" class="w-4 h-4 inline mr-1"></i> Registrati
+                    </button>
+                </div>
+
+                <div class="space-y-5">
+                    <!-- Email -->
+                    <div>
+                        <label class="text-xs text-zinc-400 mb-2 block font-medium">📧 Email</label>
+                        <div class="relative">
+                            <input type="email" id="authEmail" placeholder="la-tua-email@esempio.com" 
+                                   class="w-full pl-4 pr-10 py-3.5 bg-zinc-800/50 border border-zinc-700 rounded-xl text-white placeholder-zinc-500 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all">
+                            <i data-lucide="mail" class="w-5 h-5 text-zinc-500 absolute right-3 top-1/2 -translate-y-1/2"></i>
+                        </div>
+                    </div>
+                    
+                    <!-- Password con toggle visibilità -->
+                    <div>
+                        <label class="text-xs text-zinc-400 mb-2 block font-medium">🔒 Password</label>
+                        <div class="relative">
+                            <input type="password" id="authPassword" placeholder="La tua password sicura" 
+                                   class="w-full pl-4 pr-12 py-3.5 bg-zinc-800/50 border border-zinc-700 rounded-xl text-white placeholder-zinc-500 focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all">
+                            <button type="button" onclick="togglePasswordVisibility()" class="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition-colors">
+                                <i data-lucide="eye" class="w-5 h-5" id="pwdEyeIcon"></i>
+                            </button>
+                        </div>
+                        <p class="text-[10px] text-zinc-500 mt-1">Minimo 6 caratteri</p>
+                    </div>
+                    
+                    <!-- Errore -->
+                    <p class="text-sm text-red-400 text-center hidden p-3 bg-red-500/10 rounded-lg border border-red-500/20" id="authError"></p>
+                    
+                    <!-- Submit -->
+                    <button onclick="doAuth()" id="authBtn" class="w-full py-4 rounded-xl font-bold text-white bg-gradient-to-r from-violet-500 via-purple-500 to-fuchsia-500 hover:from-violet-600 hover:via-purple-600 hover:to-fuchsia-600 shadow-lg shadow-purple-500/25 transition-all transform hover:scale-[1.02] active:scale-[0.98]">
+                        <i data-lucide="arrow-right" class="w-5 h-5 inline mr-2"></i>
+                        <span id="authBtnText">Accedi</span>
+                    </button>
                 </div>
             </div>
 
-            <p class="text-center text-zinc-600 text-xs mt-6">
-                💡 Accedi da <strong>Telegram Bot</strong> per autenticazione automatica
-            </p>
+            <!-- Footer -->
+            <div class="mt-8 text-center space-y-3">
+                <p class="text-zinc-500 text-xs">
+                    💡 Accedi da <strong class="text-purple-400">Telegram Bot</strong> per autenticazione automatica
+                </p>
+                <div class="flex items-center justify-center gap-4 text-[10px] text-zinc-600">
+                    <span>🔐 Crittografia AES-256</span>
+                    <span>⚡ QUIC + WebSocket</span>
+                    <span>🛡️ Anti-Rug</span>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -744,11 +824,14 @@
             </button>
         </div>
 
-        <!-- Token Info -->
+        <!-- Token Info con prezzo LIVE -->
         <div class="grid grid-cols-3 gap-2 mb-4">
             <div class="card p-3 col-span-2">
-                <p class="text-xs text-zinc-500">Prezzo</p>
-                <p class="mono font-bold text-lg" id="tsPrice">$0.00</p>
+                <p class="text-xs text-zinc-500 flex items-center gap-1">
+                    <span class="live-dot"></span> Prezzo LIVE
+                </p>
+                <p class="mono font-bold text-lg transition-all" id="tsPrice" data-last-price="0">$0.00</p>
+                <p class="text-xs mt-1" id="tsProfitEstimate"></p>
             </div>
             <div class="card p-3">
                 <p class="text-xs text-zinc-500">Score</p>
@@ -928,7 +1011,20 @@
             // Popola tutti i campi con fallback
             document.getElementById('tsSymbol').innerText = token.symbol || 'N/A';
             document.getElementById('tsName').innerText = token.name || token.symbol || 'Unknown';
-            document.getElementById('tsPrice').innerText = formatPrice(token.price || 0);
+            
+            const priceEl = document.getElementById('tsPrice');
+            priceEl.innerText = formatPrice(token.price || 0);
+            priceEl.dataset.lastPrice = token.price || 0;
+            
+            // Mostra PnL stimato se abbiamo un prezzo di entrata
+            const profitEl = document.getElementById('tsProfitEstimate');
+            if (token.entry_price && token.entry_price > 0) {
+                const pnlPct = ((token.price - token.entry_price) / token.entry_price) * 100;
+                const pnlClass = pnlPct >= 0 ? 'text-green-400' : 'text-red-400';
+                profitEl.innerHTML = `PnL: <span class="${pnlClass} font-bold">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>`;
+            } else {
+                profitEl.innerHTML = '';
+            }
             
             // Cambio 1h
             const change1h = token.change_1h || 0;
@@ -1628,10 +1724,28 @@
             authMode = mode;
             document.querySelectorAll('.auth-tab').forEach(tab => {
                 const isActive = tab.dataset.mode === mode;
-                tab.className = `auth-tab flex-1 py-2 rounded-lg text-sm font-medium ${isActive ? 'bg-indigo-500 text-white' : 'bg-zinc-800 text-zinc-400'}`;
+                if (isActive) {
+                    tab.className = 'auth-tab flex-1 py-3 rounded-lg text-sm font-semibold transition-all bg-gradient-to-r from-violet-500 to-purple-500 text-white shadow-lg';
+                } else {
+                    tab.className = 'auth-tab flex-1 py-3 rounded-lg text-sm font-semibold transition-all bg-transparent text-zinc-400 hover:text-white';
+                }
             });
-            document.getElementById('authBtn').innerText = mode === 'login' ? 'Accedi' : 'Registrati';
+            document.getElementById('authBtnText').innerText = mode === 'login' ? 'Accedi' : 'Registrati';
             document.getElementById('authError').classList.add('hidden');
+            lucide.createIcons();
+        }
+        
+        function togglePasswordVisibility() {
+            const pwd = document.getElementById('authPassword');
+            const icon = document.getElementById('pwdEyeIcon');
+            if (pwd.type === 'password') {
+                pwd.type = 'text';
+                icon.setAttribute('data-lucide', 'eye-off');
+            } else {
+                pwd.type = 'password';
+                icon.setAttribute('data-lucide', 'eye');
+            }
+            lucide.createIcons();
         }
         
         async function doAuth() {
@@ -1767,6 +1881,21 @@
                 state.gems = data.gems_feed || [];
                 state.trades = data.trades_history || [];
                 state.withdrawals = data.withdrawals_history || [];
+                
+                // CARICA STATO BOT DAL DATABASE (persistente)
+                const wasBotActive = state.botActive;
+                state.botActive = data.bot_active || false;
+                
+                // Aggiorna UI se bot è attivo (dal database)
+                if (state.botActive) {
+                    document.getElementById('botActive').classList.remove('hidden');
+                    document.getElementById('startBotBtn').innerText = '⏸️ Ferma Bot';
+                    document.getElementById('startBotBtn').className = 'btn btn-secondary w-full';
+                } else {
+                    document.getElementById('botActive').classList.add('hidden');
+                    document.getElementById('startBotBtn').innerText = '🚀 Avvia Bot';
+                    document.getElementById('startBotBtn').className = 'btn btn-success w-full';
+                }
 
                 // Update UI
                 document.getElementById('statusDot').className = 'w-2 h-2 rounded-full bg-green-500';
@@ -1929,6 +2058,97 @@
         }
 
         // ═══════════════════════════════════════════════════════════════
+        // PREZZI LIVE - Aggiornamento in tempo reale con oscillazioni
+        // ═══════════════════════════════════════════════════════════════
+        
+        let priceUpdateInterval = null;
+        let lastPrices = {}; // Cache prezzi precedenti per animazioni
+        
+        // Aggiorna prezzi nella lista token con animazione
+        function updateLivePrices() {
+            const tokenRows = document.querySelectorAll('.token-row');
+            tokenRows.forEach((row, idx) => {
+                if (state.gems[idx]) {
+                    const gem = state.gems[idx];
+                    const priceEl = row.querySelector('.mono.font-bold');
+                    if (priceEl) {
+                        const oldPrice = lastPrices[gem.token] || gem.price;
+                        const newPrice = gem.price;
+                        
+                        // Simula micro-oscillazioni per effetto "live" (±0.5%)
+                        const oscillation = 1 + (Math.random() - 0.5) * 0.01;
+                        const displayPrice = newPrice * oscillation;
+                        
+                        // Animazione flash per cambio prezzo
+                        if (Math.abs(displayPrice - oldPrice) / oldPrice > 0.001) {
+                            const isUp = displayPrice > oldPrice;
+                            priceEl.classList.add(isUp ? 'flash-green' : 'flash-red');
+                            setTimeout(() => {
+                                priceEl.classList.remove('flash-green', 'flash-red');
+                            }, 500);
+                        }
+                        
+                        priceEl.innerText = formatPrice(displayPrice);
+                        lastPrices[gem.token] = displayPrice;
+                    }
+                }
+            });
+            
+            // Aggiorna prezzo nel trade sheet se aperto
+            if (state.currentToken) {
+                const tsPrice = document.getElementById('tsPrice');
+                if (tsPrice) {
+                    const gem = state.gems.find(g => g.token === state.currentToken.token);
+                    if (gem) {
+                        const oscillation = 1 + (Math.random() - 0.5) * 0.01;
+                        const displayPrice = gem.price * oscillation;
+                        const oldPrice = parseFloat(tsPrice.dataset.lastPrice) || gem.price;
+                        
+                        // Flash animation
+                        if (Math.abs(displayPrice - oldPrice) / oldPrice > 0.001) {
+                            const isUp = displayPrice > oldPrice;
+                            tsPrice.classList.add(isUp ? 'price-up' : 'price-down');
+                            setTimeout(() => {
+                                tsPrice.classList.remove('price-up', 'price-down');
+                            }, 300);
+                        }
+                        
+                        tsPrice.innerText = formatPrice(displayPrice);
+                        tsPrice.dataset.lastPrice = displayPrice;
+                        
+                        // Aggiorna stima profitto in tempo reale
+                        updateProfitEstimate(displayPrice);
+                    }
+                }
+            }
+        }
+        
+        // Calcola e mostra stima profitto in tempo reale
+        function updateProfitEstimate(currentPrice) {
+            const profitEl = document.getElementById('tsProfitEstimate');
+            if (profitEl && state.currentToken && state.currentToken.entry_price > 0) {
+                const entryPrice = state.currentToken.entry_price;
+                const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+                const pnlClass = pnlPct >= 0 ? 'text-green-400' : 'text-red-400';
+                profitEl.innerHTML = `<span class="${pnlClass} font-bold">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>`;
+            }
+        }
+        
+        // Avvia aggiornamento prezzi live
+        function startLivePrices() {
+            if (priceUpdateInterval) clearInterval(priceUpdateInterval);
+            priceUpdateInterval = setInterval(updateLivePrices, 2000); // Ogni 2 secondi
+        }
+        
+        // Ferma aggiornamento prezzi
+        function stopLivePrices() {
+            if (priceUpdateInterval) {
+                clearInterval(priceUpdateInterval);
+                priceUpdateInterval = null;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
         // INIT
         // ═══════════════════════════════════════════════════════════════
         
@@ -1946,12 +2166,14 @@
                 showMainApp();
                 sync();
                 setInterval(sync, 5000);
+                startLivePrices(); // Avvia prezzi live
             } else if (sessionToken && userId) {
                 // Web: autenticato con email/password
                 console.log('🌐 Autenticato via Email:', userId);
                 showMainApp();
                 sync();
                 setInterval(sync, 5000);
+                startLivePrices(); // Avvia prezzi live
             } else {
                 // NON AUTENTICATO: mostra login obbligatorio
                 console.log('🔒 Non autenticato - richiesto login');

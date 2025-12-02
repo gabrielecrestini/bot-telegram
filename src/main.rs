@@ -1,23 +1,20 @@
 use dotenv::dotenv;
-use log::{info, error, warn, debug};
+use log::{info, warn, debug};
 use std::sync::{Arc, Mutex};
 use tokio::time::{sleep, Duration};
 use std::env;
 use std::collections::{HashMap, HashSet};
 use sqlx::Row;
 use futures::StreamExt;
-use solana_client::rpc_config::{RpcTransactionLogsFilter, RpcTransactionLogsConfig, RpcTransactionConfig};
-use solana_sdk::commitment_config::CommitmentConfig;
+// Network imports per QUIC/WS
 use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
-use solana_transaction_status::UiTransactionEncoding;
-use solana_transaction_status::option_serializer::OptionSerializer;
+// Transaction status imports (removed - using Jupiter only)
 use solana_sdk::signature::Signer;
 use spl_associated_token_account;
 use teloxide::Bot;
 
 // MODULI
-pub mod raydium;
 pub mod wallet_manager;
 pub mod network;
 pub mod db;
@@ -148,14 +145,7 @@ async fn execute_amms_auto_buy(
         };
         info!("🤖 AMMS {} BUY: {} utenti per {}", mode_str, rows.len(), &mint_str[..8]);
 
-        // Fetch Pool Keys UNA volta (per Raydium fallback)
-        let pool_keys = match raydium::fetch_pool_keys_by_mint(net, token_mint).await {
-            Ok(k) => Some(k),
-            Err(e) => {
-                debug!("⚠️ Pool keys non disponibili (Jupiter only): {}", e);
-                None
-            }
-        };
+        // Solo Jupiter - Velocità pura
 
         for row in rows {
             let uid: String = row.get("tg_id");
@@ -168,8 +158,6 @@ async fn execute_amms_auto_buy(
             let net_c = net.clone();
             let pool_c = pool.clone();
             let token_c = mint_str.clone();
-            let keys_c = pool_keys.clone();
-            let mint_key = *token_mint;
             let state_c = state.clone();
             let ext_data = external_data.cloned();
             let mode = trading_mode;
@@ -212,17 +200,16 @@ async fn execute_amms_auto_buy(
                         let input = "So11111111111111111111111111111111111111112";
                         let mut success = false;
                         let mut entry_price = 0.0;
-                        let mut tx_sig = String::new();
                         
                         info!("🛒 BUY {} | User: {} | Amount: {:.4} SOL", &token_c[..8], uid, amt_sol);
 
-                        // JUPITER FIRST (con VersionedTransaction) - slippage 1.5%
+                        // JUPITER ONLY - Velocità pura via QUIC
                         match jupiter::get_jupiter_swap_tx(
                             &payer.pubkey().to_string(), 
                             input, 
                             &token_c, 
                             amt_lam, 
-                            150  // 1.5% slippage
+                            200  // 2% slippage
                         ).await {
                             Ok(tx) => {
                                 match net_c.rpc.get_latest_blockhash().await {
@@ -239,7 +226,6 @@ async fn execute_amms_auto_buy(
                                                         info!("✅ {} JUPITER ({}) | {:.4} SOL | TX: {}", mode_str, uid, amt_sol, sig);
                                                         let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
                                                         success = true;
-                                                        tx_sig = sig;
                                                         entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
                                                     },
                                                     Err(e) => warn!("❌ Jupiter TX send fallita: {}", e),
@@ -251,30 +237,7 @@ async fn execute_amms_auto_buy(
                                     Err(e) => warn!("❌ Blockhash fallito: {}", e),
                                 }
                             },
-                            Err(e) => debug!("⚠️ Jupiter quote fallita, provo Raydium: {}", e),
-                        }
-
-                        // RAYDIUM FALLBACK - solo se Jupiter ha fallito
-                        if !success {
-                            if let Some(keys) = keys_c {
-                                match raydium::execute_swap(&net_c, &payer, &keys, mint_key, amt_lam, 200).await {
-                                    Ok(sig) => {
-                                        let mode_str = match mode {
-                                            strategy::TradingMode::Dip => "DIP",
-                                            strategy::TradingMode::Breakout => "BREAKOUT",
-                                            _ => "AUTO",
-                                        };
-                                        info!("✅ {} RAYDIUM ({}) | {:.4} SOL | TX: {}", mode_str, uid, amt_sol, sig);
-                                        let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
-                                        success = true;
-                                        tx_sig = sig.clone();
-                                        entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
-                                    },
-                                    Err(e) => warn!("❌ Raydium swap fallito: {}", e),
-                                }
-                            } else {
-                                debug!("⚠️ Raydium non disponibile per questo token");
-                            }
+                            Err(e) => warn!("❌ Jupiter quote fallita: {}", e),
                         }
 
                         // Registra posizione per tracking AMMS
@@ -623,116 +586,79 @@ async fn run_market_strategy(net: Arc<network::NetworkClient>, state: Arc<AppSta
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SNIPER LISTENER - Snipa nuovi token con verifiche di sicurezza
+// TRENDING SCANNER - Trova token trending via DexScreener (Velocità pura)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppState>, pool: sqlx::SqlitePool) {
-    let raydium_id = Pubkey::from_str(crate::raydium::RAYDIUM_V4_PROGRAM_ID).unwrap();
-    let ws_client = net.clone();
-
+async fn run_trending_scanner(net: Arc<network::NetworkClient>, state: Arc<AppState>, pool: sqlx::SqlitePool) {
+    info!("🔍 Trending Scanner avviato (DexScreener)");
+    
     loop {
-        match ws_client.pubsub.logs_subscribe(
-             RpcTransactionLogsFilter::Mentions(vec![raydium_id.to_string()]),
-             RpcTransactionLogsConfig { commitment: Some(CommitmentConfig::processed()) }
-        ).await {
-            Ok((mut stream, _)) => {
-                info!("✅ AMMS Sniper Attivo.");
-                while let Some(log) = stream.next().await {
-                    if log.value.logs.iter().any(|l| l.contains("initialize2")) {
-                        let sig_str = log.value.signature;
-                        
-                        if !is_new_signature(&state, &sig_str) { continue; }
-
-                        let n_an = net.clone();
-                        let s_an = state.clone();
-                        let p_an = pool.clone();
-                        
-                        tokio::spawn(async move {
-                            if let Ok(sig) = solana_sdk::signature::Signature::from_str(&sig_str) {
-                                if let Ok(tx) = n_an.rpc.get_transaction_with_config(
-                                    &sig, 
-                                    RpcTransactionConfig { 
-                                        encoding: Some(UiTransactionEncoding::Json), 
-                                        commitment: Some(CommitmentConfig::confirmed()), 
-                                        max_supported_transaction_version: Some(0) 
-                                    }
-                                ).await {
-                                    if let Some(meta) = tx.transaction.meta {
-                                        let balances = match meta.post_token_balances { 
-                                            OptionSerializer::Some(b) => b, 
-                                            _ => vec![] 
-                                        };
-                                        let wsol = "So11111111111111111111111111111111111111112";
+        // Cerca token trending su DexScreener
+        match jupiter::discover_trending_gems().await {
+            Ok(gems) => {
+                for gem in gems.iter().take(10) {
+                    // Salta token esclusi
+                    if is_excluded_token(&gem.address, &gem.symbol) {
+                        continue;
+                    }
+                    
+                    // Verifica sicurezza
+                    if let Ok(pk) = Pubkey::from_str(&gem.address) {
+                        if let Ok(rep) = safety::check_token_safety(&net, &pk).await {
+                            if rep.is_safe && gem.score >= 60 {
+                                // Token sicuro con buon score - aggiungi a gems
+                                {
+                                    let mut g = state.found_gems.lock().unwrap();
+                                    if !g.iter().any(|x| x.token == gem.address) {
+                                        info!("💎 TRENDING: {} (${:.8}) Score: {}", 
+                                            gem.symbol, gem.price, gem.score);
                                         
-                                        for b in balances {
-                                            let mint = b.mint;
-                                            if mint != wsol && b.ui_token_amount.decimals > 0 {
-                                                if let Ok(pk) = Pubkey::from_str(&mint) {
-                                                    // Safety check
-                                                    if let Ok(rep) = safety::check_token_safety(&n_an, &pk).await {
-                                                        if rep.is_safe {
-                                                            sleep(Duration::from_secs(2)).await;
-                                                            if let Ok(mkt) = jupiter::get_token_market_data(&mint).await {
-                                                                // Filtro qualità
-                                                                if mkt.liquidity_usd > 5000.0 && mkt.price > 0.0 {
-                                                                    info!("💎 SNIPER HIT: {} (${:.8}) Liq: ${:.0}", 
-                                                                        mkt.symbol, mkt.price, mkt.liquidity_usd);
-                                                                    
-                                                                    // Aggiungi a gems
-                                                                    {
-                                                                        let mut g = s_an.found_gems.lock().unwrap();
-                                                                        g.insert(0, GemData { 
-                                                                            token: mint.clone(), 
-                                                                            symbol: mkt.symbol.clone(), 
-                                                                            name: mkt.name.clone(),
-                                                                            price: mkt.price, 
-                                                                            safety_score: mkt.score, 
-                                                                            liquidity_usd: mkt.liquidity_usd,
-                                                                            market_cap: mkt.market_cap,
-                                                                            volume_24h: mkt.volume_24h,
-                                                                            change_1h: mkt.change_1h,
-                                                                            change_24h: mkt.change_24h,
-                                                                            image_url: mkt.image_url.clone(),
-                                                                            timestamp: chrono::Utc::now().timestamp(), 
-                                                                            source: "SNIPER".into() 
-                                                                        });
-                                                                        g.sort_by(|a, b| b.safety_score.cmp(&a.safety_score));
-                                                                        if g.len() > 30 { g.pop(); }
-                                                                    }
-                                                                    
-                                                                    // Auto buy con dati esterni - Sniper = nuovi token = BREAKOUT mode
-                                                                    let ext = strategy::ExternalData {
-                                                                        price: mkt.price,
-                                                                        change_5m: 5.0, // Nuovo = pump
-                                                                        change_1h: mkt.change_1h,
-                                                                        change_24h: mkt.change_24h,
-                                                                        volume_24h: mkt.volume_24h,
-                                                                        liquidity_usd: mkt.liquidity_usd,
-                                                                        market_cap: mkt.market_cap,
-                                                                    };
-                                                                    
-                                                                    // Nuovi token = BREAKOUT (cavalcano l'onda del lancio)
-                                                                    execute_amms_auto_buy(&p_an, &n_an, &s_an, &pk, Some(&ext), strategy::TradingMode::Breakout).await;
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                break;
-                                            }
-                                        }
+                                        g.insert(0, GemData { 
+                                            token: gem.address.clone(), 
+                                            symbol: gem.symbol.clone(), 
+                                            name: gem.name.clone(),
+                                            price: gem.price, 
+                                            safety_score: gem.score, 
+                                            liquidity_usd: gem.liquidity_usd,
+                                            market_cap: gem.market_cap,
+                                            volume_24h: gem.volume_24h,
+                                            change_1h: gem.change_1h,
+                                            change_24h: gem.change_24h,
+                                            image_url: get_image_url(&gem.image_url, &gem.address),
+                                            timestamp: chrono::Utc::now().timestamp(), 
+                                            source: "TRENDING".into() 
+                                        });
+                                        g.sort_by(|a, b| b.safety_score.cmp(&a.safety_score));
+                                        if g.len() > 30 { g.pop(); }
                                     }
                                 }
+                                
+                                // Auto buy se score molto alto e buone metriche
+                                if gem.score >= 75 && gem.change_1h > 5.0 && gem.liquidity_usd > 50000.0 {
+                                    let ext = strategy::ExternalData {
+                                        price: gem.price,
+                                        change_5m: gem.change_1h / 12.0,
+                                        change_1h: gem.change_1h,
+                                        change_24h: gem.change_24h,
+                                        volume_24h: gem.volume_24h,
+                                        liquidity_usd: gem.liquidity_usd,
+                                        market_cap: gem.market_cap,
+                                    };
+                                    
+                                    execute_amms_auto_buy(&pool, &net, &state, &pk, Some(&ext), strategy::TradingMode::Breakout).await;
+                                }
                             }
-                        });
+                        }
                     }
                 }
             },
             Err(e) => {
-                warn!("⚠️ Sniper WS error: {}", e);
-                sleep(Duration::from_secs(5)).await;
+                debug!("⚠️ Trending scan error: {}", e);
             }
         }
+        
+        // Scan ogni 30 secondi
+        sleep(Duration::from_secs(30)).await;
     }
 }
 
@@ -1147,11 +1073,11 @@ async fn main() {
     let s4 = state.clone();
     tokio::spawn(async move { run_position_manager(p4, n4, s4).await; });
 
-    // Sniper Listener
+    // Trending Scanner (sostituisce Raydium Sniper)
     let p5 = pool.clone();
     let n5 = net.clone();
     let s5 = state.clone();
-    tokio::spawn(async move { run_sniper_listener(n5, s5, p5).await; });
+    tokio::spawn(async move { run_trending_scanner(n5, s5, p5).await; });
 
     // Gem Discovery
     let n6 = net.clone();

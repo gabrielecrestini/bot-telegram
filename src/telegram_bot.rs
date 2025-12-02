@@ -6,6 +6,7 @@ use teloxide::{
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use solana_sdk::pubkey::Pubkey;
+use solana_sdk::signer::Signer;
 use std::str::FromStr;
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use crate::network::NetworkClient;
@@ -223,42 +224,57 @@ async fn answer_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
                 bot.send_message(chat_id, "🛑 <b>Auto-Trading Fermato.</b>\nIl bot non comprerà più autonomamente.\nPrelievi sbloccati.").parse_mode(ParseMode::Html).await?;
             },
 
-            // --- B. TRADING MANUALE (Raydium Swap) ---
+            // --- B. TRADING MANUALE (Jupiter Swap - Velocità QUIC) ---
             "buy" => {
                 if parts.len() < 3 { return Ok(()); }
                 let token_address = parts[1];
                 let amount_sol: f64 = parts[2].parse().unwrap_or(0.01);
 
-                bot.send_message(chat_id, format!("⏳ <b>Esecuzione Swap...</b>\nTarget: <code>{}</code>\nImporto: {} SOL", token_address, amount_sol))
+                bot.send_message(chat_id, format!("⏳ <b>Esecuzione Swap Jupiter...</b>\nTarget: <code>{}</code>\nImporto: {} SOL", token_address, amount_sol))
                    .parse_mode(ParseMode::Html).await?;
 
                 // Recupera chiave privata (Decriptata al volo)
-                let payer = crate::wallet_manager::get_decrypted_wallet(&state.pool, &user_id).await.unwrap();
-                let token_mint = Pubkey::from_str(token_address).unwrap();
-                let amount_lamports = (amount_sol * LAMPORTS_PER_SOL as f64) as u64;
-
-                // 1. Trova Pool Keys
-                let pool_keys = match crate::raydium::fetch_pool_keys_by_mint(&state.network, &token_mint).await {
-                    Ok(k) => k,
-                    Err(_) => { bot.send_message(chat_id, "❌ Liquidità non trovata o pool inesistente.").await?; return Ok(()); }
+                let payer = match crate::wallet_manager::get_decrypted_wallet(&state.pool, &user_id).await {
+                    Ok(p) => p,
+                    Err(e) => { bot.send_message(chat_id, format!("❌ Errore wallet: {}", e)).await?; return Ok(()); }
                 };
+                let amount_lamports = (amount_sol * LAMPORTS_PER_SOL as f64) as u64;
+                let input = "So11111111111111111111111111111111111111112"; // SOL
 
-                // 2. Esegui Swap
-                // Min Amount 0 per slippage dinamico (massima velocità)
-                match crate::raydium::execute_swap(&state.network, &payer, &pool_keys, token_mint, amount_lamports, 0).await {
-                    Ok(sig) => {
-                         // Salva il Trade nel DB per il P&L
-                         let _ = crate::db::record_buy(&state.pool, &user_id, token_address, &sig, amount_lamports).await;
-                         
-                         let text = format!("✅ <b>ACQUISTO COMPLETATO!</b>\n💎 Token in wallet.\n🔗 <a href=\"https://solscan.io/tx/{}\">Vedi su Solscan</a>", sig);
-                         
-                         // Tasto per vendere subito
-                         let kb = InlineKeyboardMarkup::new(vec![vec![
-                             InlineKeyboardButton::callback("🔴 VENDI TUTTO (Panic)", format!("sell:{}:100", token_address))
-                         ]]);
-                         bot.send_message(chat_id, text).reply_markup(kb).parse_mode(ParseMode::Html).await?;
+                // Jupiter Swap via QUIC
+                match crate::jupiter::get_jupiter_swap_tx(
+                    &payer.pubkey().to_string(), 
+                    input, 
+                    token_address, 
+                    amount_lamports, 
+                    200  // 2% slippage
+                ).await {
+                    Ok(tx) => {
+                        match state.network.rpc.get_latest_blockhash().await {
+                            Ok(bh) => {
+                                match crate::jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                                    Ok(signed_tx) => {
+                                        match state.network.send_versioned_transaction(&signed_tx).await {
+                                            Ok(sig) => {
+                                                let _ = crate::db::record_buy(&state.pool, &user_id, token_address, &sig, amount_lamports).await;
+                                                
+                                                let text = format!("✅ <b>ACQUISTO COMPLETATO!</b>\n💎 Token in wallet.\n🔗 <a href=\"https://solscan.io/tx/{}\">Vedi su Solscan</a>", sig);
+                                                
+                                                let kb = InlineKeyboardMarkup::new(vec![vec![
+                                                    InlineKeyboardButton::callback("🔴 VENDI TUTTO (Panic)", format!("sell:{}:100", token_address))
+                                                ]]);
+                                                bot.send_message(chat_id, text).reply_markup(kb).parse_mode(ParseMode::Html).await?;
+                                            },
+                                            Err(e) => { bot.send_message(chat_id, format!("❌ Errore TX: {}", e)).await?; }
+                                        }
+                                    },
+                                    Err(e) => { bot.send_message(chat_id, format!("❌ Errore firma: {}", e)).await?; }
+                                }
+                            },
+                            Err(e) => { bot.send_message(chat_id, format!("❌ Errore blockhash: {}", e)).await?; }
+                        }
                     },
-                    Err(e) => { bot.send_message(chat_id, format!("❌ Errore Swap: {}", e)).await?; }
+                    Err(e) => { bot.send_message(chat_id, format!("❌ Jupiter non disponibile: {}", e)).await?; }
                 }
             },
 

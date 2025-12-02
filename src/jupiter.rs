@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::time::Duration;
-use std::sync::Arc;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use solana_sdk::transaction::{Transaction, VersionedTransaction};
+use solana_sdk::transaction::VersionedTransaction;
 use solana_sdk::message::VersionedMessage;
 use solana_sdk::signature::{Keypair, Signer};
 use base64::{Engine as _, engine::general_purpose};

@@ -4,7 +4,7 @@ use std::env;
 use std::str::FromStr;
 use std::fs;
 use std::path::Path;
-use log::{info, warn, error};
+use log::{info, error};
 use chrono::{Utc, Duration, DateTime};
 
 /// Connette al DB con Backup di Sicurezza e WAL Mode
@@ -526,4 +526,108 @@ pub async fn get_all_history(pool: &SqlitePool, user_id: &str) -> Result<(Vec<Tr
     let trades = get_user_trades(pool, user_id).await?;
     let withdrawals = get_user_withdrawals(pool, user_id).await?;
     Ok((trades, withdrawals))
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PERSISTENZA STATO BOT
+// ═══════════════════════════════════════════════════════════════
+
+/// Recupera lo stato del bot (is_active) per un utente
+pub async fn get_bot_status(pool: &SqlitePool, user_id: &str) -> Result<bool, sqlx::Error> {
+    let row_opt = sqlx::query("SELECT is_active FROM users WHERE tg_id = ?")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+    
+    if let Some(row) = row_opt {
+        let is_active: i32 = row.try_get("is_active").unwrap_or(0);
+        Ok(is_active == 1)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Imposta lo stato del bot (is_active) per un utente
+pub async fn set_bot_status(pool: &SqlitePool, user_id: &str, active: bool) -> Result<(), sqlx::Error> {
+    let is_active = if active { 1 } else { 0 };
+    
+    sqlx::query("UPDATE users SET is_active = ? WHERE tg_id = ?")
+        .bind(is_active)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    
+    info!("🤖 Bot stato aggiornato per {}: {}", user_id, if active { "ATTIVO" } else { "FERMO" });
+    Ok(())
+}
+
+/// Recupera tutti gli utenti con bot attivo (per auto-restart)
+pub async fn get_active_users(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query("SELECT tg_id FROM users WHERE is_active = 1")
+        .fetch_all(pool)
+        .await?;
+    
+    let mut users = Vec::new();
+    for row in rows {
+        users.push(row.get("tg_id"));
+    }
+    Ok(users)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AUTENTICAZIONE WEB - Persistenza account
+// ═══════════════════════════════════════════════════════════════
+
+/// Registra o aggiorna un utente web (email/password)
+pub async fn register_web_user(pool: &SqlitePool, email_hash: &str, password_hash: &str, pubkey: &str, private_key_enc: &str) -> Result<(), sqlx::Error> {
+    // Prima controlla se l'utente esiste già
+    let exists = sqlx::query("SELECT 1 FROM users WHERE tg_id = ?")
+        .bind(email_hash)
+        .fetch_optional(pool)
+        .await?;
+    
+    if exists.is_some() {
+        // Utente esiste, aggiorna la password se cambiata
+        sqlx::query("UPDATE users SET settings = ? WHERE tg_id = ?")
+            .bind(password_hash)
+            .bind(email_hash)
+            .execute(pool)
+            .await?;
+    } else {
+        // Nuovo utente
+        sqlx::query(
+            "INSERT INTO users (tg_id, pubkey, private_key_enc, is_active, settings) VALUES (?, ?, ?, 0, ?)"
+        )
+        .bind(email_hash)
+        .bind(pubkey)
+        .bind(private_key_enc)
+        .bind(password_hash)
+        .execute(pool)
+        .await?;
+    }
+    
+    info!("👤 Utente web registrato/aggiornato: {}", &email_hash[..12]);
+    Ok(())
+}
+
+/// Verifica credenziali utente web
+pub async fn verify_web_user(pool: &SqlitePool, email_hash: &str, password_hash: &str) -> Result<Option<String>, sqlx::Error> {
+    let row_opt = sqlx::query("SELECT pubkey, settings FROM users WHERE tg_id = ?")
+        .bind(email_hash)
+        .fetch_optional(pool)
+        .await?;
+    
+    if let Some(row) = row_opt {
+        let stored_pwd_hash: Option<String> = row.try_get("settings").ok();
+        let pubkey: String = row.get("pubkey");
+        
+        // Verifica password
+        if let Some(stored) = stored_pwd_hash {
+            if stored == password_hash {
+                return Ok(Some(pubkey));
+            }
+        }
+    }
+    
+    Ok(None)
 }

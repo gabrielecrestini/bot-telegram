@@ -1,7 +1,7 @@
 use warp::Filter;
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
-use crate::{db, network, wallet_manager, raydium, jupiter, AppState, GemData};
+use crate::{db, network, wallet_manager, jupiter, AppState, GemData};
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::system_instruction;
@@ -36,6 +36,7 @@ struct DashboardData {
     wealth_level: String,
     active_trades_count: usize,
     system_status: String,
+    bot_active: bool,           // Stato bot persistente dal DB
     gems_feed: Vec<GemData>,
     signals_feed: Vec<SignalData>,
     trades_history: Vec<db::TradeHistory>,
@@ -383,6 +384,18 @@ async fn handle_status(
     let (trades_history, withdrawals_history) = db::get_all_history(&pool, &user_id).await
         .unwrap_or((vec![], vec![]));
 
+    // Carica lo stato del bot dal database (persistente)
+    let bot_active_db = db::get_bot_status(&pool, &user_id).await.unwrap_or(false);
+    
+    // Sincronizza lo state globale con il database
+    {
+        let mut bot_users = state.bot_active_users.lock().unwrap();
+        if bot_active_db && !bot_users.contains_key(&user_id) {
+            // Riattiva con valori default se era attivo nel DB
+            bot_users.insert(user_id.clone(), (0.0, "BOTH".to_string()));
+        }
+    }
+
     Ok(warp::reply::json(&DashboardData {
         user_id: user_id.clone(),
         wallet_address: pubkey_str,
@@ -392,6 +405,7 @@ async fn handle_status(
         wealth_level,
         active_trades_count: active_trades,
         system_status: "ONLINE".to_string(),
+        bot_active: bot_active_db,
         gems_feed: gems,
         signals_feed: signals,
         trades_history,
@@ -486,28 +500,10 @@ async fn handle_trade(
             Err(e) => warn!("⚠️ Jupiter quote: {}", e),
         }
 
-        // Raydium fallback (usa Transaction normale)
-        if let Ok(mint) = Pubkey::from_str(&req.token) {
-            if let Ok(keys) = raydium::fetch_pool_keys_by_mint(&net, &mint).await {
-                if let Ok(sig) = raydium::execute_swap(&net, &payer, &keys, mint, amount_lamports, 200).await {
-                    let _ = db::record_buy_complete(
-                        &pool, &user_id, &req.token, &sig, amount_lamports,
-                        "MANUAL", entry_price, &token_symbol, &token_image
-                    ).await;
-                    info!("✅ BUY (Raydium) completato per {} | {} SOL | TX: {}", user_id, req.amount_sol, sig);
-                    return Ok(warp::reply::json(&ApiResponse {
-                        success: true,
-                        message: "Buy Eseguito (Raydium)".into(),
-                        tx_signature: sig.clone(),
-                        solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
-                    }));
-                }
-            }
-        }
-
+        // Trade fallito
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
-            message: "Trade fallito. Riprova.".into(),
+            message: "Trade fallito. Controlla liquidità del token e riprova.".into(),
             tx_signature: "".into(),
             solscan_url: None,
         }));
