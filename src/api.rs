@@ -559,21 +559,30 @@ async fn handle_trade(
             }));
         }
         
-        info!("💰 Vendita {} token (raw: {})", req.token, token_balance);
+        // Salva saldo SOL PRIMA della vendita
+        let balance_before = net.get_balance_fast(&payer.pubkey()).await as f64 / 1_000_000_000.0;
         
-        // Usa la quantità effettiva di token nel wallet
-        match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), &req.token, output, token_balance, 200).await {
+        info!("💰 Vendita {} token (raw: {}) | Saldo prima: {:.4} SOL", req.token, token_balance, balance_before);
+        
+        // Usa slippage più alto (5%) per evitare fallimenti su token con bassa liquidità
+        match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), &req.token, output, token_balance, 500).await {
             Ok(tx) => {
                 if let Ok(bh) = net.rpc.get_latest_blockhash().await {
                     match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
                         Ok(signed_tx) => {
                             match net.send_versioned_transaction(&signed_tx).await {
                                 Ok(sig) => {
-                                    // Calcola PnL approssimativo
+                                    // Aspetta un attimo che la transazione si confermi
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+                                    
+                                    // Verifica saldo DOPO la vendita
+                                    let balance_after = net.get_balance_fast(&payer.pubkey()).await as f64 / 1_000_000_000.0;
+                                    let sol_received = balance_after - balance_before;
+                                    
+                                    // Calcola PnL
                                     let token_data = jupiter::get_token_market_data(&req.token).await.ok();
                                     let current_price = token_data.as_ref().map(|t| t.price).unwrap_or(0.0);
                                     
-                                    // Recupera entry_price dal DB per calcolare PnL
                                     let pnl_pct = if let Ok(trades) = db::get_open_trades(&pool, &user_id).await {
                                         if let Some(trade) = trades.iter().find(|t| t.token_address == req.token) {
                                             if trade.entry_price > 0.0 && current_price > 0.0 {
@@ -584,34 +593,62 @@ async fn handle_trade(
                                     
                                     let _ = db::record_sell(&pool, &user_id, &req.token, &sig, pnl_pct).await;
                                     
-                                    let pnl_str = if pnl_pct != 0.0 {
-                                        format!(" | PnL: {:+.1}%", pnl_pct)
-                                    } else { "".to_string() };
+                                    let msg = if sol_received > 0.0 {
+                                        format!("Vendita completata! Ricevuti {:.4} SOL", sol_received)
+                                    } else {
+                                        format!("Vendita inviata! Controlla su Solscan")
+                                    };
                                     
-                                    info!("✅ SELL completato per {}{} | TX: {}", user_id, pnl_str, sig);
+                                    info!("✅ SELL {} | Ricevuti: {:.4} SOL | PnL: {:+.1}% | TX: {}", 
+                                        user_id, sol_received, pnl_pct, sig);
+                                    
                                     return Ok(warp::reply::json(&ApiResponse {
                                         success: true,
-                                        message: format!("Vendita Eseguita{}", pnl_str),
+                                        message: msg,
                                         tx_signature: sig.clone(),
                                         solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
                                     }));
                                 }
-                                Err(e) => error!("❌ Sell TX: {}", e),
+                                Err(e) => {
+                                    error!("❌ Sell TX invio fallito: {}", e);
+                                    return Ok(warp::reply::json(&ApiResponse {
+                                        success: false,
+                                        message: format!("Errore invio TX: {}", e),
+                                        tx_signature: "".into(),
+                                        solscan_url: None,
+                                    }));
+                                }
                             }
                         }
-                        Err(e) => error!("❌ Firma Sell TX: {}", e),
+                        Err(e) => {
+                            error!("❌ Firma Sell TX fallita: {}", e);
+                            return Ok(warp::reply::json(&ApiResponse {
+                                success: false,
+                                message: format!("Errore firma: {}", e),
+                                tx_signature: "".into(),
+                                solscan_url: None,
+                            }));
+                        }
                     }
+                } else {
+                    return Ok(warp::reply::json(&ApiResponse {
+                        success: false,
+                        message: "Errore rete Solana".into(),
+                        tx_signature: "".into(),
+                        solscan_url: None,
+                    }));
                 }
             }
-            Err(e) => error!("❌ Jupiter sell: {}", e),
+            Err(e) => {
+                error!("❌ Jupiter quote vendita fallita: {}", e);
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: format!("Jupiter error: {}. Prova con meno token o riprova.", e),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
         }
-
-        return Ok(warp::reply::json(&ApiResponse {
-            success: false,
-            message: "Vendita fallita".into(),
-            tx_signature: "".into(),
-            solscan_url: None,
-        }));
     }
 
     Ok(warp::reply::json(&ApiResponse {

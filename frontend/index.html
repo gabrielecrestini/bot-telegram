@@ -1432,8 +1432,11 @@
             
             const btn = document.getElementById('btnSell');
             btn.disabled = true;
-            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Vendita...';
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Vendita in corso...';
             lucide.createIcons();
+            
+            // Salva saldo prima
+            const balanceBefore = state.balance;
             
             try {
                 const res = await fetch(`${API}/trade`, {
@@ -1446,19 +1449,37 @@
                     })
                 });
                 const d = await res.json();
+                
                 if (d.success) {
-                    toast('Venduto!', 'Posizione chiusa');
+                    // Mostra messaggio con dettagli
+                    toast('✅ Venduto!', d.message || 'Posizione chiusa');
+                    
+                    // Se c'è link Solscan, loggalo
+                    if (d.solscan_url) {
+                        console.log('🔗 TX Solscan:', d.solscan_url);
+                    }
+                    
                     closeAll();
-                    sync();
+                    
+                    // Aggiorna saldo dopo breve attesa
+                    setTimeout(async () => {
+                        await sync();
+                        const solReceived = state.balance - balanceBefore;
+                        if (solReceived > 0) {
+                            toast('💰 SOL Ricevuti', `+${solReceived.toFixed(4)} SOL nel tuo wallet`);
+                        }
+                    }, 2500);
                 } else {
-                    toast('Errore', d.message);
+                    toast('❌ Errore', d.message || 'Vendita fallita');
                 }
             } catch (e) {
-                toast('Errore', 'Errore di rete');
+                console.error('Sell error:', e);
+                toast('❌ Errore', 'Errore di rete. Riprova.');
             }
             
             btn.disabled = false;
-            btn.innerHTML = 'VENDI ORA';
+            btn.innerHTML = '<i data-lucide="arrow-down-right" class="w-4 h-4"></i> VENDI ORA';
+            lucide.createIcons();
         }
 
         // Utils
