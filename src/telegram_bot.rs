@@ -311,3 +311,125 @@ async fn answer_callback(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Re
     }
     Ok(())
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NOTIFICHE TRADE - Invia messaggio quando un trade viene completato
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Notifica acquisto completato
+pub async fn notify_buy(
+    bot: &Bot,
+    user_id: &str,
+    token_symbol: &str,
+    amount_sol: f64,
+    entry_price: f64,
+    tx_sig: &str,
+) {
+    // Estrai chat_id dal user_id (es. "tg_123456" -> 123456)
+    let chat_id = if user_id.starts_with("tg_") {
+        user_id[3..].parse::<i64>().ok()
+    } else { None };
+    
+    if let Some(id) = chat_id {
+        let msg = format!(
+            "🟢 <b>ACQUISTO COMPLETATO</b>\n\n\
+            Token: <b>{}</b>\n\
+            Investito: <b>{:.4} SOL</b>\n\
+            Prezzo: <code>${:.10}</code>\n\n\
+            <a href=\"https://solscan.io/tx/{}\">📜 Vedi TX</a>",
+            token_symbol, amount_sol, entry_price, tx_sig
+        );
+        
+        let _ = bot.send_message(ChatId(id), msg)
+            .parse_mode(ParseMode::Html)
+            .await;
+    }
+}
+
+/// Notifica vendita completata
+pub async fn notify_sell(
+    bot: &Bot,
+    user_id: &str,
+    token_symbol: &str,
+    pnl_pct: f64,
+    pnl_sol: f64,
+    tx_sig: &str,
+) {
+    let chat_id = if user_id.starts_with("tg_") {
+        user_id[3..].parse::<i64>().ok()
+    } else { None };
+    
+    if let Some(id) = chat_id {
+        let emoji = if pnl_pct >= 0.0 { "🟢" } else { "🔴" };
+        let result = if pnl_pct >= 0.0 { "PROFITTO" } else { "PERDITA" };
+        
+        let msg = format!(
+            "{} <b>VENDITA - {}</b>\n\n\
+            Token: <b>{}</b>\n\
+            PnL: <b>{:+.2}%</b> ({:+.4} SOL)\n\n\
+            <a href=\"https://solscan.io/tx/{}\">📜 Vedi TX</a>",
+            emoji, result, token_symbol, pnl_pct, pnl_sol, tx_sig
+        );
+        
+        let _ = bot.send_message(ChatId(id), msg)
+            .parse_mode(ParseMode::Html)
+            .await;
+    }
+}
+
+/// Report serale giornaliero
+pub async fn send_daily_report(
+    bot: &Bot,
+    pool: &sqlx::SqlitePool,
+    user_id: &str,
+    balance_sol: f64,
+    sol_price: f64,
+) {
+    let chat_id = if user_id.starts_with("tg_") {
+        user_id[3..].parse::<i64>().ok()
+    } else { None };
+    
+    if let Some(id) = chat_id {
+        // Ottieni statistiche
+        let stats = crate::db::get_user_stats(pool, user_id).await.ok();
+        let open_trades = crate::db::count_open_trades(pool, user_id).await.unwrap_or(0);
+        
+        let (total_pnl, trades_count, win_rate) = if let Some(s) = stats {
+            (s.total_pnl, s.total_trades, if s.total_trades > 0 { (s.winning_trades as f64 / s.total_trades as f64) * 100.0 } else { 0.0 })
+        } else {
+            (0.0, 0, 0.0)
+        };
+        
+        let balance_usd = balance_sol * sol_price;
+        let pnl_emoji = if total_pnl >= 0.0 { "📈" } else { "📉" };
+        
+        let msg = format!(
+            "🌙 <b>REPORT GIORNALIERO</b>\n\
+            ━━━━━━━━━━━━━━━━━━━━\n\n\
+            💰 <b>Bilancio:</b> {:.4} SOL (~${:.2})\n\n\
+            {} <b>PnL Totale:</b> {:+.4} SOL\n\
+            🎯 <b>Win Rate:</b> {:.1}%\n\
+            📊 <b>Trade Totali:</b> {}\n\
+            🔄 <b>Posizioni Aperte:</b> {}\n\n\
+            ━━━━━━━━━━━━━━━━━━━━\n\
+            <i>Buona serata! Il bot continua a lavorare per te.</i>",
+            balance_sol, balance_usd,
+            pnl_emoji, total_pnl,
+            win_rate,
+            trades_count,
+            open_trades
+        );
+        
+        let keyboard = InlineKeyboardMarkup::new(vec![
+            vec![InlineKeyboardButton::web_app(
+                "📊 Apri Dashboard", 
+                WebAppInfo { url: WEB_APP_URL.parse().unwrap() }
+            )],
+        ]);
+        
+        let _ = bot.send_message(ChatId(id), msg)
+            .parse_mode(ParseMode::Html)
+            .reply_markup(keyboard)
+            .await;
+    }
+}

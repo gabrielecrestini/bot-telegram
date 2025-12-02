@@ -14,6 +14,7 @@ use solana_transaction_status::UiTransactionEncoding;
 use solana_transaction_status::option_serializer::OptionSerializer;
 use solana_sdk::signature::Signer;
 use spl_associated_token_account;
+use teloxide::Bot;
 
 // MODULI
 pub mod raydium;
@@ -363,6 +364,13 @@ async fn run_position_manager(
                                                         let user_stats = stats.entry(user_id.clone()).or_default();
                                                         user_stats.record_trade(pnl_pct, pnl_sol, hold_time, pos.mode);
                                                     }
+                                                    
+                                                    // 📱 NOTIFICA TELEGRAM
+                                                    if let Ok(bot_token) = std::env::var("TELEGRAM_BOT_TOKEN") {
+                                                        let bot = Bot::new(&bot_token);
+                                                        let symbol = pos.token_address[..8].to_string();
+                                                        telegram_bot::notify_sell(&bot, &user_id, &symbol, pnl_pct, pnl_sol, &sig).await;
+                                                    }
                                             
                                                     // Rimuovi posizione
                                                     if let Ok(mut positions) = state.open_positions.lock() {
@@ -675,6 +683,72 @@ async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppSta
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// DAILY REPORT - Invia report serale a tutti gli utenti attivi
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async fn run_daily_report_task(
+    pool: sqlx::SqlitePool,
+    net: Arc<network::NetworkClient>,
+    bot_token: String,
+) {
+    if bot_token.is_empty() {
+        warn!("⚠️ TELEGRAM_BOT_TOKEN non configurato, report disabilitati");
+        return;
+    }
+    
+    let bot = teloxide::Bot::new(&bot_token);
+    info!("📅 Daily Report Task avviato (21:00 ogni sera)");
+    
+    loop {
+        // Calcola tempo fino alle 21:00
+        let now = chrono::Utc::now();
+        let target_hour = 21; // 21:00 UTC (22:00 ora italiana)
+        
+        let mut next_report = now.date_naive().and_hms_opt(target_hour, 0, 0).unwrap();
+        if now.time() >= chrono::NaiveTime::from_hms_opt(target_hour, 0, 0).unwrap() {
+            // Se è già passato, vai a domani
+            next_report = next_report + chrono::Duration::days(1);
+        }
+        
+        let wait_secs = (next_report - now.naive_utc()).num_seconds().max(0) as u64;
+        info!("📅 Prossimo report tra {} ore", wait_secs / 3600);
+        
+        sleep(Duration::from_secs(wait_secs)).await;
+        
+        info!("🌙 Invio report giornalieri...");
+        
+        // Ottieni tutti gli utenti Telegram attivi
+        let users: Vec<String> = sqlx::query_scalar("SELECT tg_id FROM users WHERE tg_id LIKE 'tg_%'")
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+        
+        let sol_price = api::get_sol_price().await;
+        
+        for user_id in users {
+            // Ottieni bilancio
+            if let Ok(pubkey_str) = wallet_manager::create_user_wallet(&pool, &user_id).await {
+                if let Ok(pubkey) = Pubkey::from_str(&pubkey_str) {
+                    let balance = net.get_balance_fast(&pubkey).await as f64 / 1_000_000_000.0;
+                    
+                    // Invia report solo se ha un bilancio > 0 o trade attivi
+                    let has_trades = db::count_open_trades(&pool, &user_id).await.unwrap_or(0) > 0;
+                    if balance > 0.001 || has_trades {
+                        telegram_bot::send_daily_report(&bot, &pool, &user_id, balance, sol_price).await;
+                        sleep(Duration::from_millis(100)).await; // Rate limit
+                    }
+                }
+            }
+        }
+        
+        info!("✅ Report giornalieri inviati");
+        
+        // Aspetta almeno 1 ora prima di ricalcolare (evita loop)
+        sleep(Duration::from_secs(3600)).await;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // GEM DISCOVERY - Trova token promettenti
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -977,11 +1051,18 @@ async fn main() {
     let s6 = state.clone();
     tokio::spawn(async move { run_gem_discovery(s6, n6).await; });
 
+    // Daily Report Task (ogni sera alle 21:00)
+    let p7 = pool.clone();
+    let n7 = net.clone();
+    let bot_token = std::env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    tokio::spawn(async move { run_daily_report_task(p7, n7, bot_token).await; });
+
     info!("✅ Tutti i moduli AMMS avviati");
     info!("   • Market Strategy: EMA, RSI, ATR, Bollinger");
     info!("   • Position Manager: Trailing Stop ATR-based");
     info!("   • Auto-Reinvestment: Wealth-adaptive");
     info!("   • Sniper: Anti-rug, Anti-honeypot");
+    info!("   • Daily Report: 21:00 ogni sera");
 
     match tokio::signal::ctrl_c().await {
         Ok(()) => info!("🛑 Chiusura sicura..."),

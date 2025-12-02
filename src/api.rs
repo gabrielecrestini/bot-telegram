@@ -182,7 +182,7 @@ fn parse_telegram_init_data(data: &str) -> Option<String> {
 }
 
 /// Ottiene il prezzo SOL in tempo reale
-async fn get_sol_price() -> f64 {
+pub async fn get_sol_price() -> f64 {
     match jupiter::get_token_market_data("So11111111111111111111111111111111111111112").await {
         Ok(data) => data.price,
         Err(_) => {
