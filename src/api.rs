@@ -8,6 +8,7 @@ use solana_sdk::system_instruction;
 use solana_sdk::transaction::Transaction;
 use solana_sdk::signer::Signer;
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
+use spl_associated_token_account;
 use std::str::FromStr;
 use log::{info, error, warn};
 use sha2::{Sha256, Digest};
@@ -497,19 +498,85 @@ async fn handle_trade(
         }));
 
     } else if req.action == "SELL" {
-        let output = "So11111111111111111111111111111111111111112";
-        match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), &req.token, output, amount_lamports, 200).await {
+        // Per vendere token, devo usare la quantità di TOKEN, non SOL!
+        // Recupero il bilancio del token dall'account SPL
+        let output = "So11111111111111111111111111111111111111112"; // SOL
+        
+        // Ottieni la quantità di token da vendere dal bilancio wallet
+        let token_mint = match Pubkey::from_str(&req.token) {
+            Ok(m) => m,
+            Err(_) => {
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: "Indirizzo token non valido".into(),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
+        
+        // Trova l'account token associato
+        let ata = spl_associated_token_account::get_associated_token_address(&payer.pubkey(), &token_mint);
+        
+        // Ottieni il bilancio del token
+        let token_balance = match net.rpc.get_token_account_balance(&ata).await {
+            Ok(balance) => {
+                // amount è una stringa, la convertiamo in u64
+                balance.amount.parse::<u64>().unwrap_or(0)
+            }
+            Err(e) => {
+                error!("❌ Errore lettura bilancio token: {}", e);
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: "Token non trovato nel wallet".into(),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
+        
+        if token_balance == 0 {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Nessun token da vendere".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+        
+        info!("💰 Vendita {} token (raw: {})", req.token, token_balance);
+        
+        // Usa la quantità effettiva di token nel wallet
+        match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), &req.token, output, token_balance, 200).await {
             Ok(tx) => {
                 if let Ok(bh) = net.rpc.get_latest_blockhash().await {
                     match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
                         Ok(signed_tx) => {
                             match net.send_versioned_transaction(&signed_tx).await {
                                 Ok(sig) => {
-                                    let _ = db::record_sell(&pool, &user_id, &req.token, &sig, 0.0).await;
-                                    info!("✅ SELL completato per {} | TX: {}", user_id, sig);
+                                    // Calcola PnL approssimativo
+                                    let token_data = jupiter::get_token_market_data(&req.token).await.ok();
+                                    let current_price = token_data.as_ref().map(|t| t.price).unwrap_or(0.0);
+                                    
+                                    // Recupera entry_price dal DB per calcolare PnL
+                                    let pnl_pct = if let Ok(trades) = db::get_open_trades(&pool, &user_id).await {
+                                        if let Some(trade) = trades.iter().find(|t| t.token_address == req.token) {
+                                            if trade.entry_price > 0.0 && current_price > 0.0 {
+                                                ((current_price - trade.entry_price) / trade.entry_price) * 100.0
+                                            } else { 0.0 }
+                                        } else { 0.0 }
+                                    } else { 0.0 };
+                                    
+                                    let _ = db::record_sell(&pool, &user_id, &req.token, &sig, pnl_pct).await;
+                                    
+                                    let pnl_str = if pnl_pct != 0.0 {
+                                        format!(" | PnL: {:+.1}%", pnl_pct)
+                                    } else { "".to_string() };
+                                    
+                                    info!("✅ SELL completato per {}{} | TX: {}", user_id, pnl_str, sig);
                                     return Ok(warp::reply::json(&ApiResponse {
                                         success: true,
-                                        message: "Vendita Eseguita".into(),
+                                        message: format!("Vendita Eseguita{}", pnl_str),
                                         tx_signature: sig.clone(),
                                         solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
                                     }));
