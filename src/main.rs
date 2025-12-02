@@ -13,6 +13,8 @@ use std::str::FromStr;
 use solana_transaction_status::UiTransactionEncoding;
 use solana_transaction_status::option_serializer::OptionSerializer;
 use solana_sdk::signature::Signer;
+use spl_associated_token_account;
+use teloxide::Bot;
 
 // MODULI
 pub mod raydium;
@@ -176,53 +178,55 @@ async fn execute_amms_auto_buy(
                     
                     let amt_lam = (amt_sol * 1_000_000_000.0) as u64;
 
-                    if amt_lam > 0 {
-                        let input = "So11111111111111111111111111111111111111112";
-                        let mut success = false;
-                        let mut entry_price = 0.0;
-                        let mut tx_sig = String::new();
+                        if amt_lam > 0 {
+                            let input = "So11111111111111111111111111111111111111112";
+                            let mut success = false;
+                            let mut entry_price = 0.0;
+                            let mut tx_sig = String::new();
 
-                        // JUPITER FIRST
-                        if let Ok(mut tx) = jupiter::get_jupiter_swap_tx(
-                            &payer.pubkey().to_string(), 
-                            input, 
-                            &token_c, 
-                            amt_lam, 
-                            100
-                        ).await {
-                            let bh = net_c.rpc.get_latest_blockhash().await.unwrap();
-                            tx.sign(&[&payer], bh);
-                            if let Ok(sig) = net_c.rpc.send_transaction(&tx).await {
-                                let mode_str = match mode {
-                                    strategy::TradingMode::Dip => "DIP",
-                                    strategy::TradingMode::Breakout => "BREAKOUT",
-                                    _ => "AUTO",
-                                };
-                                info!("✅ 🔵{} JUPITER ({}) -> TX: {}", mode_str, uid, sig);
-                                let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig.to_string(), amt_lam, mode_str).await;
-                                success = true;
-                                tx_sig = sig.to_string();
-                                entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
-                            }
-                        }
-
-                        // RAYDIUM FALLBACK
-                        if !success {
-                            if let Some(keys) = keys_c {
-                                if let Ok(sig) = raydium::execute_swap(&net_c, &payer, &keys, mint_key, amt_lam, 200).await {
-                                    let mode_str = match mode {
-                                        strategy::TradingMode::Dip => "DIP",
-                                        strategy::TradingMode::Breakout => "BREAKOUT",
-                                        _ => "AUTO",
-                                    };
-                                    info!("⚡ 🚀{} RAYDIUM ({}) -> TX: {}", mode_str, uid, sig);
-                                    let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
-                                    success = true;
-                                    tx_sig = sig.clone();
-                                    entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
+                            // JUPITER FIRST (con VersionedTransaction)
+                            if let Ok(tx) = jupiter::get_jupiter_swap_tx(
+                                &payer.pubkey().to_string(), 
+                                input, 
+                                &token_c, 
+                                amt_lam, 
+                                100
+                            ).await {
+                                if let Ok(bh) = net_c.rpc.get_latest_blockhash().await {
+                                    if let Ok(signed_tx) = jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                                        if let Ok(sig) = net_c.send_versioned_transaction(&signed_tx).await {
+                                            let mode_str = match mode {
+                                                strategy::TradingMode::Dip => "DIP",
+                                                strategy::TradingMode::Breakout => "BREAKOUT",
+                                                _ => "AUTO",
+                                            };
+                                            info!("✅ 🔵{} JUPITER ({}) -> TX: {}", mode_str, uid, sig);
+                                            let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
+                                            success = true;
+                                            tx_sig = sig;
+                                            entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
+                                        }
+                                    }
                                 }
                             }
-                        }
+
+                            // RAYDIUM FALLBACK
+                            if !success {
+                                if let Some(keys) = keys_c {
+                                    if let Ok(sig) = raydium::execute_swap(&net_c, &payer, &keys, mint_key, amt_lam, 200).await {
+                                        let mode_str = match mode {
+                                            strategy::TradingMode::Dip => "DIP",
+                                            strategy::TradingMode::Breakout => "BREAKOUT",
+                                            _ => "AUTO",
+                                        };
+                                        info!("⚡ 🚀{} RAYDIUM ({}) -> TX: {}", mode_str, uid, sig);
+                                        let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
+                                        success = true;
+                                        tx_sig = sig.clone();
+                                        entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
+                                    }
+                                }
+                            }
 
                         // Registra posizione per tracking AMMS
                         if success && entry_price > 0.0 {
@@ -316,56 +320,80 @@ async fn run_position_manager(
                         // Esegui vendita
                         if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
                             if let Ok(mint) = Pubkey::from_str(&pos.token_address) {
-                                // Tenta Jupiter sell
+                                // Ottieni il bilancio REALE del token nel wallet
+                                let ata = spl_associated_token_account::get_associated_token_address(&payer.pubkey(), &mint);
+                                let token_balance = match net.rpc.get_token_account_balance(&ata).await {
+                                    Ok(balance) => balance.amount.parse::<u64>().unwrap_or(0),
+                                    Err(_) => {
+                                        warn!("⚠️ Nessun token trovato per {}", &pos.token_address[..8]);
+                                        continue;
+                                    }
+                                };
+                                
+                                if token_balance == 0 {
+                                    warn!("⚠️ Bilancio token = 0 per {}", &pos.token_address[..8]);
+                                    continue;
+                                }
+                                
+                                // Tenta Jupiter sell con quantità REALE di token
                                 let output = "So11111111111111111111111111111111111111112";
-                                let sell_amount = pos.amount_lamports;
+                                info!("💰 Auto-sell {} token (balance: {})", &pos.token_address[..8], token_balance);
                                 
                                 match jupiter::get_jupiter_swap_tx(
                                     &payer.pubkey().to_string(),
                                     &pos.token_address,
                                     output,
-                                    sell_amount,
+                                    token_balance, // USA IL BILANCIO REALE!
                                     200 // 2% slippage per sell
                                 ).await {
-                                    Ok(mut tx) => {
-                                        let bh = net.rpc.get_latest_blockhash().await.unwrap();
-                                        tx.sign(&[&payer], bh);
-                                        if let Ok(sig) = net.rpc.send_transaction(&tx).await {
-                                            info!("✅ AMMS SELL [{}] {} | PnL: {:+.1}% | TX: {}", 
-                                                user_id, &pos.token_address[..8], pnl_pct, sig);
+                                    Ok(tx) => {
+                                        if let Ok(bh) = net.rpc.get_latest_blockhash().await {
+                                            if let Ok(signed_tx) = jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                                                if let Ok(sig) = net.send_versioned_transaction(&signed_tx).await {
+                                                    info!("✅ AMMS SELL [{}] {} | PnL: {:+.1}% | TX: {}", 
+                                                        user_id, &pos.token_address[..8], pnl_pct, sig);
                                             
-                                            // Registra nel DB
-                                            let _ = db::record_sell(&pool, &user_id, &pos.token_address, &sig.to_string(), pnl_pct).await;
+                                                    // Registra nel DB
+                                                    let _ = db::record_sell(&pool, &user_id, &pos.token_address, &sig, pnl_pct).await;
                                             
-                                            // Update stats con modalità
-                                            let hold_time = (chrono::Utc::now().timestamp() - pos.entry_time) as f64 / 60.0;
-                                            let pnl_sol = pos.amount_sol * (pnl_pct / 100.0);
+                                                    // Update stats con modalità
+                                                    let hold_time = (chrono::Utc::now().timestamp() - pos.entry_time) as f64 / 60.0;
+                                                    let pnl_sol = pos.amount_sol * (pnl_pct / 100.0);
                                             
-                                            if let Ok(mut stats) = state.portfolio_stats.lock() {
-                                                let user_stats = stats.entry(user_id.clone()).or_default();
-                                                user_stats.record_trade(pnl_pct, pnl_sol, hold_time, pos.mode);
-                                            }
+                                                    if let Ok(mut stats) = state.portfolio_stats.lock() {
+                                                        let user_stats = stats.entry(user_id.clone()).or_default();
+                                                        user_stats.record_trade(pnl_pct, pnl_sol, hold_time, pos.mode);
+                                                    }
+                                                    
+                                                    // 📱 NOTIFICA TELEGRAM
+                                                    if let Ok(bot_token) = std::env::var("TELEGRAM_BOT_TOKEN") {
+                                                        let bot = Bot::new(&bot_token);
+                                                        let symbol = pos.token_address[..8].to_string();
+                                                        telegram_bot::notify_sell(&bot, &user_id, &symbol, pnl_pct, pnl_sol, &sig).await;
+                                                    }
                                             
-                                            // Rimuovi posizione
-                                            if let Ok(mut positions) = state.open_positions.lock() {
-                                                if let Some(user_pos) = positions.get_mut(&user_id) {
-                                                    user_pos.retain(|p| p.id != pos.id);
+                                                    // Rimuovi posizione
+                                                    if let Ok(mut positions) = state.open_positions.lock() {
+                                                        if let Some(user_pos) = positions.get_mut(&user_id) {
+                                                            user_pos.retain(|p| p.id != pos.id);
+                                                        }
+                                                    }
+                                            
+                                                    // REINVESTIMENTO AUTOMATICO
+                                                    let new_balance = net.get_balance_fast(&payer.pubkey()).await as f64 / 1_000_000_000.0;
+                                                    if new_balance > 0.02 {
+                                                        let stats_clone = if let Ok(stats) = state.portfolio_stats.lock() {
+                                                            stats.get(&user_id).cloned().unwrap_or_default()
+                                                        } else { engine::PortfolioStats::default() };
+                                                
+                                                        let (reinvest_amt, strategy_desc) = engine::calculate_reinvestment(
+                                                            new_balance, pnl_pct, &stats_clone
+                                                        );
+                                                
+                                                        info!("♻️ REINVEST [{}]: {} - {:.4} SOL", user_id, strategy_desc, reinvest_amt);
+                                                        // Il prossimo ciclo market_strategy gestirà il reinvestimento
+                                                    }
                                                 }
-                                            }
-                                            
-                                            // REINVESTIMENTO AUTOMATICO
-                                            let new_balance = net.get_balance_fast(&payer.pubkey()).await as f64 / 1_000_000_000.0;
-                                            if new_balance > 0.02 {
-                                                let stats_clone = if let Ok(stats) = state.portfolio_stats.lock() {
-                                                    stats.get(&user_id).cloned().unwrap_or_default()
-                                                } else { engine::PortfolioStats::default() };
-                                                
-                                                let (reinvest_amt, strategy_desc) = engine::calculate_reinvestment(
-                                                    new_balance, pnl_pct, &stats_clone
-                                                );
-                                                
-                                                info!("♻️ REINVEST [{}]: {} - {:.4} SOL", user_id, strategy_desc, reinvest_amt);
-                                                // Il prossimo ciclo market_strategy gestirà il reinvestimento
                                             }
                                         }
                                     },
@@ -655,6 +683,72 @@ async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppSta
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// DAILY REPORT - Invia report serale a tutti gli utenti attivi
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async fn run_daily_report_task(
+    pool: sqlx::SqlitePool,
+    net: Arc<network::NetworkClient>,
+    bot_token: String,
+) {
+    if bot_token.is_empty() {
+        warn!("⚠️ TELEGRAM_BOT_TOKEN non configurato, report disabilitati");
+        return;
+    }
+    
+    let bot = teloxide::Bot::new(&bot_token);
+    info!("📅 Daily Report Task avviato (21:00 ogni sera)");
+    
+    loop {
+        // Calcola tempo fino alle 21:00
+        let now = chrono::Utc::now();
+        let target_hour = 21; // 21:00 UTC (22:00 ora italiana)
+        
+        let mut next_report = now.date_naive().and_hms_opt(target_hour, 0, 0).unwrap();
+        if now.time() >= chrono::NaiveTime::from_hms_opt(target_hour, 0, 0).unwrap() {
+            // Se è già passato, vai a domani
+            next_report = next_report + chrono::Duration::days(1);
+        }
+        
+        let wait_secs = (next_report - now.naive_utc()).num_seconds().max(0) as u64;
+        info!("📅 Prossimo report tra {} ore", wait_secs / 3600);
+        
+        sleep(Duration::from_secs(wait_secs)).await;
+        
+        info!("🌙 Invio report giornalieri...");
+        
+        // Ottieni tutti gli utenti Telegram attivi
+        let users: Vec<String> = sqlx::query_scalar("SELECT tg_id FROM users WHERE tg_id LIKE 'tg_%'")
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+        
+        let sol_price = api::get_sol_price().await;
+        
+        for user_id in users {
+            // Ottieni bilancio
+            if let Ok(pubkey_str) = wallet_manager::create_user_wallet(&pool, &user_id).await {
+                if let Ok(pubkey) = Pubkey::from_str(&pubkey_str) {
+                    let balance = net.get_balance_fast(&pubkey).await as f64 / 1_000_000_000.0;
+                    
+                    // Invia report solo se ha un bilancio > 0 o trade attivi
+                    let has_trades = db::count_open_trades(&pool, &user_id).await.unwrap_or(0) > 0;
+                    if balance > 0.001 || has_trades {
+                        telegram_bot::send_daily_report(&bot, &pool, &user_id, balance, sol_price).await;
+                        sleep(Duration::from_millis(100)).await; // Rate limit
+                    }
+                }
+            }
+        }
+        
+        info!("✅ Report giornalieri inviati");
+        
+        // Aspetta almeno 1 ora prima di ricalcolare (evita loop)
+        sleep(Duration::from_secs(3600)).await;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // GEM DISCOVERY - Trova token promettenti
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -877,6 +971,52 @@ async fn main() {
         bot_active_users: Mutex::new(HashMap::new()),
     });
 
+    // ═══════════════════════════════════════════════════════════════
+    // PRECARICA GEMME PRIMA DI AVVIARE API (fix per UI vuota)
+    // ═══════════════════════════════════════════════════════════════
+    info!("💎 Precaricamento gemme per UI...");
+    {
+        // Top token da caricare subito
+        let top_tokens = vec![
+            "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz",  // JUP
+            "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK
+            "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", // WIF
+            "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", // POPCAT
+            "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",  // RENDER
+        ];
+        
+        let mut preloaded_gems: Vec<GemData> = Vec::new();
+        for addr in &top_tokens {
+            if let Ok(mkt) = jupiter::get_token_market_data(addr).await {
+                if mkt.price > 0.0 {
+                    preloaded_gems.push(GemData {
+                        token: mkt.address.clone(),
+                        symbol: mkt.symbol.clone(),
+                        name: mkt.name.clone(),
+                        price: mkt.price,
+                        safety_score: mkt.score.max(85),
+                        liquidity_usd: mkt.liquidity_usd,
+                        market_cap: mkt.market_cap,
+                        volume_24h: mkt.volume_24h,
+                        change_1h: mkt.change_1h,
+                        change_24h: mkt.change_24h,
+                        image_url: mkt.image_url.clone(),
+                        timestamp: chrono::Utc::now().timestamp(),
+                        source: "TOP".to_string(),
+                    });
+                    info!("  ✓ {} | ${:.6}", mkt.symbol, mkt.price);
+                }
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+        
+        if !preloaded_gems.is_empty() {
+            let mut found = state.found_gems.lock().unwrap();
+            *found = preloaded_gems;
+            info!("✅ {} gemme precaricate per UI", found.len());
+        }
+    }
+
     // Telegram Bot
     let p1 = pool.clone();
     let n1 = net.clone();
@@ -911,11 +1051,18 @@ async fn main() {
     let s6 = state.clone();
     tokio::spawn(async move { run_gem_discovery(s6, n6).await; });
 
+    // Daily Report Task (ogni sera alle 21:00)
+    let p7 = pool.clone();
+    let n7 = net.clone();
+    let bot_token = std::env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    tokio::spawn(async move { run_daily_report_task(p7, n7, bot_token).await; });
+
     info!("✅ Tutti i moduli AMMS avviati");
     info!("   • Market Strategy: EMA, RSI, ATR, Bollinger");
     info!("   • Position Manager: Trailing Stop ATR-based");
     info!("   • Auto-Reinvestment: Wealth-adaptive");
     info!("   • Sniper: Anti-rug, Anti-honeypot");
+    info!("   • Daily Report: 21:00 ogni sera");
 
     match tokio::signal::ctrl_c().await {
         Ok(()) => info!("🛑 Chiusura sicura..."),

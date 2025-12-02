@@ -1,14 +1,14 @@
 use solana_client::nonblocking::rpc_client::RpcClient as AsyncRpcClient;
-use solana_client::rpc_client::RpcClient as BlockingRpcClient; // <--- Ci serve solo per l'inizializzazione
+use solana_client::rpc_client::RpcClient as BlockingRpcClient;
 use solana_client::nonblocking::pubsub_client::PubsubClient;
 use solana_client::tpu_client::{TpuClient, TpuClientConfig};
-// Importiamo i tipi necessari per definire i Generics del TPU
 use solana_quic_client::{QuicPool, QuicConnectionManager, QuicConfig}; 
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::pubkey::Pubkey;
 use std::sync::Arc;
 use std::env;
-use log::info;
+use std::time::Duration;
+use log::{info, warn, error};
 
 pub struct NetworkClient {
     // Usiamo questo ASINCRONO per leggere saldo, dati token, ecc. (Veloce)
@@ -93,5 +93,78 @@ impl NetworkClient {
             }
             Err(e) => Err(format!("Errore invio TX: {}", e).into())
         }
+    }
+    
+    /// Invia VersionedTransaction (Jupiter V6) con retry automatico
+    /// Include retry robusto per gestire problemi DNS su AWS
+    pub async fn send_versioned_transaction(&self, transaction: &solana_sdk::transaction::VersionedTransaction) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let sig = transaction.signatures[0].to_string();
+        let mut last_error = String::new();
+        
+        // Retry con backoff esponenziale (gestisce problemi DNS su AWS)
+        for attempt in 1..=5 {
+            match self.rpc.send_transaction(transaction).await {
+                Ok(s) => {
+                    info!("📡 Versioned TX inviata via RPC (tentativo {}): {}", attempt, s);
+                    return Ok(s.to_string());
+                }
+                Err(e) => {
+                    last_error = e.to_string();
+                    
+                    // Log specifico per errori DNS/rete
+                    if last_error.contains("dns") || last_error.contains("connect") || 
+                       last_error.contains("timeout") || last_error.contains("network") {
+                        warn!("⚠️ DNS/Network error TX (attempt {}): {}", attempt, last_error);
+                    } else {
+                        warn!("⚠️ TX send error (attempt {}): {}", attempt, last_error);
+                    }
+                    
+                    // Backoff esponenziale: 300ms, 600ms, 1200ms, 2400ms, 4800ms
+                    if attempt < 5 {
+                        tokio::time::sleep(Duration::from_millis(300 * (1 << (attempt - 1)))).await;
+                    }
+                }
+            }
+        }
+        
+        error!("❌ Versioned TX fallita dopo 5 tentativi: {}", last_error);
+        Err(format!("Errore invio Versioned TX dopo 5 tentativi: {}", last_error).into())
+    }
+
+    /// Invia Transaction (legacy) con retry robusto per problemi DNS
+    pub async fn send_transaction_with_retry(&self, transaction: &solana_sdk::transaction::Transaction) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let sig = transaction.signatures[0].to_string();
+        let mut last_error = String::new();
+        
+        // Prima prova TPU (veloce, nessun problema DNS solitamente)
+        if self.tpu.send_transaction(transaction) {
+            info!("⚡ TX inviata via TPU/QUIC: {}", sig);
+            return Ok(sig);
+        }
+        
+        // Fallback RPC con retry
+        for attempt in 1..=5 {
+            match self.rpc.send_transaction(transaction).await {
+                Ok(s) => {
+                    info!("📡 TX inviata via RPC (tentativo {}): {}", attempt, s);
+                    return Ok(s.to_string());
+                }
+                Err(e) => {
+                    last_error = e.to_string();
+                    
+                    if last_error.contains("dns") || last_error.contains("connect") || 
+                       last_error.contains("timeout") || last_error.contains("network") {
+                        warn!("⚠️ DNS/Network error (attempt {}): {}", attempt, last_error);
+                    }
+                    
+                    if attempt < 5 {
+                        tokio::time::sleep(Duration::from_millis(300 * (1 << (attempt - 1)))).await;
+                    }
+                }
+            }
+        }
+        
+        error!("❌ TX fallita dopo 5 tentativi: {}", last_error);
+        Err(format!("Errore invio TX dopo 5 tentativi: {}", last_error).into())
     }
 }

@@ -70,7 +70,10 @@ async fn init_schema(pool: &SqlitePool) {
         exit_time TEXT,
         profit_loss_sol REAL DEFAULT 0.0,
         highest_price_lamports INTEGER DEFAULT 0,
-        trading_mode TEXT DEFAULT 'AUTO' -- DIP, BREAKOUT, AUTO
+        trading_mode TEXT DEFAULT 'AUTO', -- DIP, BREAKOUT, AUTO
+        entry_price REAL DEFAULT 0.0,     -- Prezzo di entrata USD
+        token_symbol TEXT DEFAULT '',      -- Simbolo token (BONK, JUP, etc)
+        token_image TEXT DEFAULT ''        -- URL immagine token
     );
     "#;
 
@@ -112,7 +115,18 @@ async fn init_schema(pool: &SqlitePool) {
         .execute(pool)
         .await;
     
-    info!("✅ Schema Database verificato (Full Features + Migrazioni).");
+    // Migrazioni per PnL e immagini
+    let _ = sqlx::query("ALTER TABLE trades ADD COLUMN entry_price REAL DEFAULT 0.0")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE trades ADD COLUMN token_symbol TEXT DEFAULT ''")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE trades ADD COLUMN token_image TEXT DEFAULT ''")
+        .execute(pool)
+        .await;
+    
+    info!("✅ Schema Database verificato (Full Features + Migrazioni PnL).");
 }
 
 // --- FUNZIONI OPERATIVE (Tutte PUBBLICHE) ---
@@ -188,19 +202,48 @@ pub async fn record_buy_with_mode(
     amount: u64,
     mode: &str
 ) -> Result<(), sqlx::Error> {
+    // Usa la versione completa con valori di default
+    record_buy_complete(pool, tg_id, token_addr, signature, amount, mode, 0.0, "", "").await
+}
+
+/// Registra un acquisto con tutti i dettagli (prezzo, simbolo, immagine)
+pub async fn record_buy_complete(
+    pool: &SqlitePool, 
+    tg_id: &str, 
+    token_addr: &str, 
+    signature: &str, 
+    amount: u64,
+    mode: &str,
+    entry_price: f64,
+    symbol: &str,
+    image_url: &str
+) -> Result<(), sqlx::Error> {
     let amount_i64 = amount as i64;
-    // All'inizio, il prezzo più alto (highest) è uguale al prezzo di entrata
-    sqlx::query("INSERT INTO trades (user_id, token_address, tx_signature, amount_in_lamports, highest_price_lamports, trading_mode, status) VALUES (?, ?, ?, ?, ?, ?, 'OPEN')")
+    
+    // Immagine fallback se vuota
+    let image = if image_url.is_empty() {
+        format!("https://img.jup.ag/v6/{}/logo", token_addr)
+    } else {
+        image_url.to_string()
+    };
+    
+    sqlx::query(
+        "INSERT INTO trades (user_id, token_address, tx_signature, amount_in_lamports, highest_price_lamports, trading_mode, status, entry_price, token_symbol, token_image) 
+         VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)"
+    )
         .bind(tg_id)
         .bind(token_addr)
         .bind(signature)
         .bind(amount_i64)
         .bind(amount_i64)
         .bind(mode)
+        .bind(entry_price)
+        .bind(symbol)
+        .bind(&image)
         .execute(pool)
         .await?;
         
-    info!("📝 Trade {} registrato nel DB per {}", mode, token_addr);
+    info!("📝 Trade {} registrato: {} @ ${:.8}", mode, symbol, entry_price);
     Ok(())
 }
 
@@ -405,6 +448,9 @@ pub struct TradeHistory {
     pub exit_time: Option<String>,
     pub profit_loss_sol: f64,
     pub trading_mode: String, // DIP, BREAKOUT, AUTO
+    pub entry_price: f64,     // Prezzo di entrata per calcolo PnL
+    pub token_symbol: String, // Simbolo token (es. BONK)
+    pub token_image: String,  // URL immagine token
 }
 
 /// Struttura per prelievo nello storico
@@ -430,9 +476,10 @@ pub async fn get_user_trades(pool: &SqlitePool, user_id: &str) -> Result<Vec<Tra
     
     let mut results = Vec::new();
     for row in rows {
+        let token_addr: String = row.get("token_address");
         results.push(TradeHistory {
             id: row.get("id"),
-            token_address: row.get("token_address"),
+            token_address: token_addr.clone(),
             tx_signature: row.get("tx_signature"),
             amount_sol: row.get::<i64, _>("amount_in_lamports") as f64 / 1_000_000_000.0,
             status: row.get("status"),
@@ -440,6 +487,11 @@ pub async fn get_user_trades(pool: &SqlitePool, user_id: &str) -> Result<Vec<Tra
             exit_time: row.try_get("exit_time").ok(),
             profit_loss_sol: row.try_get("profit_loss_sol").unwrap_or(0.0),
             trading_mode: row.try_get("trading_mode").unwrap_or_else(|_| "AUTO".to_string()),
+            entry_price: row.try_get("entry_price").unwrap_or(0.0),
+            token_symbol: row.try_get("token_symbol").unwrap_or_else(|_| "".to_string()),
+            // Immagine: prova dal DB, altrimenti usa Jupiter fallback
+            token_image: row.try_get::<String, _>("token_image")
+                .unwrap_or_else(|_| format!("https://img.jup.ag/v6/{}/logo", token_addr)),
         });
     }
     Ok(results)

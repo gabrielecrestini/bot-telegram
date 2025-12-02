@@ -21,7 +21,11 @@ chrono = { version = "0.4", features = ["serde"] }
 # --- NETWORK & ASYNC ---
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
+# NOTA: NON usare trust-dns - cerca AAAA (IPv6) e Jupiter non lo supporta!
+# Usiamo local_address per forzare IPv4
 reqwest = { version = "0.11", features = ["json", "blocking"] }
+# DNS resolver personalizzato (Cloudflare 1.1.1.1 + Google 8.8.8.8) - per funzioni helper
+hickory-resolver = "0.24"
 # --- SERIALIZZAZIONE & DATI ---
 # FORZIAMO SERDE ALL'ULTIMA VERSIONE PER RISOLVERE IL CONFLITTO
 serde = { version = "1.0.210", features = ["derive"] }

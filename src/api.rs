@@ -8,6 +8,7 @@ use solana_sdk::system_instruction;
 use solana_sdk::transaction::Transaction;
 use solana_sdk::signer::Signer;
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
+use spl_associated_token_account;
 use std::str::FromStr;
 use log::{info, error, warn};
 use sha2::{Sha256, Digest};
@@ -181,7 +182,7 @@ fn parse_telegram_init_data(data: &str) -> Option<String> {
 }
 
 /// Ottiene il prezzo SOL in tempo reale
-async fn get_sol_price() -> f64 {
+pub async fn get_sol_price() -> f64 {
     match jupiter::get_token_market_data("So11111111111111111111111111111111111111112").await {
         Ok(data) => data.price,
         Err(_) => {
@@ -432,34 +433,53 @@ async fn handle_trade(
             }));
         }
 
+        // Recupera dati token per PnL e immagine
+        let token_data = jupiter::get_token_market_data(&req.token).await.ok();
+        let entry_price = token_data.as_ref().map(|t| t.price).unwrap_or(0.0);
+        let token_symbol = token_data.as_ref().map(|t| t.symbol.clone()).unwrap_or_default();
+        let token_image = token_data.as_ref().map(|t| t.image_url.clone()).unwrap_or_default();
+
         let input = "So11111111111111111111111111111111111111112";
         match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), input, &req.token, amount_lamports, 100).await {
-            Ok(mut tx) => {
+            Ok(tx) => {
                 if let Ok(bh) = net.rpc.get_latest_blockhash().await {
-                    tx.sign(&[&payer], bh);
-                    
-                    match net.send_transaction_fast(&tx).await {
-                        Ok(sig) => {
-                            let _ = db::record_buy(&pool, &user_id, &req.token, &sig, amount_lamports).await;
-                            return Ok(warp::reply::json(&ApiResponse {
-                                success: true,
-                                message: "Buy Eseguito".into(),
-                                tx_signature: sig.clone(),
-                                solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
-                            }));
+                    // Firma la VersionedTransaction con il nuovo blockhash
+                    match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                        Ok(signed_tx) => {
+                            match net.send_versioned_transaction(&signed_tx).await {
+                                Ok(sig) => {
+                                    // Salva con tutti i dettagli per mostrare PnL
+                                    let _ = db::record_buy_complete(
+                                        &pool, &user_id, &req.token, &sig, amount_lamports,
+                                        "MANUAL", entry_price, &token_symbol, &token_image
+                                    ).await;
+                                    info!("✅ BUY {} @ ${:.8} | {} SOL | TX: {}", token_symbol, entry_price, req.amount_sol, sig);
+                                    return Ok(warp::reply::json(&ApiResponse {
+                                        success: true,
+                                        message: format!("Buy {} Eseguito", token_symbol),
+                                        tx_signature: sig.clone(),
+                                        solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
+                                    }));
+                                }
+                                Err(e) => warn!("⚠️ Jupiter TX fallita: {}", e),
+                            }
                         }
-                        Err(e) => warn!("⚠️ Jupiter TX fallita: {}", e),
+                        Err(e) => warn!("⚠️ Firma TX fallita: {}", e),
                     }
                 }
             }
             Err(e) => warn!("⚠️ Jupiter quote: {}", e),
         }
 
-        // Raydium fallback
+        // Raydium fallback (usa Transaction normale)
         if let Ok(mint) = Pubkey::from_str(&req.token) {
             if let Ok(keys) = raydium::fetch_pool_keys_by_mint(&net, &mint).await {
                 if let Ok(sig) = raydium::execute_swap(&net, &payer, &keys, mint, amount_lamports, 200).await {
-                    let _ = db::record_buy(&pool, &user_id, &req.token, &sig, amount_lamports).await;
+                    let _ = db::record_buy_complete(
+                        &pool, &user_id, &req.token, &sig, amount_lamports,
+                        "MANUAL", entry_price, &token_symbol, &token_image
+                    ).await;
+                    info!("✅ BUY (Raydium) completato per {} | {} SOL | TX: {}", user_id, req.amount_sol, sig);
                     return Ok(warp::reply::json(&ApiResponse {
                         success: true,
                         message: "Buy Eseguito (Raydium)".into(),
@@ -478,23 +498,93 @@ async fn handle_trade(
         }));
 
     } else if req.action == "SELL" {
-        let output = "So11111111111111111111111111111111111111112";
-        match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), &req.token, output, amount_lamports, 200).await {
-            Ok(mut tx) => {
+        // Per vendere token, devo usare la quantità di TOKEN, non SOL!
+        // Recupero il bilancio del token dall'account SPL
+        let output = "So11111111111111111111111111111111111111112"; // SOL
+        
+        // Ottieni la quantità di token da vendere dal bilancio wallet
+        let token_mint = match Pubkey::from_str(&req.token) {
+            Ok(m) => m,
+            Err(_) => {
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: "Indirizzo token non valido".into(),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
+        
+        // Trova l'account token associato
+        let ata = spl_associated_token_account::get_associated_token_address(&payer.pubkey(), &token_mint);
+        
+        // Ottieni il bilancio del token
+        let token_balance = match net.rpc.get_token_account_balance(&ata).await {
+            Ok(balance) => {
+                // amount è una stringa, la convertiamo in u64
+                balance.amount.parse::<u64>().unwrap_or(0)
+            }
+            Err(e) => {
+                error!("❌ Errore lettura bilancio token: {}", e);
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: "Token non trovato nel wallet".into(),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
+        
+        if token_balance == 0 {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Nessun token da vendere".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+        
+        info!("💰 Vendita {} token (raw: {})", req.token, token_balance);
+        
+        // Usa la quantità effettiva di token nel wallet
+        match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), &req.token, output, token_balance, 200).await {
+            Ok(tx) => {
                 if let Ok(bh) = net.rpc.get_latest_blockhash().await {
-                    tx.sign(&[&payer], bh);
-                    
-                    match net.send_transaction_fast(&tx).await {
-                        Ok(sig) => {
-                            let _ = db::record_sell(&pool, &user_id, &req.token, &sig, 0.0).await;
-                            return Ok(warp::reply::json(&ApiResponse {
-                                success: true,
-                                message: "Vendita Eseguita".into(),
-                                tx_signature: sig.clone(),
-                                solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
-                            }));
+                    match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                        Ok(signed_tx) => {
+                            match net.send_versioned_transaction(&signed_tx).await {
+                                Ok(sig) => {
+                                    // Calcola PnL approssimativo
+                                    let token_data = jupiter::get_token_market_data(&req.token).await.ok();
+                                    let current_price = token_data.as_ref().map(|t| t.price).unwrap_or(0.0);
+                                    
+                                    // Recupera entry_price dal DB per calcolare PnL
+                                    let pnl_pct = if let Ok(trades) = db::get_open_trades(&pool, &user_id).await {
+                                        if let Some(trade) = trades.iter().find(|t| t.token_address == req.token) {
+                                            if trade.entry_price > 0.0 && current_price > 0.0 {
+                                                ((current_price - trade.entry_price) / trade.entry_price) * 100.0
+                                            } else { 0.0 }
+                                        } else { 0.0 }
+                                    } else { 0.0 };
+                                    
+                                    let _ = db::record_sell(&pool, &user_id, &req.token, &sig, pnl_pct).await;
+                                    
+                                    let pnl_str = if pnl_pct != 0.0 {
+                                        format!(" | PnL: {:+.1}%", pnl_pct)
+                                    } else { "".to_string() };
+                                    
+                                    info!("✅ SELL completato per {}{} | TX: {}", user_id, pnl_str, sig);
+                                    return Ok(warp::reply::json(&ApiResponse {
+                                        success: true,
+                                        message: format!("Vendita Eseguita{}", pnl_str),
+                                        tx_signature: sig.clone(),
+                                        solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
+                                    }));
+                                }
+                                Err(e) => error!("❌ Sell TX: {}", e),
+                            }
                         }
-                        Err(e) => error!("❌ Sell TX: {}", e),
+                        Err(e) => error!("❌ Firma Sell TX: {}", e),
                     }
                 }
             }
@@ -877,25 +967,48 @@ async fn handle_bot_stop(
     let mut closed_count = 0;
 
     for trade in &open_trades {
-        // Prova a vendere tramite Jupiter
+        // Prova a vendere tramite Jupiter (con VersionedTransaction)
         if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
-            let output = "So11111111111111111111111111111111111111112";
-            
-            if let Ok(mut tx) = jupiter::get_jupiter_swap_tx(
-                &payer.pubkey().to_string(),
-                &trade.token_address,
-                output,
-                trade.amount_lamports,
-                300, // slippage più alto per vendite urgenti
-            ).await {
-                if let Ok(bh) = net.rpc.get_latest_blockhash().await {
-                    tx.sign(&[&payer], bh);
-                    
-                    // TPU PRIORITY per vendite urgenti
-                    if let Ok(sig) = net.send_transaction_fast(&tx).await {
-                        let _ = db::record_sell(&pool, &user_id, &trade.token_address, &sig, 0.0).await;
-                        closed_count += 1;
-                        info!("✅ Venduto {} per bot stop", trade.token_address);
+            // Ottieni il bilancio REALE del token nel wallet
+            if let Ok(mint) = Pubkey::from_str(&trade.token_address) {
+                let ata = spl_associated_token_account::get_associated_token_address(&payer.pubkey(), &mint);
+                let token_balance = match net.rpc.get_token_account_balance(&ata).await {
+                    Ok(balance) => balance.amount.parse::<u64>().unwrap_or(0),
+                    Err(_) => continue, // Token non trovato, salta
+                };
+                
+                if token_balance == 0 {
+                    // Nessun token, marca come venduto comunque
+                    let _ = db::record_sell(&pool, &user_id, &trade.token_address, "no_tokens", 0.0).await;
+                    continue;
+                }
+                
+                let output = "So11111111111111111111111111111111111111112";
+                info!("💰 Bot stop: vendita {} token (balance: {})", &trade.token_address[..8], token_balance);
+                
+                if let Ok(tx) = jupiter::get_jupiter_swap_tx(
+                    &payer.pubkey().to_string(),
+                    &trade.token_address,
+                    output,
+                    token_balance, // USA IL BILANCIO REALE!
+                    300, // slippage più alto per vendite urgenti
+                ).await {
+                    if let Ok(bh) = net.rpc.get_latest_blockhash().await {
+                        if let Ok(signed_tx) = jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                            // Invia vendita
+                            if let Ok(sig) = net.send_versioned_transaction(&signed_tx).await {
+                                // Calcola PnL
+                                let current_price = jupiter::get_token_market_data(&trade.token_address)
+                                    .await.ok().map(|m| m.price).unwrap_or(0.0);
+                                let pnl_pct = if trade.entry_price > 0.0 && current_price > 0.0 {
+                                    ((current_price - trade.entry_price) / trade.entry_price) * 100.0
+                                } else { 0.0 };
+                                
+                                let _ = db::record_sell(&pool, &user_id, &trade.token_address, &sig, pnl_pct).await;
+                                closed_count += 1;
+                                info!("✅ Venduto {} | PnL: {:+.1}% | TX: {}", &trade.token_address[..8], pnl_pct, sig);
+                            }
+                        }
                     }
                 }
             }
