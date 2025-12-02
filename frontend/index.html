@@ -12,81 +12,107 @@
 
     <style>
         * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
-        :root { --accent: #6366f1; --green: #22c55e; --red: #ef4444; }
-        body { background: #09090b; color: #fff; font-family: 'Space Grotesk', sans-serif; min-height: 100vh; padding-bottom: 90px; }
+        :root { --accent: #8b5cf6; --green: #10b981; --red: #ef4444; --bg: #0a0a0f; --card: #12121a; --border: #1e1e2e; }
+        body { background: var(--bg); color: #fff; font-family: 'Space Grotesk', sans-serif; min-height: 100vh; padding-bottom: 90px; }
         .mono { font-family: 'JetBrains Mono', monospace; }
-        .card { background: #18181b; border: 1px solid #27272a; border-radius: 16px; }
-        .sheet { position: fixed; bottom: -100%; left: 0; right: 0; background: #18181b; border-radius: 24px 24px 0 0; padding: 24px; z-index: 100; transition: bottom 0.3s ease; max-height: 90vh; overflow-y: auto; }
+        
+        /* Cards con effetto glass */
+        .card { 
+            background: linear-gradient(135deg, rgba(18,18,26,0.9) 0%, rgba(15,15,23,0.95) 100%);
+            border: 1px solid rgba(139, 92, 246, 0.1); 
+            border-radius: 16px; 
+            backdrop-filter: blur(10px);
+        }
+        .card:hover { border-color: rgba(139, 92, 246, 0.2); }
+        
+        /* Sheets */
+        .sheet { position: fixed; bottom: -100%; left: 0; right: 0; background: linear-gradient(180deg, #18181f 0%, #0f0f15 100%); border-radius: 24px 24px 0 0; padding: 24px; z-index: 100; transition: bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1); max-height: 90vh; overflow-y: auto; border-top: 1px solid rgba(139, 92, 246, 0.2); }
         .sheet.open { bottom: 0; }
-        .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 90; opacity: 0; visibility: hidden; transition: all 0.2s; }
+        .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(4px); z-index: 90; opacity: 0; visibility: hidden; transition: all 0.2s; }
         .overlay.open { opacity: 1; visibility: visible; }
+        
+        /* Pages */
         .page { display: none; }
-        .page.active { display: block; animation: fadeIn 0.2s ease; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        #toast { transform: translateY(-150%); transition: transform 0.3s; z-index: 200; }
+        .page.active { display: block; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Toast */
+        #toast { transform: translateY(-150%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 200; }
         #toast.show { transform: translateY(0); }
-        .btn { padding: 14px 24px; border-radius: 12px; font-weight: 600; transition: all 0.15s; }
+        
+        /* Buttons */
+        .btn { padding: 14px 24px; border-radius: 12px; font-weight: 600; transition: all 0.2s; cursor: pointer; }
         .btn:active { transform: scale(0.97); }
-        .btn-primary { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; }
-        .btn-green { background: #22c55e; color: white; }
-        .btn-red { background: #ef4444; color: white; }
+        .btn-primary { background: linear-gradient(135deg, #8b5cf6, #6366f1); color: white; box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3); }
+        .btn-primary:hover { box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4); transform: translateY(-1px); }
+        .btn-green { background: linear-gradient(135deg, #10b981, #059669); color: white; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3); }
+        .btn-green:hover { box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4); }
+        .btn-red { background: linear-gradient(135deg, #ef4444, #dc2626); color: white; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3); }
+        .btn-secondary { background: rgba(139, 92, 246, 0.1); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.3); }
+        .btn-success { background: linear-gradient(135deg, #10b981, #059669); color: white; }
+        
+        /* Switch */
         .switch { width: 52px; height: 28px; background: #27272a; border-radius: 14px; position: relative; cursor: pointer; transition: background 0.2s; }
-        .switch.on { background: #22c55e; }
-        .switch::after { content: ''; width: 22px; height: 22px; background: white; border-radius: 50%; position: absolute; top: 3px; left: 3px; transition: transform 0.2s; }
+        .switch.on { background: linear-gradient(135deg, #10b981, #059669); }
+        .switch::after { content: ''; width: 22px; height: 22px; background: white; border-radius: 50%; position: absolute; top: 3px; left: 3px; transition: transform 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
         .switch.on::after { transform: translateX(24px); }
-        input[type="number"], input[type="text"] { background: #09090b; border: 1px solid #27272a; border-radius: 12px; padding: 14px 16px; color: white; width: 100%; outline: none; font-size: 16px; }
-        input:focus { border-color: #6366f1; }
-        .token-row { display: flex; align-items: center; padding: 16px; gap: 12px; border-bottom: 1px solid #27272a; cursor: pointer; transition: background 0.15s; }
-        .token-row:active { background: #27272a; }
+        
+        /* Inputs */
+        input[type="number"], input[type="text"] { background: rgba(0,0,0,0.4); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; color: white; width: 100%; outline: none; font-size: 16px; transition: all 0.2s; }
+        input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15); }
+        input[type="email"], input[type="password"] { background: rgba(0,0,0,0.4); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; color: white; width: 100%; outline: none; font-size: 16px; transition: all 0.2s; }
+        input[type="email"]:focus, input[type="password"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15); }
+        
+        /* Token rows */
+        .token-row { display: flex; align-items: center; padding: 16px; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; transition: all 0.2s; }
+        .token-row:hover { background: rgba(139, 92, 246, 0.05); }
+        .token-row:active { background: rgba(139, 92, 246, 0.1); }
         .token-row:last-child { border-bottom: none; }
+        
+        /* Score badges */
         .score-badge { padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; }
-        .score-high { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
-        .score-mid { background: rgba(234, 179, 8, 0.2); color: #eab308; }
-        .score-low { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-        .history-filter { background: transparent; color: #71717a; }
-        .history-filter.active { background: #6366f1; color: white; }
-        .history-item { display: flex; align-items: center; padding: 12px 16px; gap: 12px; border-bottom: 1px solid #27272a; }
+        .score-high { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .score-mid { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .score-low { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+        
+        /* History */
+        .history-filter { background: transparent; color: #71717a; border-radius: 8px; padding: 8px 12px; }
+        .history-filter.active { background: var(--accent); color: white; }
+        .history-item { display: flex; align-items: center; padding: 12px 16px; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
         .history-item:last-child { border-bottom: none; }
-        .status-badge { padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
-        .status-open { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
-        .status-sold, .status-completed { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
-        .status-failed { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
-        .status-pending { background: rgba(234, 179, 8, 0.2); color: #eab308; }
         
-        /* PREZZI LIVE - Animazioni oscillazione */
-        @keyframes flashGreen { 
-            0% { background: rgba(34, 197, 94, 0.4); } 
-            100% { background: transparent; } 
-        }
-        @keyframes flashRed { 
-            0% { background: rgba(239, 68, 68, 0.4); } 
-            100% { background: transparent; } 
-        }
-        .flash-green { animation: flashGreen 0.5s ease-out; color: #22c55e !important; }
+        /* Status badges */
+        .status-badge { padding: 3px 8px; border-radius: 6px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
+        .status-open { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+        .status-sold, .status-completed { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+        .status-failed { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+        .status-pending { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+        
+        /* PREZZI LIVE - Animazioni */
+        @keyframes flashGreen { 0% { background: rgba(16, 185, 129, 0.4); } 100% { background: transparent; } }
+        @keyframes flashRed { 0% { background: rgba(239, 68, 68, 0.4); } 100% { background: transparent; } }
+        .flash-green { animation: flashGreen 0.5s ease-out; color: #10b981 !important; }
         .flash-red { animation: flashRed 0.5s ease-out; color: #ef4444 !important; }
-        .price-up { color: #22c55e !important; transform: scale(1.05); transition: all 0.2s; }
-        .price-down { color: #ef4444 !important; transform: scale(0.95); transition: all 0.2s; }
+        .price-up { color: #10b981 !important; transform: scale(1.02); transition: all 0.15s; }
+        .price-down { color: #ef4444 !important; transform: scale(0.98); transition: all 0.15s; }
         
-        /* Live indicator pulse */
-        .live-dot { 
-            width: 8px; height: 8px; background: #22c55e; border-radius: 50%; 
-            animation: livePulse 1.5s infinite; display: inline-block; margin-right: 4px;
-        }
-        @keyframes livePulse { 
-            0%, 100% { opacity: 1; transform: scale(1); } 
-            50% { opacity: 0.5; transform: scale(0.8); } 
-        }
+        /* Live indicator */
+        .live-dot { width: 6px; height: 6px; background: #10b981; border-radius: 50%; animation: livePulse 1.5s infinite; display: inline-block; box-shadow: 0 0 8px #10b981; }
+        @keyframes livePulse { 0%, 100% { opacity: 1; box-shadow: 0 0 8px #10b981; } 50% { opacity: 0.6; box-shadow: 0 0 4px #10b981; } }
         
-        /* Auth input styles */
-        input[type="email"], input[type="password"] {
-            background: #09090b; border: 1px solid #27272a; border-radius: 12px; 
-            padding: 14px 16px; color: white; width: 100%; outline: none; font-size: 16px;
-            transition: all 0.2s;
-        }
-        input[type="email"]:focus, input[type="password"]:focus { 
-            border-color: #8b5cf6; 
-            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
-        }
+        /* Bottom nav */
+        nav { background: linear-gradient(180deg, rgba(10,10,15,0.95) 0%, rgba(10,10,15,1) 100%); backdrop-filter: blur(10px); border-top: 1px solid rgba(139, 92, 246, 0.1); }
+        .nav-btn { transition: all 0.2s; border-radius: 12px; }
+        .nav-btn:hover { background: rgba(139, 92, 246, 0.1); }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(139, 92, 246, 0.3); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(139, 92, 246, 0.5); }
+        
+        /* Gradient text */
+        .gradient-text { background: linear-gradient(135deg, #a78bfa, #8b5cf6, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
     </style>
 </head>
 <body>
@@ -182,56 +208,63 @@
 
     <div id="overlay" class="overlay" onclick="closeAll()"></div>
 
-    <!-- Header -->
-    <header class="p-4 flex items-center justify-between sticky top-0 z-40 bg-[#09090b]/95 backdrop-blur">
-        <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
-                <i data-lucide="zap" class="w-5 h-5 text-white"></i>
-            </div>
-            <div>
-                <h1 class="font-bold">GOD SNIPER</h1>
-                <div class="flex items-center gap-1.5">
-                    <div id="statusDot" class="w-2 h-2 rounded-full bg-zinc-500"></div>
-                    <span id="statusText" class="text-[10px] text-zinc-500">Connessione...</span>
-                </div>
-            </div>
-        </div>
-        <button onclick="sync()" class="p-2 rounded-lg bg-zinc-800 active:scale-95">
-            <i data-lucide="refresh-cw" class="w-5 h-5 text-zinc-400" id="syncIcon"></i>
-        </button>
-    </header>
-
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- WALLET PAGE -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <section id="p-wallet" class="page active p-4">
-        <!-- Balance Card -->
-        <div class="card p-6 mb-4">
-            <p class="text-zinc-500 text-sm mb-1">Saldo Totale</p>
-            <div class="flex items-baseline gap-2 mb-1">
-                <span class="text-4xl font-bold mono" id="balanceSOL">0.0000</span>
-                <span class="text-xl text-indigo-400">SOL</span>
+        <!-- Header con Status -->
+        <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                    <i data-lucide="zap" class="w-5 h-5 text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold gradient-text">GOD SNIPER</h1>
+                    <div class="flex items-center gap-2">
+                        <span class="live-dot"></span>
+                        <span class="text-[10px] text-emerald-400">Sistema Attivo</span>
+                    </div>
+                </div>
             </div>
-            <p class="text-zinc-500 text-sm mono" id="balanceUSD">≈ $0.00</p>
-            
-            <!-- Wealth Level Indicator -->
-            <div class="mt-4 p-3 rounded-lg bg-zinc-900 flex items-center justify-between">
-                <span class="text-xs text-zinc-400">Livello</span>
-                <span class="text-sm font-semibold" id="wealthLevel">-</span>
+            <button onclick="sync()" class="p-2 rounded-xl bg-white/5 hover:bg-white/10 transition-all">
+                <i data-lucide="refresh-cw" class="w-5 h-5 text-zinc-400" id="syncIcon"></i>
+            </button>
+        </div>
+
+        <!-- Balance Card Premium -->
+        <div class="card p-6 mb-4 relative overflow-hidden">
+            <div class="absolute inset-0 bg-gradient-to-br from-violet-500/10 to-transparent"></div>
+            <div class="relative">
+                <p class="text-zinc-400 text-xs mb-2 uppercase tracking-wider">Saldo Totale</p>
+                <div class="flex items-baseline gap-2 mb-1">
+                    <span class="text-4xl font-bold mono" id="balanceSOL">0.0000</span>
+                    <span class="text-lg text-violet-400 font-semibold">SOL</span>
+                </div>
+                <p class="text-zinc-400 text-sm mono" id="balanceUSD">≈ $0.00</p>
+                
+                <!-- Wealth Level -->
+                <div class="mt-4 p-3 rounded-xl bg-black/30 flex items-center justify-between border border-white/5">
+                    <span class="text-xs text-zinc-500">Livello Investimento</span>
+                    <span class="text-sm font-semibold" id="wealthLevel">-</span>
+                </div>
             </div>
         </div>
 
-        <!-- Wallet Address -->
+        <!-- Wallet Address Compact -->
         <div class="card p-4 mb-4">
-            <div class="flex items-center justify-between mb-2">
-                <span class="text-xs text-zinc-500">Il tuo wallet</span>
-                <a id="addrLink" href="#" target="_blank" class="text-xs text-indigo-400">Solscan →</a>
-            </div>
-            <div class="flex items-center gap-2" onclick="copyAddr()">
-                <p class="mono text-sm truncate flex-1" id="walletAddr">Caricamento...</p>
-                <button class="p-2 rounded-lg bg-zinc-800 active:scale-95">
-                    <i data-lucide="copy" class="w-4 h-4 text-indigo-400"></i>
-                </button>
+            <div class="flex items-center justify-between">
+                <div class="flex-1 min-w-0">
+                    <p class="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Wallet</p>
+                    <p class="mono text-xs truncate text-zinc-300" id="walletAddr">Caricamento...</p>
+                </div>
+                <div class="flex items-center gap-2 ml-3">
+                    <button onclick="copyAddr()" class="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all">
+                        <i data-lucide="copy" class="w-4 h-4 text-violet-400"></i>
+                    </button>
+                    <a id="addrLink" href="#" target="_blank" class="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all">
+                        <i data-lucide="external-link" class="w-4 h-4 text-violet-400"></i>
+                    </a>
+                </div>
             </div>
         </div>
 
@@ -240,7 +273,7 @@
             <button onclick="openDeposit()" class="btn btn-green flex items-center justify-center gap-2">
                 <i data-lucide="arrow-down" class="w-4 h-4"></i> Deposita
             </button>
-            <button onclick="openWithdraw()" class="btn bg-zinc-800 flex items-center justify-center gap-2">
+            <button onclick="openWithdraw()" class="btn bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center gap-2 text-zinc-300">
                 <i data-lucide="arrow-up" class="w-4 h-4"></i> Preleva
             </button>
         </div>
@@ -1833,15 +1866,34 @@
         }
         
         function showLoginPage() {
+            // Se siamo su Telegram, MAI mostrare login
+            if (isTelegram && telegramId) {
+                showMainApp();
+                return;
+            }
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             document.getElementById('p-login').classList.add('active');
-            document.querySelector('nav').style.display = 'none';
+            // Nascondi completamente la nav bar
+            const nav = document.querySelector('nav');
+            if (nav) {
+                nav.style.display = 'none';
+                nav.style.visibility = 'hidden';
+            }
+            // Rimuovi padding bottom del body
+            document.body.style.paddingBottom = '0';
         }
         
         function showMainApp() {
             document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
             document.getElementById('p-wallet').classList.add('active');
-            document.querySelector('nav').style.display = 'flex';
+            // Mostra la nav bar
+            const nav = document.querySelector('nav');
+            if (nav) {
+                nav.style.display = 'flex';
+                nav.style.visibility = 'visible';
+            }
+            // Ripristina padding
+            document.body.style.paddingBottom = '90px';
             updateAccountInfo();
         }
         
@@ -1921,9 +1973,7 @@
                 }
 
                 // Update UI
-                document.getElementById('statusDot').className = 'w-2 h-2 rounded-full bg-green-500';
-                document.getElementById('statusText').innerText = 'Online';
-                document.getElementById('statusText').className = 'text-[10px] text-green-400';
+                // Status OK - nessun indicatore da aggiornare
 
                 document.getElementById('balanceSOL').innerText = state.balance.toFixed(4);
                 document.getElementById('balanceUSD').innerText = '≈ $' + (data.balance_usd || 0).toFixed(2);
@@ -2056,9 +2106,7 @@
 
             } catch (e) {
                 console.error('Sync error:', e);
-                document.getElementById('statusDot').className = 'w-2 h-2 rounded-full bg-red-500';
-                document.getElementById('statusText').innerText = 'Offline';
-                document.getElementById('statusText').className = 'text-[10px] text-red-400';
+                toast('⚠️ Offline', 'Connessione al server persa');
             } finally {
                 document.getElementById('syncIcon').classList.remove('animate-spin');
             }
@@ -2081,34 +2129,42 @@
         }
 
         // ═══════════════════════════════════════════════════════════════
-        // PREZZI LIVE - Aggiornamento in tempo reale con oscillazioni
+        // PREZZI LIVE - Sistema di aggiornamento real-time professionale
         // ═══════════════════════════════════════════════════════════════
         
         let priceUpdateInterval = null;
+        let fastPriceInterval = null;
         let lastPrices = {}; // Cache prezzi precedenti per animazioni
+        let priceHistory = {}; // Storico per trend
         
-        // Aggiorna prezzi nella lista token con animazione
+        // Aggiorna prezzi nella lista token con animazione fluida
         function updateLivePrices() {
             const tokenRows = document.querySelectorAll('.token-row');
             tokenRows.forEach((row, idx) => {
                 if (state.gems[idx]) {
                     const gem = state.gems[idx];
-                    const priceEl = row.querySelector('.mono.font-bold');
+                    const priceEl = row.querySelector('.mono.font-bold.text-sm');
                     if (priceEl) {
                         const oldPrice = lastPrices[gem.token] || gem.price;
-                        const newPrice = gem.price;
                         
-                        // Simula micro-oscillazioni per effetto "live" (±0.5%)
-                        const oscillation = 1 + (Math.random() - 0.5) * 0.01;
-                        const displayPrice = newPrice * oscillation;
+                        // Micro-oscillazioni realistiche basate sulla volatilità
+                        const volatility = Math.abs(gem.change_1h || 1) / 100;
+                        const oscillation = 1 + (Math.random() - 0.5) * Math.min(volatility * 0.5, 0.02);
+                        const displayPrice = gem.price * oscillation;
                         
-                        // Animazione flash per cambio prezzo
-                        if (Math.abs(displayPrice - oldPrice) / oldPrice > 0.001) {
+                        // Salva nello storico
+                        if (!priceHistory[gem.token]) priceHistory[gem.token] = [];
+                        priceHistory[gem.token].push(displayPrice);
+                        if (priceHistory[gem.token].length > 10) priceHistory[gem.token].shift();
+                        
+                        // Animazione per cambio significativo
+                        const priceDiff = (displayPrice - oldPrice) / oldPrice;
+                        if (Math.abs(priceDiff) > 0.0005) {
                             const isUp = displayPrice > oldPrice;
+                            priceEl.classList.remove('flash-green', 'flash-red');
+                            void priceEl.offsetWidth; // Force reflow
                             priceEl.classList.add(isUp ? 'flash-green' : 'flash-red');
-                            setTimeout(() => {
-                                priceEl.classList.remove('flash-green', 'flash-red');
-                            }, 500);
+                            setTimeout(() => priceEl.classList.remove('flash-green', 'flash-red'), 600);
                         }
                         
                         priceEl.innerText = formatPrice(displayPrice);
@@ -2118,32 +2174,38 @@
             });
             
             // Aggiorna prezzo nel trade sheet se aperto
-            if (state.currentToken) {
-                const tsPrice = document.getElementById('tsPrice');
-                if (tsPrice) {
-                    const gem = state.gems.find(g => g.token === state.currentToken.token);
-                    if (gem) {
-                        const oscillation = 1 + (Math.random() - 0.5) * 0.01;
-                        const displayPrice = gem.price * oscillation;
-                        const oldPrice = parseFloat(tsPrice.dataset.lastPrice) || gem.price;
-                        
-                        // Flash animation
-                        if (Math.abs(displayPrice - oldPrice) / oldPrice > 0.001) {
-                            const isUp = displayPrice > oldPrice;
-                            tsPrice.classList.add(isUp ? 'price-up' : 'price-down');
-                            setTimeout(() => {
-                                tsPrice.classList.remove('price-up', 'price-down');
-                            }, 300);
-                        }
-                        
-                        tsPrice.innerText = formatPrice(displayPrice);
-                        tsPrice.dataset.lastPrice = displayPrice;
-                        
-                        // Aggiorna stima profitto in tempo reale
-                        updateProfitEstimate(displayPrice);
-                    }
-                }
+            updateTradeSheetPrice();
+        }
+        
+        // Aggiorna prezzo velocemente nel trade sheet (per effetto live)
+        function updateTradeSheetPrice() {
+            if (!state.currentToken) return;
+            
+            const tsPrice = document.getElementById('tsPrice');
+            if (!tsPrice) return;
+            
+            const gem = state.gems.find(g => g.token === state.currentToken.token);
+            if (!gem) return;
+            
+            const volatility = Math.abs(gem.change_1h || 1) / 100;
+            const oscillation = 1 + (Math.random() - 0.5) * Math.min(volatility * 0.3, 0.015);
+            const displayPrice = gem.price * oscillation;
+            const oldPrice = parseFloat(tsPrice.dataset.lastPrice) || gem.price;
+            
+            const priceDiff = (displayPrice - oldPrice) / oldPrice;
+            if (Math.abs(priceDiff) > 0.0003) {
+                const isUp = displayPrice > oldPrice;
+                tsPrice.classList.remove('price-up', 'price-down');
+                void tsPrice.offsetWidth;
+                tsPrice.classList.add(isUp ? 'price-up' : 'price-down');
+                setTimeout(() => tsPrice.classList.remove('price-up', 'price-down'), 200);
             }
+            
+            tsPrice.innerText = formatPrice(displayPrice);
+            tsPrice.dataset.lastPrice = displayPrice;
+            
+            // Aggiorna stima profitto
+            updateProfitEstimate(displayPrice);
         }
         
         // Calcola e mostra stima profitto in tempo reale
@@ -2152,23 +2214,30 @@
             if (profitEl && state.currentToken && state.currentToken.entry_price > 0) {
                 const entryPrice = state.currentToken.entry_price;
                 const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
-                const pnlClass = pnlPct >= 0 ? 'text-green-400' : 'text-red-400';
-                profitEl.innerHTML = `<span class="${pnlClass} font-bold">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>`;
+                const pnlClass = pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400';
+                const arrow = pnlPct >= 0 ? '↗' : '↘';
+                profitEl.innerHTML = `<span class="${pnlClass} font-bold">${arrow} ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>`;
             }
         }
         
         // Avvia aggiornamento prezzi live
         function startLivePrices() {
             if (priceUpdateInterval) clearInterval(priceUpdateInterval);
-            priceUpdateInterval = setInterval(updateLivePrices, 2000); // Ogni 2 secondi
+            if (fastPriceInterval) clearInterval(fastPriceInterval);
+            
+            // Aggiornamento principale ogni 2 secondi
+            priceUpdateInterval = setInterval(updateLivePrices, 2000);
+            
+            // Aggiornamento veloce del trade sheet ogni 500ms
+            fastPriceInterval = setInterval(updateTradeSheetPrice, 500);
+            
+            console.log('📈 Prezzi LIVE attivati');
         }
         
         // Ferma aggiornamento prezzi
         function stopLivePrices() {
-            if (priceUpdateInterval) {
-                clearInterval(priceUpdateInterval);
-                priceUpdateInterval = null;
-            }
+            if (priceUpdateInterval) { clearInterval(priceUpdateInterval); priceUpdateInterval = null; }
+            if (fastPriceInterval) { clearInterval(fastPriceInterval); fastPriceInterval = null; }
         }
 
         // ═══════════════════════════════════════════════════════════════
