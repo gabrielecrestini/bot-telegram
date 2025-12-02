@@ -12,10 +12,10 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::time::Duration;
+use std::str::FromStr;
 use solana_sdk::transaction::VersionedTransaction;
-use solana_sdk::signature::Signature;
 use base64::{Engine as _, engine::general_purpose};
-use log::{info, warn, error};
+use log::{info, warn};
 
 // Jito Block Engine Endpoints
 const JITO_MAINNET_BLOCK_ENGINE: &str = "https://mainnet.block-engine.jito.wtf";

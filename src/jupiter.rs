@@ -826,6 +826,61 @@ pub async fn find_profitable_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn 
     Ok(profitable)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// JUPITER QUOTE - Per comparazione con altri DEX
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Struttura Quote Jupiter per comparazione
+#[derive(Debug, Clone)]
+pub struct JupiterQuote {
+    pub in_amount: u64,
+    pub out_amount: u64,
+    pub price_impact_pct: f64,
+    pub slippage_bps: u16,
+}
+
+/// Ottiene solo la quote da Jupiter (senza transazione)
+pub async fn get_jupiter_quote(
+    input_mint: &str, 
+    output_mint: &str, 
+    amount_lamports: u64, 
+    slippage_bps: u16
+) -> Result<JupiterQuote, Box<dyn Error + Send + Sync>> {
+    let quote_url = format!("{}?inputMint={}&outputMint={}&amount={}&slippageBps={}", 
+        JUP_QUOTE_API, input_mint, output_mint, amount_lamports, slippage_bps);
+    
+    let quote_resp = match robust_get(&quote_url).await {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(json) => json,
+            Err(e) => return Err(format!("Quote JSON parse error: {}", e).into()),
+        },
+        Err(e) => return Err(format!("Quote request failed: {}", e).into()),
+    };
+    
+    if quote_resp.get("error").is_some() { 
+        return Err(format!("Jupiter Quote Error: {}", quote_resp).into()); 
+    }
+    
+    let in_amount = quote_resp["inAmount"].as_str()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(amount_lamports);
+    
+    let out_amount = quote_resp["outAmount"].as_str()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    
+    let price_impact_pct = quote_resp["priceImpactPct"].as_str()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    
+    Ok(JupiterQuote {
+        in_amount,
+        out_amount,
+        price_impact_pct,
+        slippage_bps,
+    })
+}
+
 /// Ottiene transazione swap da Jupiter con priority fees ottimizzate
 /// slippage_bps: 100 = 1%, 200 = 2%, ecc.
 /// Include retry automatico per errori di rete

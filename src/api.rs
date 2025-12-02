@@ -1,7 +1,7 @@
 use warp::Filter;
 use std::sync::Arc;
 use serde::{Serialize, Deserialize};
-use crate::{db, network, wallet_manager, jupiter, AppState, GemData};
+use crate::{db, network, wallet_manager, jupiter, orca, jito, AppState, GemData};
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::system_instruction;
@@ -469,35 +469,98 @@ async fn handle_trade(
         let token_image = token_data.as_ref().map(|t| t.image_url.clone()).unwrap_or_default();
 
         let input = "So11111111111111111111111111111111111111112";
-        match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), input, &req.token, amount_lamports, 100).await {
-            Ok(tx) => {
-                if let Ok(bh) = net.rpc.get_latest_blockhash().await {
-                    // Firma la VersionedTransaction con il nuovo blockhash
-                    match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
-                        Ok(signed_tx) => {
-                            match net.send_versioned_transaction(&signed_tx).await {
-                                Ok(sig) => {
-                                    // Salva con tutti i dettagli per mostrare PnL
-                                    let _ = db::record_buy_complete(
-                                        &pool, &user_id, &req.token, &sig, amount_lamports,
-                                        "MANUAL", entry_price, &token_symbol, &token_image
-                                    ).await;
-                                    info!("✅ BUY {} @ ${:.8} | {} SOL | TX: {}", token_symbol, entry_price, req.amount_sol, sig);
-                                    return Ok(warp::reply::json(&ApiResponse {
-                                        success: true,
-                                        message: format!("Buy {} Eseguito", token_symbol),
-                                        tx_signature: sig.clone(),
-                                        solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
-                                    }));
-                                }
-                                Err(e) => warn!("⚠️ Jupiter TX fallita: {}", e),
+        
+        // SMART SWAP: Confronta Jupiter vs Orca per miglior prezzo
+        let bh = match net.rpc.get_latest_blockhash().await {
+            Ok(bh) => bh,
+            Err(e) => {
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: format!("Errore blockhash: {}", e),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
+        
+        // Prova Smart Swap (Jupiter + Orca confronto)
+        match orca::smart_swap(
+            &payer.pubkey().to_string(),
+            &payer,
+            input,
+            &req.token,
+            amount_lamports,
+            150, // 1.5% slippage
+            bh
+        ).await {
+            Ok((signed_tx, dex_used)) => {
+                // Invia via Jito per velocità massima (MEV protection)
+                match jito::send_transaction_jito(&signed_tx, Some(50_000)).await {
+                    Ok(bundle_id) => {
+                        let _ = db::record_buy_complete(
+                            &pool, &user_id, &req.token, &bundle_id, amount_lamports,
+                            "MANUAL", entry_price, &token_symbol, &token_image
+                        ).await;
+                        info!("✅ BUY {} @ ${:.8} | {} SOL | {} | Jito: {}", token_symbol, entry_price, req.amount_sol, dex_used, bundle_id);
+                        return Ok(warp::reply::json(&ApiResponse {
+                            success: true,
+                            message: format!("Buy {} via {} ⚡", token_symbol, dex_used),
+                            tx_signature: bundle_id.clone(),
+                            solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, bundle_id)),
+                        }));
+                    }
+                    Err(_) => {
+                        // Fallback: invia via RPC normale
+                        match net.send_versioned_transaction(&signed_tx).await {
+                            Ok(sig) => {
+                                let _ = db::record_buy_complete(
+                                    &pool, &user_id, &req.token, &sig, amount_lamports,
+                                    "MANUAL", entry_price, &token_symbol, &token_image
+                                ).await;
+                                info!("✅ BUY {} @ ${:.8} | {} SOL | {} | TX: {}", token_symbol, entry_price, req.amount_sol, dex_used, sig);
+                                return Ok(warp::reply::json(&ApiResponse {
+                                    success: true,
+                                    message: format!("Buy {} via {}", token_symbol, dex_used),
+                                    tx_signature: sig.clone(),
+                                    solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
+                                }));
                             }
+                            Err(e) => warn!("⚠️ {} TX fallita: {}", dex_used, e),
                         }
-                        Err(e) => warn!("⚠️ Firma TX fallita: {}", e),
                     }
                 }
             }
-            Err(e) => warn!("⚠️ Jupiter quote: {}", e),
+            Err(e) => {
+                warn!("⚠️ Smart swap fallito: {}, provo Jupiter diretto", e);
+                
+                // Fallback Jupiter diretto
+                match jupiter::get_jupiter_swap_tx(&payer.pubkey().to_string(), input, &req.token, amount_lamports, 200).await {
+                    Ok(tx) => {
+                        match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                            Ok(signed_tx) => {
+                                match net.send_versioned_transaction(&signed_tx).await {
+                                    Ok(sig) => {
+                                        let _ = db::record_buy_complete(
+                                            &pool, &user_id, &req.token, &sig, amount_lamports,
+                                            "MANUAL", entry_price, &token_symbol, &token_image
+                                        ).await;
+                                        info!("✅ BUY {} @ ${:.8} | {} SOL | Jupiter | TX: {}", token_symbol, entry_price, req.amount_sol, sig);
+                                        return Ok(warp::reply::json(&ApiResponse {
+                                            success: true,
+                                            message: format!("Buy {} Eseguito", token_symbol),
+                                            tx_signature: sig.clone(),
+                                            solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
+                                        }));
+                                    }
+                                    Err(e) => warn!("⚠️ Jupiter TX fallita: {}", e),
+                                }
+                            }
+                            Err(e) => warn!("⚠️ Firma TX fallita: {}", e),
+                        }
+                    }
+                    Err(e) => warn!("⚠️ Jupiter quote: {}", e),
+                }
+            }
         }
 
         // Trade fallito

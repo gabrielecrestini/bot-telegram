@@ -14,7 +14,7 @@ use solana_sdk::signature::Signer;
 use spl_associated_token_account;
 use teloxide::Bot;
 
-// MODULI
+// MODULI - Trading Professionale
 pub mod wallet_manager;
 pub mod network;
 pub mod db;
@@ -22,11 +22,11 @@ pub mod telegram_bot;
 pub mod safety;
 pub mod strategy;
 pub mod api;
-pub mod jupiter;
+pub mod jupiter;   // DEX Aggregator principale (V6 API)
+pub mod orca;      // DEX Aggregator alternativo (Whirlpools)
 pub mod engine;
-pub mod raydium;  // Fallback per Jupiter
-pub mod jito;     // Velocità estrema + MEV protection
-pub mod birdeye;  // Dati mercato professionali
+pub mod jito;      // Velocità QUIC + MEV protection + Bundle TX
+pub mod birdeye;   // Dati mercato professionali + Portfolio
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // WATCHLIST - Token monitorati per segnali (NO stablecoins, NO SOL)
@@ -206,41 +206,42 @@ async fn execute_amms_auto_buy(
                         
                         info!("🛒 BUY {} | User: {} | Amount: {:.4} SOL", &token_c[..8], uid, amt_sol);
 
-                        // JUPITER ONLY - Velocità pura via QUIC
-                        match jupiter::get_jupiter_swap_tx(
-                            &payer.pubkey().to_string(), 
-                            input, 
-                            &token_c, 
-                            amt_lam, 
-                            200  // 2% slippage
-                        ).await {
-                            Ok(tx) => {
-                                match net_c.rpc.get_latest_blockhash().await {
-                                    Ok(bh) => {
-                                        match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
-                                            Ok(signed_tx) => {
-                                                match net_c.send_versioned_transaction(&signed_tx).await {
-                                                    Ok(sig) => {
-                                                        let mode_str = match mode {
-                                                            strategy::TradingMode::Dip => "DIP",
-                                                            strategy::TradingMode::Breakout => "BREAKOUT",
-                                                            _ => "AUTO",
-                                                        };
-                                                        info!("✅ {} JUPITER ({}) | {:.4} SOL | TX: {}", mode_str, uid, amt_sol, sig);
-                                                        let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
-                                                        success = true;
-                                                        entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
-                                                    },
-                                                    Err(e) => warn!("❌ Jupiter TX send fallita: {}", e),
-                                                }
-                                            },
-                                            Err(e) => warn!("❌ Jupiter TX sign fallita: {}", e),
+                        // SMART SWAP: Jupiter + Orca + Jito per velocità massima
+                        if let Ok(bh) = net_c.rpc.get_latest_blockhash().await {
+                            // Prova smart swap (confronta Jupiter vs Orca)
+                            match orca::smart_swap(
+                                &payer.pubkey().to_string(),
+                                &payer,
+                                input,
+                                &token_c,
+                                amt_lam,
+                                200, // 2% slippage
+                                bh
+                            ).await {
+                                Ok((signed_tx, dex_used)) => {
+                                    // Invia via Jito per velocità massima
+                                    let sig = match jito::send_transaction_jito(&signed_tx, Some(50_000)).await {
+                                        Ok(bundle_id) => bundle_id,
+                                        Err(_) => {
+                                            // Fallback RPC normale
+                                            net_c.send_versioned_transaction(&signed_tx).await.unwrap_or_default()
                                         }
-                                    },
-                                    Err(e) => warn!("❌ Blockhash fallito: {}", e),
-                                }
-                            },
-                            Err(e) => warn!("❌ Jupiter quote fallita: {}", e),
+                                    };
+                                    
+                                    if !sig.is_empty() {
+                                        let mode_str = match mode {
+                                            strategy::TradingMode::Dip => "DIP",
+                                            strategy::TradingMode::Breakout => "BREAKOUT",
+                                            _ => "AUTO",
+                                        };
+                                        info!("✅ {} {} ({}) | {:.4} SOL | TX: {}", mode_str, dex_used, uid, amt_sol, sig);
+                                        let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
+                                        success = true;
+                                        entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
+                                    }
+                                },
+                                Err(e) => warn!("❌ Smart swap fallito: {}", e),
+                            }
                         }
 
                         // Registra posizione per tracking AMMS
