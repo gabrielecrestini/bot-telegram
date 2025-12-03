@@ -127,6 +127,29 @@ async fn init_schema(pool: &SqlitePool) {
         .await;
     
     info!("✅ Schema Database verificato (Full Features + Migrazioni PnL).");
+    
+    // ═══════════════════════════════════════════════════════════════
+    // OTTIMIZZAZIONE AWS - Pulizia automatica vecchi dati (30GB limit)
+    // ═══════════════════════════════════════════════════════════════
+    cleanup_old_data(pool).await;
+}
+
+/// Pulisce dati vecchi per mantenere il DB sotto 30GB
+async fn cleanup_old_data(pool: &SqlitePool) {
+    // Mantieni solo ultimi 90 giorni di trades chiusi
+    let _ = sqlx::query(
+        "DELETE FROM trades WHERE status = 'SOLD' AND entry_time < datetime('now', '-90 days')"
+    ).execute(pool).await;
+    
+    // Mantieni solo ultimi 60 giorni di prelievi completati
+    let _ = sqlx::query(
+        "DELETE FROM withdrawals WHERE status = 'COMPLETED' AND created_at < datetime('now', '-60 days')"
+    ).execute(pool).await;
+    
+    // Vacuum per recuperare spazio (solo se DB > 100MB)
+    let _ = sqlx::query("PRAGMA page_count").fetch_one(pool).await;
+    
+    info!("🧹 Pulizia database completata");
 }
 
 // --- FUNZIONI OPERATIVE (Tutte PUBBLICHE) ---

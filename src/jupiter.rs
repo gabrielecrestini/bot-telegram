@@ -690,14 +690,35 @@ fn passes_quality_filters(token: &TokenMarketData) -> bool {
     if vol_liq_ratio < 0.05 || vol_liq_ratio > 20.0 { return false; }
     
     // 8. DEVE avere immagine valida (non vuota e non placeholder)
-    if token.image_url.is_empty() 
-        || token.image_url.contains("undefined") 
-        || token.image_url.contains("null") 
-        || token.image_url.len() < 10 {
+    if !is_valid_image_url(&token.image_url) {
         return false;
     }
     
     true
+}
+
+/// Verifica se un URL immagine è valido
+fn is_valid_image_url(url: &str) -> bool {
+    // Deve avere lunghezza minima
+    if url.len() < 15 { return false; }
+    
+    // Deve iniziare con http
+    if !url.starts_with("http") { return false; }
+    
+    // Non deve contenere placeholder
+    let bad_patterns = ["undefined", "null", "placeholder", "default", "unknown", "missing"];
+    for pattern in bad_patterns {
+        if url.to_lowercase().contains(pattern) { return false; }
+    }
+    
+    // Deve avere estensione immagine o essere da CDN noto
+    let valid_sources = [
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+        "arweave.net", "ipfs.io", "cloudflare", "jup.ag", "dexscreener",
+        "githubusercontent", "s3.amazonaws", "token-icons", "raw.githubusercontent"
+    ];
+    
+    valid_sources.iter().any(|s| url.to_lowercase().contains(s))
 }
 
 pub async fn get_token_info(mint: &str) -> Result<(f64, String), Box<dyn Error + Send + Sync>> {

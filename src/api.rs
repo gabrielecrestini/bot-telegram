@@ -490,11 +490,32 @@ async fn handle_trade(
             }));
         }
 
-        // Recupera dati token per PnL e immagine
-        let token_data = jupiter::get_token_market_data(&req.token).await.ok();
+        // Recupera dati token per PnL e immagine - IMPORTANTE per tracking
+        let token_data = match jupiter::get_token_market_data(&req.token).await {
+            Ok(data) => {
+                info!("📊 Token data: {} @ ${:.10}", data.symbol, data.price);
+                Some(data)
+            },
+            Err(e) => {
+                warn!("⚠️ Impossibile recuperare dati token: {}", e);
+                None
+            }
+        };
+        
+        // Entry price DEVE essere > 0 per calcolare P&L
         let entry_price = token_data.as_ref().map(|t| t.price).unwrap_or(0.0);
-        let token_symbol = token_data.as_ref().map(|t| t.symbol.clone()).unwrap_or_default();
-        let token_image = token_data.as_ref().map(|t| t.image_url.clone()).unwrap_or_default();
+        if entry_price <= 0.0 {
+            warn!("⚠️ Entry price = 0 per {}, P&L non calcolabile", req.token);
+        }
+        
+        let token_symbol = token_data.as_ref()
+            .map(|t| t.symbol.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("TKN-{}", &req.token[..6]));
+        let token_image = token_data.as_ref()
+            .map(|t| t.image_url.clone())
+            .filter(|u| u.len() > 10 && !u.contains("undefined"))
+            .unwrap_or_else(|| format!("https://img.jup.ag/v6/{}/logo", req.token));
 
         let input = "So11111111111111111111111111111111111111112";
         

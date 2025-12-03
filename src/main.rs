@@ -638,8 +638,17 @@ async fn run_trending_scanner(net: Arc<network::NetworkClient>, state: Arc<AppSt
                                     }
                                 }
                                 
-                                // Auto buy se score molto alto e buone metriche
-                                if gem.score >= 75 && gem.change_1h > 5.0 && gem.liquidity_usd > 50000.0 {
+                                // Auto buy se score buono e metriche decenti
+                                // Soglie più permissive per più opportunità
+                                let should_buy = 
+                                    (gem.score >= 65 && gem.change_1h > 2.0 && gem.liquidity_usd > 20000.0) ||
+                                    (gem.score >= 70 && gem.change_24h > 10.0) ||
+                                    (gem.change_1h > 8.0 && gem.volume_24h > 100000.0);
+                                
+                                if should_buy {
+                                    info!("🎯 AUTO-BUY TRIGGER: {} Score:{} 1h:{:+.1}% Liq:${:.0}k", 
+                                        gem.symbol, gem.score, gem.change_1h, gem.liquidity_usd/1000.0);
+                                    
                                     let ext = strategy::ExternalData {
                                         price: gem.price,
                                         change_5m: gem.change_1h / 12.0,
@@ -650,7 +659,13 @@ async fn run_trending_scanner(net: Arc<network::NetworkClient>, state: Arc<AppSt
                                         market_cap: gem.market_cap,
                                     };
                                     
-                                    execute_amms_auto_buy(&pool, &net, &state, &pk, Some(&ext), strategy::TradingMode::Breakout).await;
+                                    let mode = if gem.change_1h > 5.0 {
+                                        strategy::TradingMode::Breakout
+                                    } else {
+                                        strategy::TradingMode::Dip
+                                    };
+                                    
+                                    execute_amms_auto_buy(&pool, &net, &state, &pk, Some(&ext), mode).await;
                                 }
                             }
                         }
@@ -753,11 +768,33 @@ fn is_excluded_token(address: &str, symbol: &str) -> bool {
 
 /// Ottieni URL immagine con fallback DexScreener
 fn get_image_url(original: &str, token_address: &str) -> String {
-    if original.is_empty() || original.contains("undefined") || original.contains("null") {
-        format!("https://dd.dexscreener.com/ds-data/tokens/solana/{}.png", token_address)
-    } else {
+    // Verifica se l'URL originale è valido
+    let is_valid = !original.is_empty() 
+        && original.len() > 15 
+        && original.starts_with("http")
+        && !original.to_lowercase().contains("undefined")
+        && !original.to_lowercase().contains("null")
+        && !original.to_lowercase().contains("placeholder");
+    
+    if is_valid {
         original.to_string()
+    } else {
+        // Fallback a DexScreener che ha la maggior parte delle immagini
+        format!("https://dd.dexscreener.com/ds-data/tokens/solana/{}.png", token_address)
     }
+}
+
+/// Verifica se un token ha un'immagine valida
+fn has_valid_image(url: &str) -> bool {
+    if url.len() < 15 { return false; }
+    if !url.starts_with("http") { return false; }
+    
+    let bad = ["undefined", "null", "placeholder", "default", "missing"];
+    let url_lower = url.to_lowercase();
+    for pattern in bad {
+        if url_lower.contains(pattern) { return false; }
+    }
+    true
 }
 
 async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient>) {

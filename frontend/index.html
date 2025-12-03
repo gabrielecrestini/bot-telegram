@@ -1036,9 +1036,15 @@
             </div>
         </div>
 
-        <button onclick="executeTrade()" id="btnTrade" class="btn btn-green w-full flex items-center justify-center gap-2">
-            <i data-lucide="zap" class="w-4 h-4"></i> <span id="btnTradeText">Compra</span>
-        </button>
+        <!-- PULSANTI COMPRA/VENDI -->
+        <div class="grid grid-cols-2 gap-3" id="tradeButtons">
+            <button onclick="executeTrade()" id="btnTrade" class="btn btn-green w-full flex items-center justify-center gap-2">
+                <i data-lucide="zap" class="w-4 h-4"></i> <span id="btnTradeText">Compra</span>
+            </button>
+            <button onclick="executeSellFromSheet()" id="btnSellSheet" class="btn bg-red-500 hover:bg-red-600 text-white w-full flex items-center justify-center gap-2 hidden">
+                <i data-lucide="arrow-down-right" class="w-4 h-4"></i> <span>Vendi</span>
+            </button>
+        </div>
     </div>
 
     <!-- Sell Sheet -->
@@ -1246,14 +1252,33 @@
             document.getElementById('tsScore').innerText = (token.safety_score || 0) + '/100';
             document.getElementById('tsAddr').innerText = token.token || '...';
             
-            // SE BOT ATTIVO: Mostra indicazione e disabilita acquisti
+            // Controlla se abbiamo posizione aperta su questo token
+            const openPosition = state.openPositions?.find(p => p.token_address === token.token);
+            const hasPosition = !!openPosition;
+            
             const btnTrade = document.getElementById('btnTrade');
             const btnTradeText = document.getElementById('btnTradeText');
+            const btnSellSheet = document.getElementById('btnSellSheet');
+            
+            // Mostra/nascondi pulsante VENDI
+            if (hasPosition) {
+                btnSellSheet.classList.remove('hidden');
+                state.currentToken.invested_sol = openPosition.amount_sol;
+                state.currentToken.entry_price = openPosition.entry_price;
+            } else {
+                btnSellSheet.classList.add('hidden');
+            }
+            
+            // SE BOT ATTIVO: Mostra indicazione e disabilita acquisti
             if (state.botActive) {
                 document.getElementById('tsMax').innerText = '🤖 Bot Attivo';
                 btnTrade.disabled = true;
                 btnTrade.className = 'btn bg-zinc-700 text-zinc-400 w-full flex items-center justify-center gap-2 cursor-not-allowed';
-                btnTradeText.innerText = 'Bot Gestisce i Fondi';
+                btnTradeText.innerText = 'Bot Gestisce';
+                // Ma permetti vendita manuale anche con bot attivo
+                if (hasPosition) {
+                    btnSellSheet.classList.remove('hidden');
+                }
             } else {
                 document.getElementById('tsMax').innerText = Math.max(0, state.balance - 0.005).toFixed(4);
                 btnTrade.disabled = false;
@@ -1753,6 +1778,57 @@
             document.getElementById('sellAmount').innerText = parseFloat(amount).toFixed(4) + ' SOL investiti';
         }
         
+        // ═══════════════════════════════════════════════════════════════
+        // VENDITA - Funzioni per vendere posizioni
+        // ═══════════════════════════════════════════════════════════════
+        
+        // Vendi direttamente dal trade sheet
+        async function executeSellFromSheet() {
+            if (!state.currentToken) return toast('Errore', 'Nessun token selezionato');
+            
+            // Controlla se abbiamo una posizione aperta
+            const hasPosition = state.openPositions?.some(p => p.token_address === state.currentToken.token);
+            if (!hasPosition && !state.currentToken.invested_sol) {
+                return toast('Errore', 'Non hai posizioni aperte per questo token');
+            }
+            
+            const btn = document.getElementById('btnSellSheet');
+            btn.disabled = true;
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Vendendo...';
+            lucide.createIcons();
+            
+            try {
+                const res = await fetch(`${API}/trade`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ 
+                        action: 'SELL', 
+                        token: state.currentToken.token, 
+                        amount_sol: state.currentToken.invested_sol || 0
+                    })
+                });
+                const d = await res.json();
+                
+                if (d.success) {
+                    toast('✅ Venduto!', d.message || `${state.currentToken.symbol} venduto con successo`);
+                    if (d.solscan_url) {
+                        setTimeout(() => toast('🔗 TX', `<a href="${d.solscan_url}" target="_blank" class="text-purple-400 underline">Vedi su Solscan</a>`), 1000);
+                    }
+                    closeAll();
+                    await sync();
+                } else {
+                    toast('❌ Errore', d.message || 'Vendita fallita');
+                }
+            } catch (e) {
+                console.error('Sell error:', e);
+                toast('❌ Errore', 'Connessione fallita');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i data-lucide="arrow-down-right" class="w-4 h-4"></i> Vendi';
+                lucide.createIcons();
+            }
+        }
+        
         async function executeSell() {
             if (!state.currentToken) return;
             
@@ -1771,7 +1847,7 @@
                     body: JSON.stringify({ 
                         action: 'SELL', 
                         token: state.currentToken.token, 
-                        amount_sol: state.currentToken.amount 
+                        amount_sol: state.currentToken.invested_sol || state.currentToken.amount || 0
                     })
                 });
                 const d = await res.json();
@@ -2343,11 +2419,8 @@
                     if (!g.liquidity_usd || g.liquidity_usd < 1000) return false;
                     // Escludi stablecoins per simbolo
                     if (['USDC', 'USDT', 'USDH', 'DAI', 'USDD'].includes(g.symbol?.toUpperCase())) return false;
-                    // NUOVO: Escludi token SENZA immagine valida
-                    if (!g.image_url || g.image_url.length < 10 || g.image_url.includes('undefined') || g.image_url.includes('null')) {
-                        // Controlla se almeno ha un simbolo per fallback
-                        if (!g.symbol || g.symbol.length < 1) return false;
-                    }
+                    // Token deve avere simbolo valido
+                    if (!g.symbol || g.symbol.length < 1) return false;
                     return true;
                 });
                 
@@ -2385,21 +2458,11 @@
                         const change1h = g.change_1h || 0;
                         const change24h = g.change_24h || 0;
                         
-                        // Immagine con fallback multipli robusto
+                        // Immagine con fallback robusto
                                         const symbol = g.symbol || '?';
-                                        const firstLetter = encodeURIComponent(symbol[0] || '?');
-                                        const letterFallback = `https://ui-avatars.com/api/?name=${firstLetter}&background=6366f1&color=fff&size=48&bold=true`;
+                                        const imgSrc = getTokenImage(g);
+                                        const letterFallback = `https://ui-avatars.com/api/?name=${encodeURIComponent(symbol[0] || '?')}&background=6366f1&color=fff&size=48&bold=true`;
                                         const jupiterImg = `https://img.jup.ag/v6/${g.token}/logo`;
-                                        const dexImg = `https://dd.dexscreener.com/ds-data/tokens/solana/${g.token}.png`;
-                                        
-                                        // Priorità: DexScreener -> API immagine -> Jupiter -> Avatar lettera
-                                        let imgSrc = dexImg;
-                                        if (g.image_url && g.image_url.length > 10 && 
-                                            !g.image_url.includes('undefined') && 
-                                            !g.image_url.includes('null') &&
-                                            g.image_url.startsWith('http')) {
-                                            imgSrc = g.image_url;
-                                        }
                                         
                                         return `
                                         <div class="token-row" onclick="openTokenByIndex(${idx})">
@@ -2471,6 +2534,27 @@
             if (mcap >= 1_000_000) return '$' + (mcap / 1_000_000).toFixed(1) + 'M';
             if (mcap >= 1_000) return '$' + (mcap / 1_000).toFixed(0) + 'K';
             return '$' + mcap.toFixed(0);
+        }
+        
+        // Verifica se URL immagine è valido
+        function isValidImageUrl(url) {
+            if (!url || url.length < 15) return false;
+            if (!url.startsWith('http')) return false;
+            const bad = ['undefined', 'null', 'placeholder', 'default', 'missing', 'unknown'];
+            const lower = url.toLowerCase();
+            return !bad.some(b => lower.includes(b));
+        }
+        
+        // Ottiene URL immagine con fallback
+        function getTokenImage(g) {
+            const token = g.token || g.token_address || '';
+            const symbol = g.symbol || '?';
+            const letterFallback = `https://ui-avatars.com/api/?name=${encodeURIComponent(symbol[0] || '?')}&background=6366f1&color=fff&size=48&bold=true`;
+            
+            // Prova in ordine: image_url -> dexscreener -> jupiter -> lettera
+            if (isValidImageUrl(g.image_url)) return g.image_url;
+            if (token) return `https://dd.dexscreener.com/ds-data/tokens/solana/${token}.png`;
+            return letterFallback;
         }
 
         // ═══════════════════════════════════════════════════════════════
