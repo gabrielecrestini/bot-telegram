@@ -369,20 +369,25 @@ pub async fn get_open_trades_all(pool: &SqlitePool) -> Result<Vec<(i32, String, 
     Ok(results)
 }
 
-/// Trade aperto per un utente specifico
+/// Trade aperto per un utente specifico - COMPLETO con tutti i dati per UI
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct OpenTrade {
     pub id: i32,
     pub token_address: String,
-    pub amount_lamports: u64,
-    pub entry_price: f64,
+    pub amount_sol: f64,           // Importo in SOL
+    pub entry_price: f64,          // Prezzo di entrata USD
+    pub token_symbol: String,      // Simbolo (BONK, JUP)
+    pub token_image: String,       // URL immagine
+    pub entry_time: String,        // Quando è stato aperto
+    pub trading_mode: String,      // AUTO, MANUAL, BOT
 }
 
-/// Recupera trade aperti per un utente specifico
+/// Recupera trade aperti per un utente specifico - FULL DATA
 pub async fn get_open_trades(pool: &SqlitePool, user_id: &str) -> Result<Vec<OpenTrade>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, token_address, amount_in_lamports, entry_price 
-         FROM trades WHERE user_id = ? AND status = 'OPEN'"
+        "SELECT id, token_address, amount_in_lamports, entry_price, token_symbol, token_image, entry_time, trading_mode 
+         FROM trades WHERE user_id = ? AND status = 'OPEN'
+         ORDER BY entry_time DESC"
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -390,14 +395,35 @@ pub async fn get_open_trades(pool: &SqlitePool, user_id: &str) -> Result<Vec<Ope
     
     let mut results = Vec::new();
     for row in rows {
+        let token_addr: String = row.get("token_address");
+        let lamports: i64 = row.get("amount_in_lamports");
         results.push(OpenTrade {
             id: row.get("id"),
-            token_address: row.get("token_address"),
-            amount_lamports: row.get::<i64, _>("amount_in_lamports") as u64,
+            token_address: token_addr.clone(),
+            amount_sol: lamports as f64 / 1_000_000_000.0,
             entry_price: row.try_get("entry_price").unwrap_or(0.0),
+            token_symbol: row.try_get("token_symbol").unwrap_or_else(|_| "???".to_string()),
+            token_image: row.try_get::<String, _>("token_image")
+                .unwrap_or_else(|_| format!("https://img.jup.ag/v6/{}/logo", token_addr)),
+            entry_time: row.try_get("entry_time").unwrap_or_else(|_| "".to_string()),
+            trading_mode: row.try_get("trading_mode").unwrap_or_else(|_| "AUTO".to_string()),
         });
     }
     Ok(results)
+}
+
+/// Calcola il totale SOL bloccato in posizioni aperte
+pub async fn get_locked_sol(pool: &SqlitePool, user_id: &str) -> Result<f64, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT COALESCE(SUM(amount_in_lamports), 0) as total 
+         FROM trades WHERE user_id = ? AND status = 'OPEN'"
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    
+    let total: i64 = row.get("total");
+    Ok(total as f64 / 1_000_000_000.0)
 }
 
 /// Statistiche utente

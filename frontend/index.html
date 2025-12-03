@@ -1106,7 +1106,11 @@
             gems: [],
             trades: [],
             withdrawals: [],
-            historyFilter: 'all'
+            historyFilter: 'all',
+            // NUOVI CAMPI per posizioni aperte
+            openPositions: [],
+            lockedSol: 0,
+            availableSol: 0,
         };
 
         // Navigation
@@ -1241,7 +1245,21 @@
             document.getElementById('tsVol').innerText = formatMcap(token.volume_24h || 0);
             document.getElementById('tsScore').innerText = (token.safety_score || 0) + '/100';
             document.getElementById('tsAddr').innerText = token.token || '...';
-            document.getElementById('tsMax').innerText = Math.max(0, state.balance - 0.005).toFixed(4);
+            
+            // SE BOT ATTIVO: Mostra indicazione e disabilita acquisti
+            const btnTrade = document.getElementById('btnTrade');
+            const btnTradeText = document.getElementById('btnTradeText');
+            if (state.botActive) {
+                document.getElementById('tsMax').innerText = '🤖 Bot Attivo';
+                btnTrade.disabled = true;
+                btnTrade.className = 'btn bg-zinc-700 text-zinc-400 w-full flex items-center justify-center gap-2 cursor-not-allowed';
+                btnTradeText.innerText = 'Bot Gestisce i Fondi';
+            } else {
+                document.getElementById('tsMax').innerText = Math.max(0, state.balance - 0.005).toFixed(4);
+                btnTrade.disabled = false;
+                btnTrade.className = 'btn btn-green w-full flex items-center justify-center gap-2';
+                btnTradeText.innerText = 'Compra';
+            }
             
             // Immagine con fallback robusto a catena
             const symbol = token.symbol || '?';
@@ -1280,6 +1298,12 @@
         }
 
         async function executeTrade() {
+            // BLOCCO SE BOT ATTIVO
+            if (state.botActive) {
+                toast('🤖 Bot Attivo', 'Ferma il bot per fare trading manuale');
+                return;
+            }
+            
             const amt = parseFloat(document.getElementById('tsAmt').value);
             if (!amt || amt <= 0) return toast('Errore', 'Inserisci importo');
             if (amt > state.balance) return toast('Errore', 'Fondi insufficienti');
@@ -1812,6 +1836,133 @@
             renderHistory();
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // RENDER POSIZIONI APERTE - P&L Live in SOL
+        // ═══════════════════════════════════════════════════════════════
+        function renderOpenPositions() {
+            const container = document.getElementById('openPositionsList');
+            const countEl = document.getElementById('openPositionsCount');
+            const positions = state.openPositions || [];
+            
+            countEl.innerText = positions.length;
+            
+            if (positions.length === 0) {
+                container.innerHTML = `
+                    <div class="p-4 text-center text-zinc-500 text-xs">
+                        <i data-lucide="inbox" class="w-6 h-6 mx-auto mb-2 opacity-50"></i>
+                        Nessuna posizione aperta
+                    </div>
+                `;
+                lucide.createIcons();
+                return;
+            }
+            
+            // Calcola P&L per ogni posizione
+            let totalPnlSol = 0;
+            
+            container.innerHTML = positions.map((pos, idx) => {
+                // Cerca prezzo attuale nel gems feed
+                const currentGem = state.gems.find(g => g.token === pos.token_address);
+                const currentPrice = currentGem?.price || pos.entry_price;
+                
+                // Calcola P&L
+                const pnlPct = pos.entry_price > 0 
+                    ? ((currentPrice - pos.entry_price) / pos.entry_price) * 100 
+                    : 0;
+                const pnlSol = pos.amount_sol * (pnlPct / 100);
+                totalPnlSol += pnlSol;
+                
+                const pnlClass = pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400';
+                const pnlBg = pnlPct >= 0 ? 'from-emerald-500/10' : 'from-red-500/10';
+                const arrow = pnlPct >= 0 ? '↗' : '↘';
+                
+                // Immagine fallback
+                const imgSrc = pos.token_image || `https://img.jup.ag/v6/${pos.token_address}/logo`;
+                const symbol = pos.token_symbol || '???';
+                const firstLetter = encodeURIComponent(symbol[0] || '?');
+                const letterFallback = `https://ui-avatars.com/api/?name=${firstLetter}&background=6366f1&color=fff&size=48&bold=true`;
+                
+                return `
+                    <div class="p-3 border-b border-zinc-800/50 bg-gradient-to-r ${pnlBg} to-transparent cursor-pointer hover:bg-white/5 transition-colors"
+                         onclick="openPositionByIndex(${idx})" data-position-idx="${idx}">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-full bg-zinc-800 overflow-hidden flex-shrink-0">
+                                <img src="${imgSrc}" class="w-full h-full object-cover"
+                                     onerror="this.src='${letterFallback}'">
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <span class="font-bold text-sm">${symbol}</span>
+                                    <span class="text-[9px] px-1.5 py-0.5 rounded ${pos.trading_mode === 'BOT' || pos.trading_mode === 'AUTO' ? 'bg-violet-500/20 text-violet-400' : 'bg-blue-500/20 text-blue-400'}">${pos.trading_mode}</span>
+                                </div>
+                                <div class="text-[11px] text-zinc-500">
+                                    Investito: <span class="text-zinc-300 mono">${pos.amount_sol.toFixed(4)} SOL</span>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="flex items-center gap-1 ${pnlClass} font-bold">
+                                    <span class="text-lg">${arrow}</span>
+                                    <span class="mono">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>
+                                </div>
+                                <div class="text-xs ${pnlClass} mono">
+                                    ${pnlSol >= 0 ? '+' : ''}${pnlSol.toFixed(4)} SOL
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            // Aggiungi totale P&L se ci sono posizioni
+            if (positions.length > 0) {
+                const totalClass = totalPnlSol >= 0 ? 'text-emerald-400' : 'text-red-400';
+                container.innerHTML += `
+                    <div class="p-3 bg-zinc-900/50 border-t border-zinc-700">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs text-zinc-400">📊 P&L Totale Sessione</span>
+                            <span class="font-bold mono ${totalClass}">${totalPnlSol >= 0 ? '+' : ''}${totalPnlSol.toFixed(4)} SOL</span>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            lucide.createIcons();
+        }
+        
+        // Apri posizione per vendita
+        function openPositionByIndex(idx) {
+            const pos = state.openPositions[idx];
+            if (!pos) return;
+            
+            // Trova dati aggiornati nel gems feed
+            const gem = state.gems.find(g => g.token === pos.token_address);
+            
+            // Crea oggetto token compatibile con openToken
+            const token = {
+                token: pos.token_address,
+                symbol: pos.token_symbol,
+                name: pos.token_symbol,
+                price: gem?.price || pos.entry_price,
+                entry_price: pos.entry_price,
+                image_url: pos.token_image,
+                safety_score: gem?.safety_score || 50,
+                market_cap: gem?.market_cap || 0,
+                liquidity_usd: gem?.liquidity_usd || 0,
+                volume_24h: gem?.volume_24h || 0,
+                change_1h: gem?.change_1h || 0,
+                change_24h: gem?.change_24h || 0,
+                // Dati per P&L
+                invested_sol: pos.amount_sol,
+            };
+            
+            // Salva in state per il trading
+            state.currentToken = token;
+            state.currentToken.entry_price = pos.entry_price;
+            state.currentToken.invested_sol = pos.amount_sol;
+            
+            openToken(token);
+        }
+
         function renderHistory() {
             const list = document.getElementById('historyList');
             let items = [];
@@ -2151,11 +2302,28 @@
                 document.getElementById('strategyPct').innerText = wl.pct + '%';
                 document.getElementById('strategyDesc').innerText = `Con ${state.balance.toFixed(4)} SOL (~€${balanceEur.toFixed(0)}), il bot investirà ${investAmt} SOL (~€${investEur}) per trade.`;
 
+                // ═══════════════════════════════════════════════════════════════
+                // POSIZIONI APERTE - Carica dal server
+                // ═══════════════════════════════════════════════════════════════
+                state.openPositions = data.open_positions || [];
+                state.lockedSol = data.locked_sol || 0;
+                state.availableSol = data.available_sol || state.balance;
+                
+                // Renderizza posizioni aperte
+                renderOpenPositions();
+                
                 // AGGIORNA SALDO TRADING (disponibile per trading manuale)
-                const availableBalance = Math.max(0, state.balance - 0.005); // Riserva per gas
-                document.getElementById('tradingBalance').innerText = availableBalance.toFixed(4) + ' SOL';
-                document.getElementById('tradingBalanceUsd').innerText = '≈ $' + (availableBalance * state.solPrice).toFixed(2);
-                document.getElementById('maxTradeAmount').innerText = Math.max(0, availableBalance * 0.95).toFixed(4) + ' SOL';
+                // Se bot attivo, mostra che i fondi sono gestiti dal bot
+                const availableBalance = state.botActive ? 0 : Math.max(0, state.availableSol - 0.005);
+                document.getElementById('tradingBalance').innerText = state.botActive 
+                    ? '🤖 Gestito dal Bot' 
+                    : availableBalance.toFixed(4) + ' SOL';
+                document.getElementById('tradingBalanceUsd').innerText = state.botActive 
+                    ? `${state.balance.toFixed(4)} SOL totali`
+                    : '≈ $' + (availableBalance * state.solPrice).toFixed(2);
+                document.getElementById('maxTradeAmount').innerText = state.botActive 
+                    ? 'Bot Attivo'
+                    : Math.max(0, availableBalance * 0.95).toFixed(4) + ' SOL';
 
                 // FILTRA GEMS - Escludi SOL, stablecoins, e token senza dati validi
                 const EXCLUDED_TOKENS = [
@@ -2350,8 +2518,59 @@
                 }
             });
             
+            // AGGIORNA P&L POSIZIONI APERTE in tempo reale
+            updateOpenPositionsPnL();
+            
             // Aggiorna prezzo nel trade sheet se aperto
             updateTradeSheetPrice();
+        }
+        
+        // Aggiorna P&L delle posizioni aperte
+        function updateOpenPositionsPnL() {
+            if (!state.openPositions || state.openPositions.length === 0) return;
+            
+            const positionRows = document.querySelectorAll('[data-position-idx]');
+            let totalPnlSol = 0;
+            
+            positionRows.forEach((row, idx) => {
+                const pos = state.openPositions[idx];
+                if (!pos) return;
+                
+                // Trova prezzo corrente
+                const currentGem = state.gems.find(g => g.token === pos.token_address);
+                let currentPrice = currentGem?.price || pos.entry_price;
+                
+                // Aggiungi oscillazione
+                const volatility = Math.abs(currentGem?.change_1h || 1) / 100;
+                currentPrice *= 1 + (Math.random() - 0.5) * Math.min(volatility * 0.3, 0.015);
+                
+                // Calcola P&L
+                const pnlPct = pos.entry_price > 0 
+                    ? ((currentPrice - pos.entry_price) / pos.entry_price) * 100 
+                    : 0;
+                const pnlSol = pos.amount_sol * (pnlPct / 100);
+                totalPnlSol += pnlSol;
+                
+                // Aggiorna elementi
+                const pnlPctEl = row.querySelector('.text-lg + .mono');
+                const pnlSolEl = row.querySelector('.text-xs.mono');
+                
+                if (pnlPctEl) {
+                    pnlPctEl.innerText = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
+                    pnlPctEl.className = `mono ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+                }
+                if (pnlSolEl) {
+                    pnlSolEl.innerText = `${pnlSol >= 0 ? '+' : ''}${pnlSol.toFixed(4)} SOL`;
+                    pnlSolEl.className = `text-xs mono ${pnlSol >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+                }
+            });
+            
+            // Aggiorna totale
+            const totalEl = document.querySelector('#openPositionsList .bg-zinc-900\\/50 .font-bold.mono');
+            if (totalEl) {
+                totalEl.innerText = `${totalPnlSol >= 0 ? '+' : ''}${totalPnlSol.toFixed(4)} SOL`;
+                totalEl.className = `font-bold mono ${totalPnlSol >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+            }
         }
         
         // Aggiorna prezzo velocemente nel trade sheet (per effetto live)

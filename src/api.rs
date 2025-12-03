@@ -30,13 +30,16 @@ pub struct SignalData {
 struct DashboardData {
     user_id: String,
     wallet_address: String,
-    balance_sol: f64,
+    balance_sol: f64,            // Saldo disponibile wallet
     balance_usd: f64,
     sol_price_usd: f64,
     wealth_level: String,
     active_trades_count: usize,
     system_status: String,
-    bot_active: bool,           // Stato bot persistente dal DB
+    bot_active: bool,            // Stato bot persistente dal DB
+    locked_sol: f64,             // SOL bloccati in posizioni aperte
+    available_sol: f64,          // SOL effettivamente disponibili per trading
+    open_positions: Vec<db::OpenTrade>,  // Posizioni aperte con dettagli
     gems_feed: Vec<GemData>,
     signals_feed: Vec<SignalData>,
     trades_history: Vec<db::TradeHistory>,
@@ -379,7 +382,13 @@ async fn handle_status(
     
     let signals = state.math_signals.lock().unwrap().clone();
 
-    let active_trades = db::count_open_trades(&pool, &user_id).await.unwrap_or(0);
+    // Carica posizioni aperte con tutti i dettagli
+    let open_positions = db::get_open_trades(&pool, &user_id).await.unwrap_or_default();
+    let active_trades = open_positions.len();
+    
+    // Calcola SOL bloccati e disponibili
+    let locked_sol = db::get_locked_sol(&pool, &user_id).await.unwrap_or(0.0);
+    let available_sol = (balance - 0.01).max(0.0); // Mantieni 0.01 SOL per gas
 
     let (trades_history, withdrawals_history) = db::get_all_history(&pool, &user_id).await
         .unwrap_or((vec![], vec![]));
@@ -406,6 +415,9 @@ async fn handle_status(
         active_trades_count: active_trades,
         system_status: "ONLINE".to_string(),
         bot_active: bot_active_db,
+        locked_sol,
+        available_sol,
+        open_positions,
         gems_feed: gems,
         signals_feed: signals,
         trades_history,
@@ -434,6 +446,22 @@ async fn handle_trade(
         }
     };
     info!("📨 Trade [{}]: {} {} SOL -> {}", user_id, req.action, req.amount_sol, req.token);
+
+    // ═══════════════════════════════════════════════════════════════
+    // BLOCCO ACQUISTI MANUALI SE BOT ATTIVO
+    // Il bot gestisce tutto quando è attivo - previene conflitti
+    // ═══════════════════════════════════════════════════════════════
+    if req.action == "BUY" {
+        let bot_active = db::get_bot_status(&pool, &user_id).await.unwrap_or(false);
+        if bot_active {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "🤖 Bot Attivo! Ferma il bot per fare trading manuale. I tuoi SOL sono gestiti automaticamente.".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    }
 
     let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
         Ok(k) => k,
