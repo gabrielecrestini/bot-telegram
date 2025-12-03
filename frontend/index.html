@@ -32,9 +32,22 @@
         .overlay.open { opacity: 1; visibility: visible; }
         
         /* Pages */
-        .page { display: none; }
-        .page.active { display: block; animation: fadeIn 0.3s ease; }
+        .page { display: none !important; visibility: hidden; position: absolute; left: -9999px; }
+        .page.active { display: block !important; visibility: visible; position: relative; left: 0; animation: fadeIn 0.3s ease; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Login page nascosta completamente quando non attiva */
+        #p-login:not(.active) { display: none !important; visibility: hidden !important; height: 0; overflow: hidden; opacity: 0; pointer-events: none; }
+        
+        /* Login page attiva copre tutto */
+        #p-login.active { 
+            display: flex !important; 
+            position: fixed !important; 
+            inset: 0 !important; 
+            z-index: 9999 !important; 
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #0d0d1a 100%) !important;
+            overflow-y: auto !important;
+        }
         
         /* Toast */
         #toast { transform: translateY(-150%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 200; }
@@ -63,11 +76,40 @@
         input[type="email"], input[type="password"] { background: rgba(0,0,0,0.4); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; color: white; width: 100%; outline: none; font-size: 16px; transition: all 0.2s; }
         input[type="email"]:focus, input[type="password"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15); }
         
-        /* Token rows */
-        .token-row { display: flex; align-items: center; padding: 16px; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; transition: all 0.2s; }
-        .token-row:hover { background: rgba(139, 92, 246, 0.05); }
-        .token-row:active { background: rgba(139, 92, 246, 0.1); }
+        /* Token rows - Design Premium */
+        .token-row { 
+            display: flex; 
+            align-items: center; 
+            padding: 14px 16px; 
+            gap: 14px; 
+            border-bottom: 1px solid rgba(255,255,255,0.04); 
+            cursor: pointer; 
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+        .token-row::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, rgba(139, 92, 246, 0.05) 0%, transparent 100%);
+            opacity: 0;
+            transition: opacity 0.25s;
+        }
+        .token-row:hover::before { opacity: 1; }
+        .token-row:hover { transform: translateX(4px); }
+        .token-row:active { transform: scale(0.99); background: rgba(139, 92, 246, 0.1); }
         .token-row:last-child { border-bottom: none; }
+        
+        /* Token image container */
+        .token-row img { 
+            width: 48px; 
+            height: 48px; 
+            border-radius: 50%; 
+            object-fit: cover;
+            border: 2px solid rgba(255,255,255,0.1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
         
         /* Score badges */
         .score-badge { padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; }
@@ -99,6 +141,34 @@
         /* Live indicator */
         .live-dot { width: 6px; height: 6px; background: #10b981; border-radius: 50%; animation: livePulse 1.5s infinite; display: inline-block; box-shadow: 0 0 8px #10b981; }
         @keyframes livePulse { 0%, 100% { opacity: 1; box-shadow: 0 0 8px #10b981; } 50% { opacity: 0.6; box-shadow: 0 0 4px #10b981; } }
+        
+        /* Flash animations per prezzi */
+        .flash-green { animation: flashGreen 0.5s ease-out !important; }
+        .flash-red { animation: flashRed 0.5s ease-out !important; }
+        @keyframes flashGreen { 
+            0% { background: rgba(16, 185, 129, 0.4); color: #10b981; transform: scale(1.02); } 
+            100% { background: transparent; transform: scale(1); } 
+        }
+        @keyframes flashRed { 
+            0% { background: rgba(239, 68, 68, 0.4); color: #ef4444; transform: scale(1.02); } 
+            100% { background: transparent; transform: scale(1); } 
+        }
+        
+        /* PnL panel glow effect */
+        #livePnlPanel .card { position: relative; overflow: hidden; }
+        #livePnlPanel .card::before {
+            content: '';
+            position: absolute;
+            inset: -2px;
+            border-radius: inherit;
+            background: linear-gradient(135deg, rgba(139, 92, 246, 0.4) 0%, rgba(168, 85, 247, 0.1) 100%);
+            z-index: -1;
+            animation: pnl-glow 2s ease-in-out infinite alternate;
+        }
+        @keyframes pnl-glow {
+            0% { opacity: 0.4; }
+            100% { opacity: 0.8; }
+        }
         
         /* Bottom nav */
         nav { background: linear-gradient(180deg, rgba(10,10,15,0.95) 0%, rgba(10,10,15,1) 100%); backdrop-filter: blur(10px); border-top: 1px solid rgba(139, 92, 246, 0.1); }
@@ -211,7 +281,7 @@
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- WALLET PAGE -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
-    <section id="p-wallet" class="page active p-4">
+    <section id="p-wallet" class="page p-4">
         <!-- Header con Status -->
         <div class="flex items-center justify-between mb-4">
             <div class="flex items-center gap-3">
@@ -377,20 +447,37 @@
             </div>
         </div>
 
+        <!-- TOP 3 PROFITTEVOLI -->
+        <div class="card p-3 mb-4">
+            <div class="flex items-center justify-between mb-2">
+                <h4 class="text-xs font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                    <i data-lucide="trending-up" class="w-4 h-4 text-yellow-400"></i>
+                    Top Profittevoli
+                </h4>
+                <span class="text-[10px] text-zinc-500">Aggiornamento live</span>
+            </div>
+            <div id="topProfitable" class="flex gap-2 overflow-x-auto pb-1">
+                <div class="flex items-center gap-2 p-2 rounded-lg bg-white/5 animate-pulse">
+                    <span class="text-xs text-zinc-500">Caricamento...</span>
+                </div>
+            </div>
+        </div>
+
         <!-- TOKEN TROVATI DAL BOT -->
         <div class="card overflow-hidden">
-            <div class="p-3 border-b border-zinc-800 flex items-center justify-between">
+            <div class="p-3 border-b border-zinc-800/50 flex items-center justify-between">
                 <h4 class="font-semibold flex items-center gap-2 text-sm">
                     <i data-lucide="search" class="w-4 h-4 text-purple-400"></i>
-                    Opportunità Trovate
+                    Opportunità
                     <span class="live-dot"></span>
                 </h4>
-                <span class="text-[10px] text-green-400 flex items-center gap-1">
-                    <span class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
-                    Prezzi LIVE
-                </span>
+                <div class="flex items-center gap-2">
+                    <span class="text-[9px] px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-400">Jupiter</span>
+                    <span class="text-[9px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">Orca</span>
+                    <span class="text-[9px] px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400">Meteora</span>
+                </div>
             </div>
-            <div id="tokenList" class="max-h-96 overflow-y-auto">
+            <div id="tokenList" class="max-h-[60vh] overflow-y-auto">
                 <div class="p-6 text-center text-zinc-500">
                     <i data-lucide="loader" class="w-5 h-5 mx-auto mb-2 animate-spin"></i>
                     <p class="text-xs">Scansione mercato...</p>
@@ -846,25 +933,46 @@
     <div id="tradeSheet" class="sheet">
         <div class="flex items-center justify-between mb-4">
             <div class="flex items-center gap-3">
-                <img id="tsImg" src="" class="w-12 h-12 rounded-full bg-zinc-800">
+                <img id="tsImg" src="" class="w-12 h-12 rounded-full bg-zinc-800 object-cover">
                 <div>
                     <h3 class="font-bold text-lg" id="tsSymbol">TOKEN</h3>
                     <p class="text-xs text-zinc-500" id="tsName">Name</p>
                 </div>
             </div>
-            <button onclick="closeAll()" class="p-2 rounded-full bg-zinc-800">
+            <button onclick="closeAll()" class="p-2 rounded-full bg-zinc-800 hover:bg-zinc-700 transition-colors">
                 <i data-lucide="x" class="w-5 h-5"></i>
             </button>
         </div>
 
+        <!-- PANNELLO PNL LIVE - Guadagno/Perdita in tempo reale -->
+        <div id="livePnlPanel" class="hidden mb-4">
+            <div class="card p-4 bg-gradient-to-r from-violet-500/10 to-purple-500/10 border-violet-500/20">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs text-zinc-400 uppercase tracking-wider">📊 P&L Live</span>
+                    <span class="live-dot"></span>
+                </div>
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-2xl font-bold mono" id="livePnlPercent">+0.00%</p>
+                        <p class="text-sm text-zinc-400" id="livePnlValue">≈ $0.00</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs text-zinc-500">Investito</p>
+                        <p class="mono text-sm" id="livePnlInvested">0 SOL</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Token Info con prezzo LIVE -->
         <div class="grid grid-cols-3 gap-2 mb-4">
-            <div class="card p-3 col-span-2">
-                <p class="text-xs text-zinc-500 flex items-center gap-1">
+            <div class="card p-3 col-span-2 relative overflow-hidden">
+                <div class="absolute inset-0 bg-gradient-to-r from-emerald-500/5 to-transparent"></div>
+                <p class="text-xs text-zinc-500 flex items-center gap-1 relative">
                     <span class="live-dot"></span> Prezzo LIVE
                 </p>
-                <p class="mono font-bold text-lg transition-all" id="tsPrice" data-last-price="0">$0.00</p>
-                <p class="text-xs mt-1" id="tsProfitEstimate"></p>
+                <p class="mono font-bold text-xl transition-all relative" id="tsPrice" data-last-price="0">$0.00</p>
+                <p class="text-xs mt-1 relative" id="tsProfitEstimate"></p>
             </div>
             <div class="card p-3">
                 <p class="text-xs text-zinc-500">Score</p>
@@ -979,6 +1087,12 @@
     </nav>
 
     <script>
+        // PRIMA DI TUTTO: Nascondi tutte le pagine per evitare flash
+        document.querySelectorAll('.page').forEach(p => {
+            p.style.display = 'none';
+            p.classList.remove('active');
+        });
+        
         lucide.createIcons();
 
         // State
@@ -1066,13 +1180,49 @@
             priceEl.innerText = formatPrice(token.price || 0);
             priceEl.dataset.lastPrice = token.price || 0;
             
-            // Mostra PnL stimato se abbiamo un prezzo di entrata
+            // Cerca se abbiamo una posizione aperta su questo token
+            const openPosition = state.trades.find(t => 
+                t.token_address === token.token && t.status === 'OPEN'
+            );
+            
+            const livePnlPanel = document.getElementById('livePnlPanel');
             const profitEl = document.getElementById('tsProfitEstimate');
-            if (token.entry_price && token.entry_price > 0) {
+            
+            if (openPosition && openPosition.entry_price > 0) {
+                // MOSTRA PANNELLO PNL LIVE
+                livePnlPanel.classList.remove('hidden');
+                
+                const entryPrice = openPosition.entry_price;
+                const currentPrice = token.price || 0;
+                const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+                const investedSol = openPosition.amount_sol || 0;
+                const pnlValue = investedSol * (pnlPct / 100) * state.solPrice;
+                
+                const pnlPercentEl = document.getElementById('livePnlPercent');
+                const pnlValueEl = document.getElementById('livePnlValue');
+                const pnlInvestedEl = document.getElementById('livePnlInvested');
+                
+                pnlPercentEl.innerText = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
+                pnlPercentEl.className = `text-2xl font-bold mono ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+                pnlValueEl.innerText = `≈ ${pnlValue >= 0 ? '+' : ''}$${Math.abs(pnlValue).toFixed(2)}`;
+                pnlValueEl.className = `text-sm ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+                pnlInvestedEl.innerText = `${investedSol.toFixed(4)} SOL`;
+                
+                // Aggiorna anche il testo sotto il prezzo
+                profitEl.innerHTML = `<span class="${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'} font-bold">📈 Posizione Aperta</span>`;
+                
+                // Aggiorna stato per tracking live
+                state.currentToken.entry_price = entryPrice;
+                state.currentToken.invested_sol = investedSol;
+            } else if (token.entry_price && token.entry_price > 0) {
+                // Token con prezzo di entrata ma non in trades (fallback)
+                livePnlPanel.classList.add('hidden');
                 const pnlPct = ((token.price - token.entry_price) / token.entry_price) * 100;
-                const pnlClass = pnlPct >= 0 ? 'text-green-400' : 'text-red-400';
+                const pnlClass = pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400';
                 profitEl.innerHTML = `PnL: <span class="${pnlClass} font-bold">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>`;
             } else {
+                // Nessuna posizione
+                livePnlPanel.classList.add('hidden');
                 profitEl.innerHTML = '';
             }
             
@@ -2025,8 +2175,35 @@
                     if (!g.liquidity_usd || g.liquidity_usd < 1000) return false;
                     // Escludi stablecoins per simbolo
                     if (['USDC', 'USDT', 'USDH', 'DAI', 'USDD'].includes(g.symbol?.toUpperCase())) return false;
+                    // NUOVO: Escludi token SENZA immagine valida
+                    if (!g.image_url || g.image_url.length < 10 || g.image_url.includes('undefined') || g.image_url.includes('null')) {
+                        // Controlla se almeno ha un simbolo per fallback
+                        if (!g.symbol || g.symbol.length < 1) return false;
+                    }
                     return true;
                 });
+                
+                // NUOVO: Ordina per profittabilità (change_1h + change_24h + volume)
+                filteredGems.sort((a, b) => {
+                    const scoreA = (a.change_1h || 0) + (a.change_24h || 0) * 0.5 + Math.log10(a.volume_24h || 1);
+                    const scoreB = (b.change_1h || 0) + (b.change_24h || 0) * 0.5 + Math.log10(b.volume_24h || 1);
+                    return scoreB - scoreA;
+                });
+                
+                // NUOVO: Top 3 profittevoli a rotazione
+                const topProfitable = filteredGems.slice(0, 3);
+                if (topProfitable.length > 0) {
+                    const topHtml = topProfitable.map((t, i) => `
+                        <div class="flex items-center gap-2 p-2 rounded-lg bg-gradient-to-r ${i === 0 ? 'from-yellow-500/20 to-orange-500/20 border border-yellow-500/30' : 'from-white/5 to-white/0'}">
+                            <span class="text-xs font-bold ${i === 0 ? 'text-yellow-400' : 'text-zinc-400'}">#${i+1}</span>
+                            <span class="font-semibold text-sm">${t.symbol}</span>
+                            <span class="text-xs ${(t.change_1h || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}">${(t.change_1h || 0) >= 0 ? '+' : ''}${(t.change_1h || 0).toFixed(1)}%</span>
+                        </div>
+                    `).join('');
+                    
+                    const topContainer = document.getElementById('topProfitable');
+                    if (topContainer) topContainer.innerHTML = topHtml;
+                }
 
                 // Token List con tutti i dati live
                 const list = document.getElementById('tokenList');
@@ -2210,13 +2387,39 @@
         
         // Calcola e mostra stima profitto in tempo reale
         function updateProfitEstimate(currentPrice) {
+            if (!state.currentToken || !state.currentToken.entry_price || state.currentToken.entry_price <= 0) return;
+            
+            const entryPrice = state.currentToken.entry_price;
+            const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
+            const investedSol = state.currentToken.invested_sol || 0;
+            const pnlValue = investedSol * (pnlPct / 100) * state.solPrice;
+            
+            // Aggiorna pannello PnL principale
+            const livePnlPanel = document.getElementById('livePnlPanel');
+            if (livePnlPanel && !livePnlPanel.classList.contains('hidden')) {
+                const pnlPercentEl = document.getElementById('livePnlPercent');
+                const pnlValueEl = document.getElementById('livePnlValue');
+                
+                if (pnlPercentEl) {
+                    pnlPercentEl.innerText = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
+                    pnlPercentEl.className = `text-2xl font-bold mono ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+                    
+                    // Flash animation per cambio
+                    pnlPercentEl.classList.add(pnlPct >= 0 ? 'flash-green' : 'flash-red');
+                    setTimeout(() => pnlPercentEl.classList.remove('flash-green', 'flash-red'), 500);
+                }
+                
+                if (pnlValueEl) {
+                    pnlValueEl.innerText = `≈ ${pnlValue >= 0 ? '+' : ''}$${Math.abs(pnlValue).toFixed(2)}`;
+                    pnlValueEl.className = `text-sm ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+                }
+            }
+            
+            // Aggiorna anche testo sotto il prezzo
             const profitEl = document.getElementById('tsProfitEstimate');
-            if (profitEl && state.currentToken && state.currentToken.entry_price > 0) {
-                const entryPrice = state.currentToken.entry_price;
-                const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
-                const pnlClass = pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400';
+            if (profitEl) {
                 const arrow = pnlPct >= 0 ? '↗' : '↘';
-                profitEl.innerHTML = `<span class="${pnlClass} font-bold">${arrow} ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>`;
+                profitEl.innerHTML = `<span class="${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'} font-bold">${arrow} ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</span>`;
             }
         }
         

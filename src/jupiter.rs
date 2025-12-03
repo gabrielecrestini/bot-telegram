@@ -689,6 +689,14 @@ fn passes_quality_filters(token: &TokenMarketData) -> bool {
     let vol_liq_ratio = token.volume_24h / token.liquidity_usd;
     if vol_liq_ratio < 0.05 || vol_liq_ratio > 20.0 { return false; }
     
+    // 8. DEVE avere immagine valida (non vuota e non placeholder)
+    if token.image_url.is_empty() 
+        || token.image_url.contains("undefined") 
+        || token.image_url.contains("null") 
+        || token.image_url.len() < 10 {
+        return false;
+    }
+    
     true
 }
 
