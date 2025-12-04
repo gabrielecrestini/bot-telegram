@@ -1117,7 +1117,7 @@ async fn handle_bot_stop(
         }
     };
 
-    info!("🛑 Bot STOP [{}]", user_id);
+    info!("🛑 Bot STOP [{}] - Avvio liquidazione posizioni", user_id);
 
     // Rimuovi dal state globale
     {
@@ -1125,69 +1125,158 @@ async fn handle_bot_stop(
         bot_users.remove(&user_id);
     }
 
-    // Vendi tutte le posizioni aperte di questo utente
+    // ═══════════════════════════════════════════════════════════════
+    // SINGLE TRADE LIQUIDATION MODE
+    // Vende una posizione alla volta per massimizzare il successo
+    // e ridurre lo slippage/impatto sul prezzo
+    // ═══════════════════════════════════════════════════════════════
+    
     let open_trades = db::get_open_trades(&pool, &user_id).await.unwrap_or_default();
-    let mut total_profit = 0.0;
+    let total_positions = open_trades.len();
+    let mut total_pnl_sol = 0.0;
     let mut closed_count = 0;
+    let mut failed_count = 0;
+    
+    info!("📊 Trovate {} posizioni aperte da liquidare", total_positions);
 
-    for trade in &open_trades {
-        // Prova a vendere tramite Jupiter (con VersionedTransaction)
-        if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
-            // Ottieni il bilancio REALE del token nel wallet
-            if let Ok(mint) = Pubkey::from_str(&trade.token_address) {
-                let ata = spl_associated_token_account::get_associated_token_address(&payer.pubkey(), &mint);
-                let token_balance = match net.rpc.get_token_account_balance(&ata).await {
-                    Ok(balance) => balance.amount.parse::<u64>().unwrap_or(0),
-                    Err(_) => continue, // Token non trovato, salta
-                };
-                
-                if token_balance == 0 {
-                    // Nessun token, marca come venduto comunque
+    // Get payer once for all trades
+    let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
+        Ok(k) => k,
+        Err(e) => {
+            error!("❌ Wallet error per {}: {}", user_id, e);
+            return Ok(warp::reply::json(&BotResponse {
+                success: false,
+                message: "Wallet non trovato".into(),
+                profit: None,
+                trades_count: None,
+            }));
+        }
+    };
+    
+    // Save balance before liquidation to calculate actual profit
+    let balance_before = net.get_balance_fast(&payer.pubkey()).await as f64 / 1_000_000_000.0;
+    
+    for (idx, trade) in open_trades.iter().enumerate() {
+        info!("💰 Vendita {}/{}: {} ({:.4} SOL)", 
+            idx + 1, total_positions, 
+            trade.token_symbol.as_str(), trade.amount_sol
+        );
+        
+        // Ottieni il bilancio REALE del token nel wallet
+        if let Ok(mint) = Pubkey::from_str(&trade.token_address) {
+            let ata = spl_associated_token_account::get_associated_token_address(&payer.pubkey(), &mint);
+            
+            let token_balance = match net.rpc.get_token_account_balance(&ata).await {
+                Ok(balance) => balance.amount.parse::<u64>().unwrap_or(0),
+                Err(e) => {
+                    warn!("⚠️ Token {} non trovato nel wallet: {}", &trade.token_address[..8], e);
+                    // Marca come venduto comunque per pulire il DB
                     let _ = db::record_sell(&pool, &user_id, &trade.token_address, "no_tokens", 0.0).await;
                     continue;
                 }
+            };
+            
+            if token_balance == 0 {
+                info!("ℹ️ Token {} già venduto o bilancio 0", &trade.token_address[..8]);
+                let _ = db::record_sell(&pool, &user_id, &trade.token_address, "zero_balance", 0.0).await;
+                continue;
+            }
+            
+            let output = "So11111111111111111111111111111111111111112"; // SOL
+            
+            // Usa slippage progressivo: 3% normale, 5% se riprova
+            let mut slippage = 300; // 3%
+            let mut attempt = 0;
+            let max_attempts = 2;
+            
+            while attempt < max_attempts {
+                attempt += 1;
                 
-                let output = "So11111111111111111111111111111111111111112";
-                info!("💰 Bot stop: vendita {} token (balance: {})", &trade.token_address[..8], token_balance);
-                
-                if let Ok(tx) = jupiter::get_jupiter_swap_tx(
+                match jupiter::get_jupiter_swap_tx(
                     &payer.pubkey().to_string(),
                     &trade.token_address,
                     output,
-                    token_balance, // USA IL BILANCIO REALE!
-                    300, // slippage più alto per vendite urgenti
+                    token_balance,
+                    slippage,
                 ).await {
-                    if let Ok(bh) = net.rpc.get_latest_blockhash().await {
-                        if let Ok(signed_tx) = jupiter::sign_versioned_transaction(&tx, &payer, bh) {
-                            // Invia vendita
-                            if let Ok(sig) = net.send_versioned_transaction(&signed_tx).await {
-                                // Calcola PnL
-                                let current_price = jupiter::get_token_market_data(&trade.token_address)
-                                    .await.ok().map(|m| m.price).unwrap_or(0.0);
-                                let pnl_pct = if trade.entry_price > 0.0 && current_price > 0.0 {
-                                    ((current_price - trade.entry_price) / trade.entry_price) * 100.0
-                                } else { 0.0 };
+                    Ok(tx) => {
+                        if let Ok(bh) = net.rpc.get_latest_blockhash().await {
+                            if let Ok(signed_tx) = jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+                                // Try Jito first for speed, then fallback to RPC
+                                let send_result = match jito::send_transaction_jito(&signed_tx, Some(50_000)).await {
+                                    Ok(sig) => Ok(sig),
+                                    Err(_) => net.send_versioned_transaction(&signed_tx).await
+                                };
                                 
-                                let _ = db::record_sell(&pool, &user_id, &trade.token_address, &sig, pnl_pct).await;
-                                closed_count += 1;
-                                info!("✅ Venduto {} | PnL: {:+.1}% | TX: {}", &trade.token_address[..8], pnl_pct, sig);
+                                match send_result {
+                                    Ok(sig) => {
+                                        // Calcola PnL
+                                        let current_price = jupiter::get_token_market_data(&trade.token_address)
+                                            .await.ok().map(|m| m.price).unwrap_or(0.0);
+                                        let pnl_pct = if trade.entry_price > 0.0 && current_price > 0.0 {
+                                            ((current_price - trade.entry_price) / trade.entry_price) * 100.0
+                                        } else { 0.0 };
+                                        let pnl_sol = trade.amount_sol * (pnl_pct / 100.0);
+                                        total_pnl_sol += pnl_sol;
+                                        
+                                        let _ = db::record_sell(&pool, &user_id, &trade.token_address, &sig, pnl_pct).await;
+                                        closed_count += 1;
+                                        
+                                        info!("✅ Venduto {} | PnL: {:+.1}% ({:+.4} SOL) | TX: {}", 
+                                            trade.token_symbol, pnl_pct, pnl_sol, sig);
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        warn!("⚠️ TX fallita (attempt {}): {}", attempt, e);
+                                        slippage = 500; // Aumenta slippage per retry
+                                    }
+                                }
                             }
                         }
                     }
+                    Err(e) => {
+                        warn!("⚠️ Jupiter quote fallita: {}", e);
+                        slippage = 500;
+                    }
                 }
+                
+                // Small delay between attempts
+                if attempt < max_attempts {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                }
+            }
+            
+            if attempt >= max_attempts {
+                failed_count += 1;
+                error!("❌ Impossibile vendere {} dopo {} tentativi", trade.token_symbol, max_attempts);
+            }
+            
+            // ═══════════════════════════════════════════════════════════════
+            // SINGLE TRADE MODE DELAY
+            // Aspetta 1.5 secondi tra le vendite per evitare rate limiting
+            // e permettere alla rete di processare le transazioni
+            // ═══════════════════════════════════════════════════════════════
+            if idx < total_positions - 1 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
             }
         }
     }
-
-    // Calcola profitto totale sessione
-    if let Ok(stats) = db::get_user_stats(&pool, &user_id).await {
-        total_profit = stats.total_pnl;
-    }
+    
+    // Wait a bit then check actual balance change
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    let balance_after = net.get_balance_fast(&payer.pubkey()).await as f64 / 1_000_000_000.0;
+    let actual_sol_received = balance_after - balance_before;
 
     // Aggiorna settings e DISATTIVA is_active
     let settings = serde_json::json!({
         "bot_active": false,
-        "bot_stopped_at": chrono::Utc::now().timestamp()
+        "bot_stopped_at": chrono::Utc::now().timestamp(),
+        "last_liquidation": {
+            "sold": closed_count,
+            "failed": failed_count,
+            "pnl_sol": total_pnl_sol,
+            "sol_received": actual_sol_received
+        }
     });
     
     let _ = sqlx::query("UPDATE users SET settings = ?, is_active = 0 WHERE tg_id = ?")
@@ -1196,12 +1285,21 @@ async fn handle_bot_stop(
         .execute(&pool)
         .await;
     
-    info!("🛑 Bot disattivato per {} | Posizioni vendute: {}", user_id, closed_count);
+    let message = if failed_count > 0 {
+        format!("Bot fermato. Vendute {}/{} posizioni. {} errori.", closed_count, total_positions, failed_count)
+    } else if closed_count > 0 {
+        format!("Bot fermato. Tutte le {} posizioni vendute! SOL ricevuti: {:.4}", closed_count, actual_sol_received)
+    } else {
+        "Bot fermato. Nessuna posizione da vendere.".to_string()
+    };
+    
+    info!("🛑 Bot disattivato per {} | Vendute: {}/{} | SOL: +{:.4}", 
+        user_id, closed_count, total_positions, actual_sol_received);
 
     Ok(warp::reply::json(&BotResponse {
         success: true,
-        message: format!("Bot fermato. Vendute {} posizioni.", closed_count),
-        profit: Some(total_profit),
+        message,
+        profit: Some(total_pnl_sol),
         trades_count: Some(closed_count),
     }))
 }

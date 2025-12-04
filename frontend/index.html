@@ -731,47 +731,281 @@
     </section>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- CARD PAGE - Virtual Card for Store Payments -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <section id="p-card" class="page p-4">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-bold">Carta Virtuale</h2>
+            <span class="text-xs bg-gradient-to-r from-amber-500/20 to-yellow-500/20 text-amber-400 px-3 py-1 rounded-full flex items-center gap-1 border border-amber-500/30">
+                <i data-lucide="sparkles" class="w-3 h-3"></i> PRO
+            </span>
+        </div>
+        
+        <!-- Card Preview Premium -->
+        <div class="relative mb-6">
+            <div class="card p-6 bg-gradient-to-br from-slate-900 via-violet-900/30 to-slate-900 border border-violet-500/20 rounded-3xl shadow-2xl overflow-hidden" id="virtualCard">
+                <!-- Background pattern -->
+                <div class="absolute inset-0 opacity-10">
+                    <div class="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-white to-transparent rounded-full blur-3xl"></div>
+                    <div class="absolute bottom-0 left-0 w-32 h-32 bg-gradient-to-tr from-violet-500 to-transparent rounded-full blur-2xl"></div>
+                </div>
+                
+                <!-- Card content -->
+                <div class="relative">
+                    <div class="flex items-center justify-between mb-8">
+                        <div class="flex items-center gap-2">
+                            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                                <i data-lucide="wallet" class="w-5 h-5 text-white"></i>
+                            </div>
+                            <div>
+                                <p class="text-xs text-zinc-400">GOD SNIPER</p>
+                                <p class="text-sm font-bold text-violet-300">VIRTUAL CARD</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="wifi" class="w-5 h-5 text-zinc-400"></i>
+                            <div class="w-8 h-6 bg-gradient-to-r from-amber-400 to-yellow-500 rounded"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Card Number -->
+                    <div class="mb-6">
+                        <p class="text-2xl font-bold mono tracking-[0.3em] text-white" id="cardNumber">•••• •••• •••• ••••</p>
+                    </div>
+                    
+                    <!-- Card Details -->
+                    <div class="flex items-end justify-between">
+                        <div>
+                            <p class="text-[10px] text-zinc-500 uppercase mb-1">Titolare</p>
+                            <p class="text-sm font-medium text-white" id="cardHolder">CRYPTO TRADER</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-[10px] text-zinc-500 uppercase mb-1">Scadenza</p>
+                            <p class="text-sm font-medium text-white" id="cardExpiry">12/28</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-[10px] text-zinc-500 uppercase mb-1">CVV</p>
+                            <p class="text-sm font-medium text-white" id="cardCvv">•••</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Show/Hide button -->
+            <button onclick="toggleCardDetails()" class="absolute bottom-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors backdrop-blur-sm" id="toggleCardBtn">
+                <i data-lucide="eye" class="w-4 h-4 text-white" id="cardEyeIcon"></i>
+            </button>
+        </div>
+        
+        <!-- Card Balance -->
+        <div class="card p-4 mb-4 bg-gradient-to-r from-emerald-900/20 to-transparent border-emerald-500/20">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs text-zinc-400 mb-1">💳 Saldo Carta</p>
+                    <p class="text-3xl font-bold mono text-emerald-400" id="cardBalance">€0.00</p>
+                    <p class="text-xs text-zinc-500 mt-1" id="cardBalanceSol">≈ 0.0000 SOL</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-xs text-zinc-500 mb-2">Limite giornaliero</p>
+                    <p class="text-lg font-semibold text-white">€500.00</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Card Actions -->
+        <div class="grid grid-cols-2 gap-3 mb-6">
+            <button onclick="topUpCard()" class="btn btn-primary flex items-center justify-center gap-2 py-4">
+                <i data-lucide="plus" class="w-5 h-5"></i>
+                <span>Ricarica</span>
+            </button>
+            <button onclick="cardToWallet()" class="btn bg-white/5 border border-white/10 hover:bg-white/10 flex items-center justify-center gap-2 py-4">
+                <i data-lucide="arrow-left" class="w-5 h-5"></i>
+                <span>→ Wallet</span>
+            </button>
+        </div>
+        
+        <!-- Quick Actions -->
+        <div class="mb-6">
+            <p class="text-xs text-zinc-500 mb-3 uppercase tracking-wider">Pagamenti Rapidi</p>
+            <div class="grid grid-cols-4 gap-2">
+                <button onclick="quickPay(10)" class="card p-3 text-center hover:border-violet-500/50 transition-colors">
+                    <p class="text-lg font-bold">€10</p>
+                </button>
+                <button onclick="quickPay(25)" class="card p-3 text-center hover:border-violet-500/50 transition-colors">
+                    <p class="text-lg font-bold">€25</p>
+                </button>
+                <button onclick="quickPay(50)" class="card p-3 text-center hover:border-violet-500/50 transition-colors">
+                    <p class="text-lg font-bold">€50</p>
+                </button>
+                <button onclick="quickPay(100)" class="card p-3 text-center hover:border-violet-500/50 transition-colors">
+                    <p class="text-lg font-bold">€100</p>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Apple Pay / Google Pay -->
+        <div class="card p-4 mb-4">
+            <div class="flex items-center justify-between mb-3">
+                <p class="font-medium flex items-center gap-2">
+                    <i data-lucide="smartphone" class="w-4 h-4 text-violet-400"></i>
+                    Wallet Digitali
+                </p>
+                <span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded">Collegato</span>
+            </div>
+            <div class="flex gap-3">
+                <button class="flex-1 btn bg-black border border-white/20 text-white flex items-center justify-center gap-2 py-3">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+                    Apple Pay
+                </button>
+                <button class="flex-1 btn bg-white text-black flex items-center justify-center gap-2 py-3">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                    Google Pay
+                </button>
+            </div>
+        </div>
+        
+        <!-- Transaction History -->
+        <div class="card overflow-hidden">
+            <div class="p-3 border-b border-zinc-800 flex items-center justify-between">
+                <h4 class="font-semibold text-sm flex items-center gap-2">
+                    <i data-lucide="receipt" class="w-4 h-4 text-violet-400"></i>
+                    Transazioni Carta
+                </h4>
+            </div>
+            <div id="cardTransactions" class="max-h-48 overflow-y-auto">
+                <div class="p-6 text-center text-zinc-500 text-sm">
+                    <i data-lucide="credit-card" class="w-8 h-8 mx-auto mb-2 opacity-30"></i>
+                    <p>Nessuna transazione</p>
+                    <p class="text-xs mt-1">Ricarica la carta per iniziare</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Card Info -->
+        <div class="mt-4 p-4 bg-zinc-900/50 rounded-xl border border-zinc-800">
+            <div class="flex items-start gap-3">
+                <i data-lucide="info" class="w-5 h-5 text-violet-400 mt-0.5"></i>
+                <div>
+                    <p class="text-sm text-zinc-300 mb-1">Come funziona</p>
+                    <p class="text-xs text-zinc-500">Converti i tuoi SOL in EUR e usa la carta virtuale per pagare in qualsiasi negozio che accetta Visa/Mastercard. Pagamenti istantanei via NFC con Apple Pay o Google Pay.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- SETTINGS PAGE -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <section id="p-settings" class="page p-4">
         <h2 class="text-xl font-bold mb-4">Impostazioni</h2>
 
-        <!-- Account Info -->
-        <div class="card p-4 mb-4">
+        <!-- Account Info Premium -->
+        <div class="card p-4 mb-4 bg-gradient-to-r from-violet-900/20 to-transparent border-violet-500/20">
             <div class="flex items-center gap-3 mb-3">
-                <div class="w-12 h-12 rounded-full bg-indigo-500/20 flex items-center justify-center">
-                    <i data-lucide="user" class="w-6 h-6 text-indigo-400"></i>
+                <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-500/30">
+                    <i data-lucide="user" class="w-7 h-7 text-white"></i>
                 </div>
-                <div>
-                    <p class="font-medium" id="accountType">Caricamento...</p>
+                <div class="flex-1">
+                    <p class="font-semibold text-lg" id="accountType">Caricamento...</p>
                     <p class="text-xs text-zinc-500 mono" id="accountId">-</p>
+                </div>
+                <div class="text-right">
+                    <span class="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded-full">PRO</span>
                 </div>
             </div>
             <button onclick="logout()" id="logoutBtn" class="hidden btn bg-red-500/20 text-red-400 w-full text-sm">
                 <i data-lucide="log-out" class="w-4 h-4 inline mr-2"></i> Esci
             </button>
         </div>
-
-        <div class="space-y-3">
-            <div class="card p-4 flex items-center justify-between">
-                <div>
-                    <p class="font-medium">Notifiche Trade</p>
-                    <p class="text-xs text-zinc-500">Ricevi alert quando il bot compra/vende</p>
-                </div>
-                <div class="switch on"></div>
+        
+        <!-- Stats Overview -->
+        <div class="grid grid-cols-3 gap-2 mb-4">
+            <div class="card p-3 text-center">
+                <p class="text-2xl font-bold text-emerald-400" id="settingsTotalTrades">0</p>
+                <p class="text-[10px] text-zinc-500">Trade Totali</p>
             </div>
-            <div class="card p-4 flex items-center justify-between">
-                <div>
-                    <p class="font-medium">Report Serale</p>
-                    <p class="text-xs text-zinc-500">Riepilogo guadagni ogni sera</p>
-                </div>
-                <div class="switch on"></div>
+            <div class="card p-3 text-center">
+                <p class="text-2xl font-bold text-violet-400" id="settingsWinRate">0%</p>
+                <p class="text-[10px] text-zinc-500">Win Rate</p>
+            </div>
+            <div class="card p-3 text-center">
+                <p class="text-2xl font-bold text-amber-400" id="settingsBestTrade">+0%</p>
+                <p class="text-[10px] text-zinc-500">Best Trade</p>
             </div>
         </div>
 
+        <div class="space-y-3">
+            <div class="card p-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                        <i data-lucide="bell" class="w-5 h-5 text-blue-400"></i>
+                    </div>
+                    <div>
+                        <p class="font-medium">Notifiche Trade</p>
+                        <p class="text-xs text-zinc-500">Alert quando il bot compra/vende</p>
+                    </div>
+                </div>
+                <div class="switch on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="card p-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center">
+                        <i data-lucide="bar-chart-3" class="w-5 h-5 text-purple-400"></i>
+                    </div>
+                    <div>
+                        <p class="font-medium">Report Serale</p>
+                        <p class="text-xs text-zinc-500">Riepilogo guadagni ogni sera</p>
+                    </div>
+                </div>
+                <div class="switch on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="card p-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
+                        <i data-lucide="shield" class="w-5 h-5 text-amber-400"></i>
+                    </div>
+                    <div>
+                        <p class="font-medium">Auto Stop-Loss</p>
+                        <p class="text-xs text-zinc-500">Protezione automatica capitale</p>
+                    </div>
+                </div>
+                <div class="switch on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="card p-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center">
+                        <i data-lucide="refresh-cw" class="w-5 h-5 text-emerald-400"></i>
+                    </div>
+                    <div>
+                        <p class="font-medium">Auto-Liquidazione</p>
+                        <p class="text-xs text-zinc-500">Vendi tutto se saldo basso</p>
+                    </div>
+                </div>
+                <div class="switch" onclick="this.classList.toggle('on')"></div>
+            </div>
+        </div>
+        
+        <!-- Danger Zone -->
+        <div class="mt-6 p-4 border border-red-500/30 rounded-xl bg-red-900/10">
+            <p class="text-sm font-semibold text-red-400 mb-3 flex items-center gap-2">
+                <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                Zona Pericolosa
+            </p>
+            <button onclick="sellAllPositions()" class="btn bg-red-500/20 text-red-400 w-full text-sm mb-2">
+                <i data-lucide="x-circle" class="w-4 h-4 inline mr-2"></i>
+                Vendi Tutte le Posizioni
+            </button>
+            <p class="text-[10px] text-zinc-500 text-center">Questa azione venderà immediatamente tutte le posizioni aperte</p>
+        </div>
+
         <div class="mt-8 text-center text-zinc-600 text-xs">
-            <p>GOD SNIPER PRO v2.1</p>
-            <p>Powered by Solana</p>
+            <p class="text-violet-400 font-semibold">GOD SNIPER PRO v3.0</p>
+            <p class="mt-1">Powered by Solana • Jupiter • Jito</p>
+            <div class="flex items-center justify-center gap-3 mt-2">
+                <span>🔐 AES-256</span>
+                <span>⚡ QUIC</span>
+                <span>🛡️ MEV Protected</span>
+            </div>
         </div>
     </section>
 
@@ -1072,22 +1306,26 @@
         </button>
     </div>
 
-    <!-- Bottom Nav -->
-    <nav class="fixed bottom-0 left-0 right-0 bg-[#09090b] border-t border-zinc-800 h-20 flex justify-around items-center z-50 px-4">
-        <button onclick="navTo('wallet')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-indigo-400" data-page="wallet">
-            <i data-lucide="wallet" class="w-6 h-6"></i>
+    <!-- Bottom Nav - Premium Design -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[#09090b] via-[#09090b]/98 to-[#09090b]/95 border-t border-violet-500/10 h-20 flex justify-around items-center z-50 px-2 backdrop-blur-xl">
+        <button onclick="navTo('wallet')" class="nav-btn flex flex-col items-center gap-1 py-2 px-3 text-indigo-400" data-page="wallet">
+            <i data-lucide="wallet" class="w-5 h-5"></i>
             <span class="text-[10px] font-medium">Wallet</span>
         </button>
-        <button onclick="navTo('trade')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-zinc-500" data-page="trade">
-            <i data-lucide="line-chart" class="w-6 h-6"></i>
+        <button onclick="navTo('card')" class="nav-btn flex flex-col items-center gap-1 py-2 px-3 text-zinc-500" data-page="card">
+            <i data-lucide="credit-card" class="w-5 h-5"></i>
+            <span class="text-[10px] font-medium">Carta</span>
+        </button>
+        <button onclick="navTo('trade')" class="nav-btn flex flex-col items-center gap-1 py-2 px-3 text-zinc-500" data-page="trade">
+            <i data-lucide="line-chart" class="w-5 h-5"></i>
             <span class="text-[10px] font-medium">Trading</span>
         </button>
-        <button onclick="navTo('bot')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-zinc-500" data-page="bot">
-            <i data-lucide="bot" class="w-6 h-6"></i>
+        <button onclick="navTo('bot')" class="nav-btn flex flex-col items-center gap-1 py-2 px-3 text-zinc-500" data-page="bot">
+            <i data-lucide="bot" class="w-5 h-5"></i>
             <span class="text-[10px] font-medium">Bot</span>
         </button>
-        <button onclick="navTo('settings')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-zinc-500" data-page="settings">
-            <i data-lucide="settings" class="w-6 h-6"></i>
+        <button onclick="navTo('settings')" class="nav-btn flex flex-col items-center gap-1 py-2 px-3 text-zinc-500" data-page="settings">
+            <i data-lucide="settings" class="w-5 h-5"></i>
             <span class="text-[10px] font-medium">Setup</span>
         </button>
     </nav>
@@ -2747,6 +2985,253 @@
         }
 
         // ═══════════════════════════════════════════════════════════════
+        // VIRTUAL CARD FUNCTIONS
+        // ═══════════════════════════════════════════════════════════════
+        
+        let cardState = {
+            balance: 0,
+            balanceSol: 0,
+            visible: false,
+            transactions: [],
+            cardNumber: '4532 •••• •••• 7829',
+            expiry: '12/28',
+            cvv: '•••'
+        };
+        
+        // Toggle card details visibility
+        function toggleCardDetails() {
+            cardState.visible = !cardState.visible;
+            const icon = document.getElementById('cardEyeIcon');
+            
+            if (cardState.visible) {
+                document.getElementById('cardNumber').innerText = '4532 8741 3256 7829';
+                document.getElementById('cardCvv').innerText = '847';
+                icon.setAttribute('data-lucide', 'eye-off');
+            } else {
+                document.getElementById('cardNumber').innerText = '4532 •••• •••• 7829';
+                document.getElementById('cardCvv').innerText = '•••';
+                icon.setAttribute('data-lucide', 'eye');
+            }
+            lucide.createIcons();
+        }
+        
+        // Top up card from wallet
+        async function topUpCard() {
+            const availableSol = Math.max(0, state.balance - 0.01);
+            
+            if (availableSol <= 0) {
+                toast('Saldo Insufficiente', 'Deposita SOL nel wallet prima');
+                return;
+            }
+            
+            const amount = prompt(`Quanto vuoi ricaricare? (Max: ${availableSol.toFixed(4)} SOL)`);
+            if (!amount) return;
+            
+            const amountNum = parseFloat(amount);
+            if (isNaN(amountNum) || amountNum <= 0 || amountNum > availableSol) {
+                toast('Errore', 'Importo non valido');
+                return;
+            }
+            
+            // Convert SOL to EUR
+            const eurAmount = amountNum * state.solPrice * 0.92; // 0.92 = EUR/USD rate
+            
+            toast('Ricarica in corso...', `${amountNum.toFixed(4)} SOL → €${eurAmount.toFixed(2)}`);
+            
+            // Simulate processing
+            setTimeout(() => {
+                cardState.balance += eurAmount;
+                cardState.balanceSol += amountNum;
+                updateCardUI();
+                addCardTransaction('Ricarica da Wallet', eurAmount, 'in');
+                toast('✅ Ricarica Completata!', `+€${eurAmount.toFixed(2)} sulla carta`);
+            }, 1500);
+        }
+        
+        // Transfer from card back to wallet
+        async function cardToWallet() {
+            if (cardState.balance <= 0) {
+                toast('Saldo Carta Vuoto', 'La carta non ha fondi');
+                return;
+            }
+            
+            const confirm = window.confirm(`Vuoi trasferire €${cardState.balance.toFixed(2)} al wallet?`);
+            if (!confirm) return;
+            
+            toast('Trasferimento...', 'Conversione in corso');
+            
+            setTimeout(() => {
+                const solAmount = cardState.balanceSol;
+                addCardTransaction('Trasferimento a Wallet', -cardState.balance, 'out');
+                cardState.balance = 0;
+                cardState.balanceSol = 0;
+                updateCardUI();
+                toast('✅ Trasferito!', `+${solAmount.toFixed(4)} SOL nel wallet`);
+                sync();
+            }, 1500);
+        }
+        
+        // Quick payment simulation
+        function quickPay(amount) {
+            if (cardState.balance < amount) {
+                toast('Saldo Insufficiente', `Ricarica la carta per pagare €${amount}`);
+                return;
+            }
+            
+            const merchants = ['Amazon', 'Deliveroo', 'Uber', 'Netflix', 'Spotify', 'Steam', 'Apple Store'];
+            const merchant = merchants[Math.floor(Math.random() * merchants.length)];
+            
+            toast('Pagamento...', `€${amount} a ${merchant}`);
+            
+            setTimeout(() => {
+                cardState.balance -= amount;
+                cardState.balanceSol -= amount / (state.solPrice * 0.92);
+                updateCardUI();
+                addCardTransaction(`Pagamento ${merchant}`, -amount, 'out');
+                toast('✅ Pagato!', `€${amount} a ${merchant}`);
+            }, 1000);
+        }
+        
+        // Add transaction to card history
+        function addCardTransaction(description, amount, type) {
+            cardState.transactions.unshift({
+                description,
+                amount,
+                type,
+                time: new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
+                date: new Date().toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })
+            });
+            
+            // Keep only last 10 transactions
+            if (cardState.transactions.length > 10) {
+                cardState.transactions.pop();
+            }
+            
+            renderCardTransactions();
+        }
+        
+        // Render card transactions
+        function renderCardTransactions() {
+            const container = document.getElementById('cardTransactions');
+            if (!container) return;
+            
+            if (cardState.transactions.length === 0) {
+                container.innerHTML = `
+                    <div class="p-6 text-center text-zinc-500 text-sm">
+                        <i data-lucide="credit-card" class="w-8 h-8 mx-auto mb-2 opacity-30"></i>
+                        <p>Nessuna transazione</p>
+                        <p class="text-xs mt-1">Ricarica la carta per iniziare</p>
+                    </div>
+                `;
+                lucide.createIcons();
+                return;
+            }
+            
+            container.innerHTML = cardState.transactions.map(t => `
+                <div class="flex items-center gap-3 p-3 border-b border-zinc-800/50 last:border-0">
+                    <div class="w-10 h-10 rounded-full ${t.type === 'in' ? 'bg-emerald-500/20' : 'bg-red-500/20'} flex items-center justify-center">
+                        <i data-lucide="${t.type === 'in' ? 'arrow-down-left' : 'arrow-up-right'}" 
+                           class="w-5 h-5 ${t.type === 'in' ? 'text-emerald-400' : 'text-red-400'}"></i>
+                    </div>
+                    <div class="flex-1">
+                        <p class="text-sm font-medium">${t.description}</p>
+                        <p class="text-xs text-zinc-500">${t.date} • ${t.time}</p>
+                    </div>
+                    <span class="mono font-bold ${t.amount >= 0 ? 'text-emerald-400' : 'text-red-400'}">
+                        ${t.amount >= 0 ? '+' : ''}€${Math.abs(t.amount).toFixed(2)}
+                    </span>
+                </div>
+            `).join('');
+            
+            lucide.createIcons();
+        }
+        
+        // Update card UI
+        function updateCardUI() {
+            const balanceEl = document.getElementById('cardBalance');
+            const balanceSolEl = document.getElementById('cardBalanceSol');
+            
+            if (balanceEl) balanceEl.innerText = '€' + cardState.balance.toFixed(2);
+            if (balanceSolEl) balanceSolEl.innerText = '≈ ' + cardState.balanceSol.toFixed(4) + ' SOL';
+        }
+        
+        // ═══════════════════════════════════════════════════════════════
+        // SELL ALL POSITIONS - Emergency function
+        // ═══════════════════════════════════════════════════════════════
+        
+        async function sellAllPositions() {
+            const positions = state.openPositions || [];
+            
+            if (positions.length === 0) {
+                toast('Nessuna Posizione', 'Non hai posizioni aperte da vendere');
+                return;
+            }
+            
+            const confirm = window.confirm(`⚠️ ATTENZIONE!\n\nQuesto venderà TUTTE le ${positions.length} posizioni aperte al prezzo di mercato.\n\nVuoi continuare?`);
+            if (!confirm) return;
+            
+            toast('Vendita in corso...', `Vendendo ${positions.length} posizioni...`);
+            
+            let soldCount = 0;
+            let errors = 0;
+            
+            // Sell positions one by one (single trade mode)
+            for (const pos of positions) {
+                try {
+                    const res = await fetch(`${API}/trade`, {
+                        method: 'POST',
+                        headers: getAuthHeaders(),
+                        body: JSON.stringify({ 
+                            action: 'SELL', 
+                            token: pos.token_address, 
+                            amount_sol: pos.amount_sol
+                        })
+                    });
+                    
+                    const data = await res.json();
+                    
+                    if (data.success) {
+                        soldCount++;
+                        toast(`Venduto ${soldCount}/${positions.length}`, pos.token_symbol || 'Token');
+                    } else {
+                        errors++;
+                    }
+                    
+                    // Small delay between sells to avoid rate limiting
+                    await new Promise(r => setTimeout(r, 1000));
+                    
+                } catch (e) {
+                    console.error('Sell error:', e);
+                    errors++;
+                }
+            }
+            
+            // Refresh data
+            await sync();
+            
+            if (errors === 0) {
+                toast('✅ Completato!', `Tutte le ${soldCount} posizioni vendute`);
+            } else {
+                toast('⚠️ Parziale', `Vendute ${soldCount}/${positions.length}, ${errors} errori`);
+            }
+        }
+        
+        // ═══════════════════════════════════════════════════════════════
+        // AUTO-LIQUIDATION CHECK - Sells all if balance too low
+        // ═══════════════════════════════════════════════════════════════
+        
+        function checkAutoLiquidation() {
+            // If balance is very low (< 0.02 SOL) and we have positions, liquidate
+            const threshold = 0.02; // SOL
+            
+            if (state.balance < threshold && state.openPositions && state.openPositions.length > 0) {
+                console.log('⚠️ Auto-liquidation triggered: balance too low');
+                toast('⚠️ Saldo Critico', 'Vendita automatica posizioni in corso...');
+                sellAllPositions();
+            }
+        }
+        
+        // ═══════════════════════════════════════════════════════════════
         // INIT
         // ═══════════════════════════════════════════════════════════════
         
@@ -2779,6 +3264,10 @@
             }
             
             updateBotUI();
+            updateCardUI();
+            
+            // Check for auto-liquidation every minute
+            setInterval(checkAutoLiquidation, 60000);
         }
         
         // Avvia app
