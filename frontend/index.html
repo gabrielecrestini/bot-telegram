@@ -8,6 +8,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- Chart.js per grafici live -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <style>
@@ -1178,14 +1180,14 @@
             </button>
         </div>
 
-        <!-- PANNELLO PNL LIVE - Guadagno/Perdita in tempo reale -->
+        <!-- PANNELLO PNL LIVE - Guadagno/Perdita in tempo reale con Grafico -->
         <div id="livePnlPanel" class="hidden mb-4">
             <div class="card p-4 bg-gradient-to-r from-violet-500/10 to-purple-500/10 border-violet-500/20">
                 <div class="flex items-center justify-between mb-2">
                     <span class="text-xs text-zinc-400 uppercase tracking-wider">📊 P&L Live</span>
                     <span class="live-dot"></span>
                 </div>
-                <div class="flex items-center justify-between">
+                <div class="flex items-center justify-between mb-3">
                     <div>
                         <p class="text-2xl font-bold mono" id="livePnlPercent">+0.00%</p>
                         <p class="text-sm text-zinc-400" id="livePnlValue">≈ $0.00</p>
@@ -1194,6 +1196,15 @@
                         <p class="text-xs text-zinc-500">Investito</p>
                         <p class="mono text-sm" id="livePnlInvested">0 SOL</p>
                     </div>
+                </div>
+                <!-- GRAFICO LIVE -->
+                <div class="h-24 relative">
+                    <canvas id="pnlChart"></canvas>
+                </div>
+                <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+                    <span id="chartTimeStart">-</span>
+                    <span>Andamento Prezzo</span>
+                    <span id="chartTimeEnd">Ora</span>
                 </div>
             </div>
         </div>
@@ -1420,6 +1431,16 @@
             state.currentToken = token;
             openSheet('tradeSheet');
             
+            // Inizializza grafico per questo token
+            setTimeout(() => {
+                initPriceChart();
+                if (token.entry_price && token.entry_price > 0) {
+                    setChartEntryPrice(token.entry_price);
+                } else if (token.price > 0) {
+                    setChartEntryPrice(token.price);
+                }
+            }, 100);
+            
             // Popola tutti i campi con fallback
             document.getElementById('tsSymbol').innerText = token.symbol || 'N/A';
             document.getElementById('tsName').innerText = token.name || token.symbol || 'Unknown';
@@ -1428,22 +1449,28 @@
             priceEl.innerText = formatPrice(token.price || 0);
             priceEl.dataset.lastPrice = token.price || 0;
             
-            // Cerca se abbiamo una posizione aperta su questo token
-            const openPosition = state.trades.find(t => 
+            // Cerca se abbiamo una posizione aperta su questo token (da trades history)
+            const tradePosition = state.trades.find(t => 
                 t.token_address === token.token && t.status === 'OPEN'
             );
+            
+            // Cerca anche in open_positions (dal server)
+            const serverPosition = state.openPositions?.find(p => p.token_address === token.token);
+            
+            // Usa quella disponibile
+            const activePosition = serverPosition || tradePosition;
             
             const livePnlPanel = document.getElementById('livePnlPanel');
             const profitEl = document.getElementById('tsProfitEstimate');
             
-            if (openPosition && openPosition.entry_price > 0) {
+            if (activePosition && activePosition.entry_price > 0) {
                 // MOSTRA PANNELLO PNL LIVE
                 livePnlPanel.classList.remove('hidden');
                 
-                const entryPrice = openPosition.entry_price;
+                const entryPrice = activePosition.entry_price;
                 const currentPrice = token.price || 0;
                 const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
-                const investedSol = openPosition.amount_sol || 0;
+                const investedSol = activePosition.amount_sol || 0;
                 const pnlValue = investedSol * (pnlPct / 100) * state.solPrice;
                 
                 const pnlPercentEl = document.getElementById('livePnlPercent');
@@ -1490,19 +1517,18 @@
             document.getElementById('tsScore').innerText = (token.safety_score || 0) + '/100';
             document.getElementById('tsAddr').innerText = token.token || '...';
             
-            // Controlla se abbiamo posizione aperta su questo token
-            const openPosition = state.openPositions?.find(p => p.token_address === token.token);
-            const hasPosition = !!openPosition;
+            // Usa activePosition già calcolato sopra
+            const hasPosition = !!activePosition;
             
             const btnTrade = document.getElementById('btnTrade');
             const btnTradeText = document.getElementById('btnTradeText');
             const btnSellSheet = document.getElementById('btnSellSheet');
             
             // Mostra/nascondi pulsante VENDI
-            if (hasPosition) {
+            if (hasPosition && activePosition) {
                 btnSellSheet.classList.remove('hidden');
-                state.currentToken.invested_sol = openPosition.amount_sol;
-                state.currentToken.entry_price = openPosition.entry_price;
+                state.currentToken.invested_sol = activePosition.amount_sol;
+                state.currentToken.entry_price = activePosition.entry_price;
             } else {
                 btnSellSheet.classList.add('hidden');
             }
@@ -1563,17 +1589,37 @@
         async function executeTrade() {
             // BLOCCO SE BOT ATTIVO
             if (state.botActive) {
-                toast('🤖 Bot Attivo', 'Ferma il bot per fare trading manuale');
+                toastError('🤖 Bot Attivo - Ferma il bot per fare trading manuale');
                 return;
             }
             
             const amt = parseFloat(document.getElementById('tsAmt').value);
-            if (!amt || amt <= 0) return toast('Errore', 'Inserisci importo');
-            if (amt > state.balance) return toast('Errore', 'Fondi insufficienti');
+            
+            // Validazioni con messaggi specifici
+            if (!amt || amt <= 0) {
+                toastError('Inserisci un importo valido');
+                return;
+            }
+            
+            if (amt > state.balance) {
+                toastError(`Saldo insufficiente! Hai solo ${state.balance.toFixed(4)} SOL`);
+                return;
+            }
+            
+            if (amt < 0.01) {
+                toastError('Importo minimo: 0.01 SOL');
+                return;
+            }
+            
+            if (state.balance - amt < 0.002) {
+                toastError('Lascia almeno 0.002 SOL per le fees di rete');
+                return;
+            }
             
             // Verifica che il token sia valido
             if (!state.currentToken || !state.currentToken.token) {
-                return toast('Errore', 'Seleziona un token valido');
+                toastError('Seleziona un token valido');
+                return;
             }
 
             const btn = document.getElementById('btnTrade');
@@ -1601,24 +1647,34 @@
                 console.log('📬 Risposta:', d);
                 
                 if (d.success) {
+                    // Imposta prezzo di entrata nel grafico
+                    if (state.currentToken.price > 0) {
+                        setChartEntryPrice(state.currentToken.price);
+                    }
+                    
                     // Mostra DEX usato nel messaggio (Jupiter/Orca/Jito)
                     const dexInfo = d.message || `Acquisto ${state.currentToken.symbol}`;
-                    toast('✅ Eseguito!', dexInfo);
+                    toastSuccess(dexInfo);
+                    
                     if (d.solscan_url) {
                         console.log('🔗 Solscan:', d.solscan_url);
-                        // Mostra link cliccabile
                         setTimeout(() => {
-                            toast('🔗 Transazione', `<a href="${d.solscan_url}" target="_blank" class="text-purple-400 underline">Vedi su Solscan</a>`);
+                            toast('🔗 TX', `<a href="${d.solscan_url}" target="_blank" class="text-purple-400 underline">Vedi su Solscan →</a>`);
                         }, 1500);
                     }
                     closeAll();
                     sync();
                 } else {
-                    toast('❌ Errore', d.message || 'Trade fallito');
+                    // Mostra errore specifico
+                    const errorMsg = d.message || 'Trade fallito';
+                    toastError(errorMsg);
+                    
+                    // Log dettagliato per debug
+                    console.error('Trade error details:', d);
                 }
             } catch (e) {
                 console.error('❌ Trade error:', e);
-                toast('Errore', 'Connessione fallita. Riprova.');
+                toastError('Connessione al server fallita. Verifica la tua connessione.');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '<i data-lucide="zap" class="w-4 h-4"></i> Compra';
@@ -1776,11 +1832,20 @@
         }
         
         async function stopBot() {
-            if (!confirm('Vuoi fermare il bot? Tutte le posizioni verranno vendute e i SOL restituiti.')) {
+            if (!confirm('⚠️ ATTENZIONE!\n\nVuoi fermare il bot?\n\nTutte le posizioni verranno VENDUTE e convertite in SOL.')) {
                 return;
             }
             
-            addBotLog('⏳ Fermando il bot e vendendo posizioni...');
+            addBotLog('⏳ Fermando il bot e vendendo TUTTE le posizioni...');
+            toast('Liquidazione...', 'Vendita di tutte le posizioni in corso');
+            
+            // Mostra overlay di caricamento
+            const stopBtn = document.querySelector('#botActive button');
+            if (stopBtn) {
+                stopBtn.disabled = true;
+                stopBtn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin inline mr-1"></i> Vendendo...';
+                lucide.createIcons();
+            }
             
             try {
                 const res = await fetch(`${API}/bot/stop`, {
@@ -1789,13 +1854,41 @@
                 });
                 
                 const data = await res.json();
-                addBotLog('💰 Posizioni vendute. Profitto: ' + (data.profit || botState.profit).toFixed(4) + ' SOL');
+                
+                // Log risultato
+                if (data.sol_received !== undefined) {
+                    addBotLog(`💰 SOL ricevuti: +${data.sol_received.toFixed(4)} SOL`);
+                }
+                if (data.profit !== undefined) {
+                    const pnlClass = data.profit >= 0 ? '🟢' : '🔴';
+                    addBotLog(`${pnlClass} P&L Totale: ${data.profit >= 0 ? '+' : ''}${data.profit.toFixed(4)} SOL`);
+                }
+                if (data.trades_count !== undefined) {
+                    addBotLog(`📊 Posizioni vendute: ${data.trades_count}`);
+                }
+                
+                // MOSTRA ERRORI SE CI SONO
+                if (data.errors && data.errors.length > 0) {
+                    addBotLog('⚠️ ERRORI DURANTE LA VENDITA:');
+                    data.errors.forEach(err => {
+                        addBotLog(`  ${err}`);
+                    });
+                    
+                    // Mostra popup con errori
+                    showErrorModal(data.errors, data.message);
+                } else {
+                    toast('✅ Bot Fermato', data.message || 'Posizioni vendute');
+                }
+                
             } catch (e) {
-                addBotLog('✅ Bot fermato');
+                console.error('Stop bot error:', e);
+                addBotLog('❌ Errore di connessione');
+                toast('❌ Errore', 'Impossibile comunicare con il server');
             }
             
             // Reset state
             botState.active = false;
+            state.botActive = false;
             if (botState.timerInterval) {
                 clearInterval(botState.timerInterval);
             }
@@ -1804,8 +1897,51 @@
             document.getElementById('botSetup').classList.remove('hidden');
             document.getElementById('botActive').classList.add('hidden');
             
-            toast('Bot Fermato', 'Posizioni vendute, SOL restituiti');
+            // Ripristina pulsante
+            if (stopBtn) {
+                stopBtn.disabled = false;
+                stopBtn.innerHTML = '<i data-lucide="square" class="w-4 h-4 inline mr-1"></i> STOP';
+                lucide.createIcons();
+            }
+            
             sync();
+        }
+        
+        // Mostra modal con errori
+        function showErrorModal(errors, title) {
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4';
+            modal.id = 'errorModal';
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            
+            modal.innerHTML = `
+                <div class="card p-6 max-w-md w-full border-red-500/30 bg-gradient-to-b from-red-900/20 to-zinc-900">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-bold text-red-400 flex items-center gap-2">
+                            <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+                            Errori durante la vendita
+                        </h3>
+                        <button onclick="document.getElementById('errorModal').remove()" class="p-2 rounded-full hover:bg-white/10">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <p class="text-sm text-zinc-400 mb-4">${title}</p>
+                    <div class="space-y-2 max-h-60 overflow-y-auto">
+                        ${errors.map(err => `
+                            <div class="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm">
+                                ${err}
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button onclick="document.getElementById('errorModal').remove()" 
+                            class="btn btn-primary w-full mt-4">
+                        Ho Capito
+                    </button>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            lucide.createIcons();
         }
         
         function startBotTimer() {
@@ -2022,18 +2158,30 @@
         
         // Vendi direttamente dal trade sheet
         async function executeSellFromSheet() {
-            if (!state.currentToken) return toast('Errore', 'Nessun token selezionato');
+            if (!state.currentToken) {
+                toastError('Nessun token selezionato');
+                return;
+            }
             
             // Controlla se abbiamo una posizione aperta
-            const hasPosition = state.openPositions?.some(p => p.token_address === state.currentToken.token);
-            if (!hasPosition && !state.currentToken.invested_sol) {
-                return toast('Errore', 'Non hai posizioni aperte per questo token');
+            const position = state.openPositions?.find(p => p.token_address === state.currentToken.token);
+            if (!position && !state.currentToken.invested_sol) {
+                toastError('Non hai posizioni aperte per questo token');
+                return;
             }
+            
+            const symbol = state.currentToken.symbol || 'Token';
+            const investedSol = position?.amount_sol || state.currentToken.invested_sol || 0;
             
             const btn = document.getElementById('btnSellSheet');
             btn.disabled = true;
             btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Vendendo...';
             lucide.createIcons();
+            
+            // Salva saldo per calcolare profitto
+            const balanceBefore = state.balance;
+            
+            toast('📤 Vendita', `Vendendo ${symbol} (${investedSol.toFixed(4)} SOL)...`);
             
             try {
                 const res = await fetch(`${API}/trade`, {
@@ -2042,24 +2190,47 @@
                     body: JSON.stringify({ 
                         action: 'SELL', 
                         token: state.currentToken.token, 
-                        amount_sol: state.currentToken.invested_sol || 0
+                        amount_sol: investedSol
                     })
                 });
                 const d = await res.json();
                 
                 if (d.success) {
-                    toast('✅ Venduto!', d.message || `${state.currentToken.symbol} venduto con successo`);
+                    toastSuccess(d.message || `${symbol} venduto!`);
+                    
                     if (d.solscan_url) {
-                        setTimeout(() => toast('🔗 TX', `<a href="${d.solscan_url}" target="_blank" class="text-purple-400 underline">Vedi su Solscan</a>`), 1000);
+                        setTimeout(() => {
+                            toast('🔗 TX', `<a href="${d.solscan_url}" target="_blank" class="text-purple-400 underline">Vedi transazione →</a>`);
+                        }, 1200);
                     }
+                    
                     closeAll();
-                    await sync();
+                    
+                    // Aspetta e mostra guadagno
+                    setTimeout(async () => {
+                        await sync();
+                        const solReceived = state.balance - balanceBefore;
+                        if (solReceived > 0) {
+                            const pnl = ((solReceived - investedSol) / investedSol * 100);
+                            const pnlText = pnl >= 0 ? `+${pnl.toFixed(1)}%` : `${pnl.toFixed(1)}%`;
+                            toastSuccess(`+${solReceived.toFixed(4)} SOL (${pnlText})`);
+                        }
+                    }, 2500);
                 } else {
-                    toast('❌ Errore', d.message || 'Vendita fallita');
+                    // Parse errori
+                    let errorMsg = d.message || 'Vendita fallita';
+                    
+                    if (errorMsg.includes('insufficient')) {
+                        errorMsg = 'Saldo insufficiente per fees';
+                    } else if (errorMsg.includes('Slippage')) {
+                        errorMsg = 'Slippage troppo alto - Riprova';
+                    }
+                    
+                    toastError(errorMsg);
                 }
             } catch (e) {
                 console.error('Sell error:', e);
-                toast('❌ Errore', 'Connessione fallita');
+                toastError('Connessione fallita. Riprova.');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '<i data-lucide="arrow-down-right" class="w-4 h-4"></i> Vendi';
@@ -2068,7 +2239,10 @@
         }
         
         async function executeSell() {
-            if (!state.currentToken) return;
+            if (!state.currentToken) {
+                toastError('Nessun token selezionato');
+                return;
+            }
             
             const btn = document.getElementById('btnSell');
             btn.disabled = true;
@@ -2077,6 +2251,9 @@
             
             // Salva saldo prima
             const balanceBefore = state.balance;
+            const symbol = state.currentToken.symbol || 'Token';
+            
+            toast('📤 Vendita', `Vendendo ${symbol}...`);
             
             try {
                 const res = await fetch(`${API}/trade`, {
@@ -2092,11 +2269,14 @@
                 
                 if (d.success) {
                     // Mostra messaggio con dettagli
-                    toast('✅ Venduto!', d.message || 'Posizione chiusa');
+                    toastSuccess(d.message || `${symbol} venduto!`);
                     
-                    // Se c'è link Solscan, loggalo
+                    // Mostra link TX
                     if (d.solscan_url) {
                         console.log('🔗 TX Solscan:', d.solscan_url);
+                        setTimeout(() => {
+                            toast('🔗 TX', `<a href="${d.solscan_url}" target="_blank" class="text-purple-400 underline">Vedi transazione →</a>`);
+                        }, 1500);
                     }
                     
                     closeAll();
@@ -2106,15 +2286,28 @@
                         await sync();
                         const solReceived = state.balance - balanceBefore;
                         if (solReceived > 0) {
-                            toast('💰 SOL Ricevuti', `+${solReceived.toFixed(4)} SOL nel tuo wallet`);
+                            toastSuccess(`+${solReceived.toFixed(4)} SOL ricevuti!`);
                         }
                     }, 2500);
                 } else {
-                    toast('❌ Errore', d.message || 'Vendita fallita');
+                    // Errori specifici
+                    let errorMsg = d.message || 'Vendita fallita';
+                    
+                    // Parse errori comuni
+                    if (errorMsg.includes('insufficient') || errorMsg.includes('Insufficient')) {
+                        errorMsg = '❌ Saldo insufficiente per pagare le fees di rete';
+                    } else if (errorMsg.includes('SlippageToleranceExceeded')) {
+                        errorMsg = '❌ Slippage troppo alto - Prezzo cambiato troppo rapidamente';
+                    } else if (errorMsg.includes('not found') || errorMsg.includes('Token non trovato')) {
+                        errorMsg = '❌ Token non trovato nel wallet - Forse già venduto?';
+                    }
+                    
+                    toastError(errorMsg);
+                    console.error('Sell error details:', d);
                 }
             } catch (e) {
                 console.error('Sell error:', e);
-                toast('❌ Errore', 'Errore di rete. Riprova.');
+                toastError('Errore di connessione. Verifica la rete e riprova.');
             }
             
             btn.disabled = false;
@@ -2122,12 +2315,51 @@
             lucide.createIcons();
         }
 
-        // Utils
-        function toast(title, msg) {
-            document.getElementById('toastTitle').innerText = title;
-            document.getElementById('toastMsg').innerText = msg;
-            document.getElementById('toast').classList.add('show');
-            setTimeout(() => document.getElementById('toast').classList.remove('show'), 3000);
+        // Utils - Toast migliorato con supporto HTML e tipi
+        function toast(title, msg, type = 'info', duration = 3000) {
+            const toastEl = document.getElementById('toast');
+            const titleEl = document.getElementById('toastTitle');
+            const msgEl = document.getElementById('toastMsg');
+            const cardEl = toastEl.querySelector('.card');
+            
+            // Imposta contenuto (supporta HTML)
+            titleEl.innerText = title;
+            if (msg.includes('<')) {
+                msgEl.innerHTML = msg;
+            } else {
+                msgEl.innerText = msg;
+            }
+            
+            // Colore bordo in base al tipo
+            cardEl.classList.remove('border-indigo-500', 'border-green-500', 'border-red-500', 'border-yellow-500');
+            switch(type) {
+                case 'success':
+                    cardEl.classList.add('border-green-500');
+                    break;
+                case 'error':
+                    cardEl.classList.add('border-red-500');
+                    duration = 5000; // Errori visibili più a lungo
+                    break;
+                case 'warning':
+                    cardEl.classList.add('border-yellow-500');
+                    duration = 4000;
+                    break;
+                default:
+                    cardEl.classList.add('border-indigo-500');
+            }
+            
+            toastEl.classList.add('show');
+            setTimeout(() => toastEl.classList.remove('show'), duration);
+        }
+        
+        // Toast veloce per errori
+        function toastError(msg) {
+            toast('❌ Errore', msg, 'error');
+        }
+        
+        // Toast veloce per successo
+        function toastSuccess(msg) {
+            toast('✅ Successo', msg, 'success');
         }
 
         function copyAddr() {
@@ -2924,6 +3156,9 @@
             
             // Aggiorna stima profitto
             updateProfitEstimate(displayPrice);
+            
+            // Aggiorna grafico LIVE
+            updatePriceChart(displayPrice);
         }
         
         // Calcola e mostra stima profitto in tempo reale
@@ -2984,6 +3219,182 @@
             if (fastPriceInterval) { clearInterval(fastPriceInterval); fastPriceInterval = null; }
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // LIVE PRICE CHART - Grafico andamento prezzo in tempo reale
+        // ═══════════════════════════════════════════════════════════════
+        
+        let priceChart = null;
+        let priceChartData = {
+            labels: [],
+            prices: [],
+            entryPrice: 0,
+            startTime: null,
+            maxPoints: 30 // Ultimi 30 punti
+        };
+        
+        // Inizializza il grafico
+        function initPriceChart() {
+            const ctx = document.getElementById('pnlChart');
+            if (!ctx) return;
+            
+            // Distruggi grafico esistente
+            if (priceChart) {
+                priceChart.destroy();
+            }
+            
+            priceChartData = {
+                labels: [],
+                prices: [],
+                entryPrice: 0,
+                startTime: new Date(),
+                maxPoints: 30
+            };
+            
+            priceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Prezzo',
+                            data: [],
+                            borderColor: '#8b5cf6',
+                            backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 4,
+                        },
+                        {
+                            label: 'Entry',
+                            data: [],
+                            borderColor: '#f59e0b',
+                            borderWidth: 1,
+                            borderDash: [5, 5],
+                            pointRadius: 0,
+                            fill: false,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: {
+                        duration: 300
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            enabled: true,
+                            backgroundColor: 'rgba(0,0,0,0.8)',
+                            titleFont: { size: 10 },
+                            bodyFont: { size: 11, family: 'JetBrains Mono' },
+                            callbacks: {
+                                label: function(context) {
+                                    if (context.datasetIndex === 0) {
+                                        const pnl = priceChartData.entryPrice > 0 
+                                            ? ((context.raw - priceChartData.entryPrice) / priceChartData.entryPrice * 100).toFixed(2)
+                                            : 0;
+                                        return `$${context.raw.toFixed(8)} (${pnl >= 0 ? '+' : ''}${pnl}%)`;
+                                    }
+                                    return `Entry: $${context.raw.toFixed(8)}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: false
+                        },
+                        y: {
+                            display: true,
+                            position: 'right',
+                            grid: {
+                                color: 'rgba(255,255,255,0.05)'
+                            },
+                            ticks: {
+                                font: { size: 9, family: 'JetBrains Mono' },
+                                color: '#71717a',
+                                callback: function(value) {
+                                    if (value < 0.0001) return value.toExponential(1);
+                                    if (value < 0.01) return value.toFixed(6);
+                                    return '$' + value.toFixed(4);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Aggiorna il grafico con nuovo prezzo
+        function updatePriceChart(currentPrice) {
+            if (!priceChart || !state.currentToken) return;
+            
+            const now = new Date();
+            const timeLabel = now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            
+            // Aggiungi nuovo punto
+            priceChartData.labels.push(timeLabel);
+            priceChartData.prices.push(currentPrice);
+            
+            // Mantieni solo ultimi N punti
+            if (priceChartData.labels.length > priceChartData.maxPoints) {
+                priceChartData.labels.shift();
+                priceChartData.prices.shift();
+            }
+            
+            // Aggiorna dati grafico
+            priceChart.data.labels = priceChartData.labels;
+            priceChart.data.datasets[0].data = priceChartData.prices;
+            
+            // Linea entry price (orizzontale)
+            if (priceChartData.entryPrice > 0) {
+                priceChart.data.datasets[1].data = priceChartData.labels.map(() => priceChartData.entryPrice);
+            }
+            
+            // Cambia colore in base a profitto
+            const isProfit = currentPrice >= priceChartData.entryPrice;
+            priceChart.data.datasets[0].borderColor = isProfit ? '#10b981' : '#ef4444';
+            priceChart.data.datasets[0].backgroundColor = isProfit 
+                ? 'rgba(16, 185, 129, 0.1)' 
+                : 'rgba(239, 68, 68, 0.1)';
+            
+            priceChart.update('none');
+            
+            // Aggiorna timestamp
+            if (priceChartData.startTime) {
+                document.getElementById('chartTimeStart').innerText = 
+                    priceChartData.startTime.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            }
+            document.getElementById('chartTimeEnd').innerText = 
+                now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+        }
+        
+        // Imposta prezzo di entrata per il grafico
+        function setChartEntryPrice(entryPrice) {
+            priceChartData.entryPrice = entryPrice;
+            priceChartData.startTime = new Date();
+            
+            // Inizializza con entry price come primo punto
+            if (priceChart && priceChartData.labels.length === 0) {
+                const timeLabel = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                priceChartData.labels.push(timeLabel);
+                priceChartData.prices.push(entryPrice);
+                priceChart.data.labels = priceChartData.labels;
+                priceChart.data.datasets[0].data = priceChartData.prices;
+                priceChart.data.datasets[1].data = [entryPrice];
+                priceChart.update('none');
+            }
+        }
+        
         // ═══════════════════════════════════════════════════════════════
         // VIRTUAL CARD FUNCTIONS
         // ═══════════════════════════════════════════════════════════════
@@ -3167,16 +3578,25 @@
                 return;
             }
             
-            const confirm = window.confirm(`⚠️ ATTENZIONE!\n\nQuesto venderà TUTTE le ${positions.length} posizioni aperte al prezzo di mercato.\n\nVuoi continuare?`);
-            if (!confirm) return;
+            const confirmMsg = `⚠️ LIQUIDAZIONE TOTALE!\n\nQuesto venderà TUTTE le ${positions.length} posizioni:\n\n` + 
+                positions.map(p => `• ${p.token_symbol || 'Token'}: ${p.amount_sol.toFixed(4)} SOL`).join('\n') +
+                `\n\nTutto verrà convertito in SOL. Vuoi continuare?`;
             
-            toast('Vendita in corso...', `Vendendo ${positions.length} posizioni...`);
+            if (!window.confirm(confirmMsg)) return;
+            
+            toast('🔄 Liquidazione', `Vendendo ${positions.length} posizioni...`);
             
             let soldCount = 0;
-            let errors = 0;
+            let errorList = [];
+            const balanceBefore = state.balance;
             
             // Sell positions one by one (single trade mode)
-            for (const pos of positions) {
+            for (let i = 0; i < positions.length; i++) {
+                const pos = positions[i];
+                const symbol = pos.token_symbol || 'Token';
+                
+                toast('📤 Vendita', `${i+1}/${positions.length}: ${symbol}...`);
+                
                 try {
                     const res = await fetch(`${API}/trade`, {
                         method: 'POST',
@@ -3192,27 +3612,37 @@
                     
                     if (data.success) {
                         soldCount++;
-                        toast(`Venduto ${soldCount}/${positions.length}`, pos.token_symbol || 'Token');
+                        toastSuccess(`${symbol} venduto (${soldCount}/${positions.length})`);
                     } else {
-                        errors++;
+                        // Errore specifico
+                        let errMsg = data.message || 'Errore sconosciuto';
+                        if (errMsg.includes('insufficient')) errMsg = 'Saldo insufficiente per fees';
+                        if (errMsg.includes('not found')) errMsg = 'Token non trovato';
+                        
+                        errorList.push(`${symbol}: ${errMsg}`);
+                        toastError(`${symbol}: ${errMsg}`);
                     }
                     
-                    // Small delay between sells to avoid rate limiting
-                    await new Promise(r => setTimeout(r, 1000));
+                    // Delay tra le vendite
+                    await new Promise(r => setTimeout(r, 1500));
                     
                 } catch (e) {
                     console.error('Sell error:', e);
-                    errors++;
+                    errorList.push(`${symbol}: Errore di rete`);
                 }
             }
             
-            // Refresh data
+            // Aspetta e aggiorna
+            await new Promise(r => setTimeout(r, 2000));
             await sync();
             
-            if (errors === 0) {
-                toast('✅ Completato!', `Tutte le ${soldCount} posizioni vendute`);
+            const solReceived = state.balance - balanceBefore;
+            
+            if (errorList.length === 0) {
+                toastSuccess(`Tutte le ${soldCount} posizioni vendute! +${solReceived.toFixed(4)} SOL`);
             } else {
-                toast('⚠️ Parziale', `Vendute ${soldCount}/${positions.length}, ${errors} errori`);
+                // Mostra modal con errori
+                showErrorModal(errorList, `Vendute ${soldCount}/${positions.length} | SOL: +${solReceived.toFixed(4)}`);
             }
         }
         
