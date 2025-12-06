@@ -1,23 +1,20 @@
 use dotenv::dotenv;
-use log::{info, error, warn, debug};
+use log::{info, warn, debug};
 use std::sync::{Arc, Mutex};
 use tokio::time::{sleep, Duration};
 use std::env;
 use std::collections::{HashMap, HashSet};
 use sqlx::Row;
 use futures::StreamExt;
-use solana_client::rpc_config::{RpcTransactionLogsFilter, RpcTransactionLogsConfig, RpcTransactionConfig};
-use solana_sdk::commitment_config::CommitmentConfig;
+// Network imports per QUIC/WS
 use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
-use solana_transaction_status::UiTransactionEncoding;
-use solana_transaction_status::option_serializer::OptionSerializer;
+// Transaction status imports (removed - using Jupiter only)
 use solana_sdk::signature::Signer;
 use spl_associated_token_account;
 use teloxide::Bot;
 
-// MODULI
-pub mod raydium;
+// MODULI - Trading Professionale
 pub mod wallet_manager;
 pub mod network;
 pub mod db;
@@ -25,20 +22,31 @@ pub mod telegram_bot;
 pub mod safety;
 pub mod strategy;
 pub mod api;
-pub mod jupiter;
+pub mod jupiter;   // DEX Aggregator principale (V6 API)
+pub mod orca;      // DEX Aggregator alternativo (Whirlpools)
+pub mod meteora;   // DEX Aggregator #3 (DLMM)
 pub mod engine;
+pub mod jito;      // Velocità QUIC + MEV protection + Bundle TX
+pub mod birdeye;   // Dati mercato professionali + Portfolio
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// WATCHLIST - Token monitorati per segnali
+// WATCHLIST - Token monitorati per segnali (NO stablecoins, NO SOL)
 // ═══════════════════════════════════════════════════════════════════════════════
 const WATCHLIST: &[&str] = &[
-    "So11111111111111111111111111111111111111112", 
-    "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz",
-    "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", 
-    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", 
-    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
-    "HZ1JovNiVvGrGNiiYvv3XW5KKge5Wbtf2dqsfYfFq5pump", 
-    "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn", 
+    "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz",  // JUP
+    "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", // WIF
+    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK
+    "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", // POPCAT
+    "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",  // RENDER
+    "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn", // jitoSOL
+];
+
+// Token da ESCLUDERE sempre (SOL, stablecoins)
+const EXCLUDED_TOKENS: &[&str] = &[
+    "So11111111111111111111111111111111111111112",  // SOL - non puoi comprare SOL con SOL
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
+    "USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX",  // USDH
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -118,11 +126,22 @@ async fn execute_amms_auto_buy(
     external_data: Option<&strategy::ExternalData>,
     trading_mode: strategy::TradingMode,
 ) {
+    let mint_str = token_mint.to_string();
+    
+    // Verifica che non sia un token escluso
+    if EXCLUDED_TOKENS.contains(&mint_str.as_str()) {
+        debug!("⏭️ Token escluso: {}", &mint_str[..8]);
+        return;
+    }
+    
+    // Ottieni utenti attivi (bot_active O manualmente attivato)
     let users = sqlx::query("SELECT tg_id FROM users WHERE is_active = 1").fetch_all(pool).await;
     if let Ok(rows) = users {
-        if rows.is_empty() { return; }
+        if rows.is_empty() { 
+            debug!("⏭️ Nessun utente attivo per auto-buy");
+            return; 
+        }
         
-        let mint_str = token_mint.to_string();
         let mode_str = match trading_mode {
             strategy::TradingMode::Dip => "DIP",
             strategy::TradingMode::Breakout => "BREAKOUT",
@@ -130,11 +149,7 @@ async fn execute_amms_auto_buy(
         };
         info!("🤖 AMMS {} BUY: {} utenti per {}", mode_str, rows.len(), &mint_str[..8]);
 
-        // Fetch Pool Keys UNA volta
-        let pool_keys = match raydium::fetch_pool_keys_by_mint(net, token_mint).await {
-            Ok(k) => Some(k),
-            Err(_) => None,
-        };
+        // Solo Jupiter - Velocità pura
 
         for row in rows {
             let uid: String = row.get("tg_id");
@@ -147,86 +162,88 @@ async fn execute_amms_auto_buy(
             let net_c = net.clone();
             let pool_c = pool.clone();
             let token_c = mint_str.clone();
-            let keys_c = pool_keys.clone();
-            let mint_key = *token_mint;
             let state_c = state.clone();
             let ext_data = external_data.cloned();
             let mode = trading_mode;
 
             tokio::spawn(async move {
-                if let Ok(payer) = wallet_manager::get_decrypted_wallet(&pool_c, &uid).await {
-                    let bal = net_c.get_balance_fast(&payer.pubkey()).await;
-                    let bal_sol = bal as f64 / 1_000_000_000.0;
-                    
-                    if bal_sol < 0.02 { return; } // Riserva minima
+                match wallet_manager::get_decrypted_wallet(&pool_c, &uid).await {
+                    Ok(payer) => {
+                        let bal = net_c.get_balance_fast(&payer.pubkey()).await;
+                        let bal_sol = bal as f64 / 1_000_000_000.0;
+                        
+                        // Verifica saldo minimo per trading (0.01 SOL = ~$2)
+                        if bal_sol < 0.01 { 
+                            debug!("⏭️ {} saldo insufficiente: {:.4} SOL", uid, bal_sol);
+                            return; 
+                        }
 
-                    // Calcola ATR se abbiamo market data
-                    let atr_pct = if let Ok(mkt_data) = state_c.market_data.lock() {
-                        mkt_data.get(&token_c)
-                            .and_then(|d| strategy::analyze_market_full(d))
-                            .map(|a| (a.atr / ext_data.as_ref().map(|e| e.price).unwrap_or(1.0)) * 100.0)
-                    } else { None };
+                        // Calcola ATR se abbiamo market data
+                        let atr_pct = if let Ok(mkt_data) = state_c.market_data.lock() {
+                            mkt_data.get(&token_c)
+                                .and_then(|d| strategy::analyze_market_full(d))
+                                .map(|a| (a.atr / ext_data.as_ref().map(|e| e.price).unwrap_or(1.0)) * 100.0)
+                        } else { None };
 
-                    // BREAKOUT usa importo più cauto
-                    let mut amt_sol = match mode {
-                        strategy::TradingMode::Breakout => strategy::calculate_breakout_investment(bal_sol, atr_pct),
-                        _ => strategy::calculate_investment_amount(bal_sol, atr_pct),
-                    };
-                    
-                    // Tetto sicurezza auto-trade
-                    amt_sol = amt_sol.min(0.5);
-                    
-                    let amt_lam = (amt_sol * 1_000_000_000.0) as u64;
+                        // Calcola importo da investire basato sulla strategia
+                        let mut amt_sol = match mode {
+                            strategy::TradingMode::Breakout => strategy::calculate_breakout_investment(bal_sol, atr_pct),
+                            _ => strategy::calculate_investment_amount(bal_sol, atr_pct),
+                        };
+                        
+                        // Assicurati che l'importo sia valido e non superi il 95% del saldo
+                        amt_sol = amt_sol.min(bal_sol * 0.95).min(0.5); // Max 0.5 SOL per auto-trade
+                        
+                        // Minimo 0.005 SOL per trade
+                        if amt_sol < 0.005 {
+                            debug!("⏭️ {} importo troppo basso: {:.6} SOL", uid, amt_sol);
+                            return;
+                        }
+                        
+                        let amt_lam = (amt_sol * 1_000_000_000.0) as u64;
+                        let input = "So11111111111111111111111111111111111111112";
+                        let mut success = false;
+                        let mut entry_price = 0.0;
+                        
+                        info!("🛒 BUY {} | User: {} | Amount: {:.4} SOL", &token_c[..8], uid, amt_sol);
 
-                        if amt_lam > 0 {
-                            let input = "So11111111111111111111111111111111111111112";
-                            let mut success = false;
-                            let mut entry_price = 0.0;
-                            let mut tx_sig = String::new();
-
-                            // JUPITER FIRST (con VersionedTransaction)
-                            if let Ok(tx) = jupiter::get_jupiter_swap_tx(
-                                &payer.pubkey().to_string(), 
-                                input, 
-                                &token_c, 
-                                amt_lam, 
-                                100
+                        // SMART SWAP: Jupiter + Orca + Jito per velocità massima
+                        if let Ok(bh) = net_c.rpc.get_latest_blockhash().await {
+                            // Prova smart swap (confronta Jupiter vs Orca)
+                            match orca::smart_swap(
+                                &payer.pubkey().to_string(),
+                                &payer,
+                                input,
+                                &token_c,
+                                amt_lam,
+                                200, // 2% slippage
+                                bh
                             ).await {
-                                if let Ok(bh) = net_c.rpc.get_latest_blockhash().await {
-                                    if let Ok(signed_tx) = jupiter::sign_versioned_transaction(&tx, &payer, bh) {
-                                        if let Ok(sig) = net_c.send_versioned_transaction(&signed_tx).await {
-                                            let mode_str = match mode {
-                                                strategy::TradingMode::Dip => "DIP",
-                                                strategy::TradingMode::Breakout => "BREAKOUT",
-                                                _ => "AUTO",
-                                            };
-                                            info!("✅ 🔵{} JUPITER ({}) -> TX: {}", mode_str, uid, sig);
-                                            let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
-                                            success = true;
-                                            tx_sig = sig;
-                                            entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
+                                Ok((signed_tx, dex_used)) => {
+                                    // Invia via Jito per velocità massima
+                                    let sig = match jito::send_transaction_jito(&signed_tx, Some(50_000)).await {
+                                        Ok(bundle_id) => bundle_id,
+                                        Err(_) => {
+                                            // Fallback RPC normale
+                                            net_c.send_versioned_transaction(&signed_tx).await.unwrap_or_default()
                                         }
-                                    }
-                                }
-                            }
-
-                            // RAYDIUM FALLBACK
-                            if !success {
-                                if let Some(keys) = keys_c {
-                                    if let Ok(sig) = raydium::execute_swap(&net_c, &payer, &keys, mint_key, amt_lam, 200).await {
+                                    };
+                                    
+                                    if !sig.is_empty() {
                                         let mode_str = match mode {
                                             strategy::TradingMode::Dip => "DIP",
                                             strategy::TradingMode::Breakout => "BREAKOUT",
                                             _ => "AUTO",
                                         };
-                                        info!("⚡ 🚀{} RAYDIUM ({}) -> TX: {}", mode_str, uid, sig);
+                                        info!("✅ {} {} ({}) | {:.4} SOL | TX: {}", mode_str, dex_used, uid, amt_sol, sig);
                                         let _ = db::record_buy_with_mode(&pool_c, &uid, &token_c, &sig, amt_lam, mode_str).await;
                                         success = true;
-                                        tx_sig = sig.clone();
                                         entry_price = ext_data.as_ref().map(|e| e.price).unwrap_or(0.0);
                                     }
-                                }
+                                },
+                                Err(e) => warn!("❌ Smart swap fallito: {}", e),
                             }
+                        }
 
                         // Registra posizione per tracking AMMS
                         if success && entry_price > 0.0 {
@@ -264,7 +281,12 @@ async fn execute_amms_auto_buy(
                                 info!("📊 {} Posizione [{}] | SL: ${:.8} | TP: ${:.8}", 
                                     mode_str, uid, entry_price - (sl_mult * atr), entry_price + (tp_mult * atr));
                             }
+                        } else if !success {
+                            warn!("❌ Trade fallito per {} su {}", uid, &token_c[..8]);
                         }
+                    },
+                    Err(e) => {
+                        warn!("❌ Wallet error per {}: {}", uid, e);
                     }
                 }
             });
@@ -569,116 +591,94 @@ async fn run_market_strategy(net: Arc<network::NetworkClient>, state: Arc<AppSta
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SNIPER LISTENER - Snipa nuovi token con verifiche di sicurezza
+// TRENDING SCANNER - Trova token trending via DexScreener (Velocità pura)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async fn run_sniper_listener(net: Arc<network::NetworkClient>, state: Arc<AppState>, pool: sqlx::SqlitePool) {
-    let raydium_id = Pubkey::from_str(crate::raydium::RAYDIUM_V4_PROGRAM_ID).unwrap();
-    let ws_client = net.clone();
-
+async fn run_trending_scanner(net: Arc<network::NetworkClient>, state: Arc<AppState>, pool: sqlx::SqlitePool) {
+    info!("🔍 Trending Scanner avviato (DexScreener)");
+    
     loop {
-        match ws_client.pubsub.logs_subscribe(
-             RpcTransactionLogsFilter::Mentions(vec![raydium_id.to_string()]),
-             RpcTransactionLogsConfig { commitment: Some(CommitmentConfig::processed()) }
-        ).await {
-            Ok((mut stream, _)) => {
-                info!("✅ AMMS Sniper Attivo.");
-                while let Some(log) = stream.next().await {
-                    if log.value.logs.iter().any(|l| l.contains("initialize2")) {
-                        let sig_str = log.value.signature;
-                        
-                        if !is_new_signature(&state, &sig_str) { continue; }
-
-                        let n_an = net.clone();
-                        let s_an = state.clone();
-                        let p_an = pool.clone();
-                        
-                        tokio::spawn(async move {
-                            if let Ok(sig) = solana_sdk::signature::Signature::from_str(&sig_str) {
-                                if let Ok(tx) = n_an.rpc.get_transaction_with_config(
-                                    &sig, 
-                                    RpcTransactionConfig { 
-                                        encoding: Some(UiTransactionEncoding::Json), 
-                                        commitment: Some(CommitmentConfig::confirmed()), 
-                                        max_supported_transaction_version: Some(0) 
-                                    }
-                                ).await {
-                                    if let Some(meta) = tx.transaction.meta {
-                                        let balances = match meta.post_token_balances { 
-                                            OptionSerializer::Some(b) => b, 
-                                            _ => vec![] 
-                                        };
-                                        let wsol = "So11111111111111111111111111111111111111112";
+        // Cerca token trending su DexScreener
+        match jupiter::discover_trending_gems().await {
+            Ok(gems) => {
+                for gem in gems.iter().take(10) {
+                    // Salta token esclusi
+                    if is_excluded_token(&gem.address, &gem.symbol) {
+                        continue;
+                    }
+                    
+                    // Verifica sicurezza
+                    if let Ok(pk) = Pubkey::from_str(&gem.address) {
+                        if let Ok(rep) = safety::check_token_safety(&net, &pk).await {
+                            if rep.is_safe && gem.score >= 60 {
+                                // Token sicuro con buon score - aggiungi a gems
+                                {
+                                    let mut g = state.found_gems.lock().unwrap();
+                                    if !g.iter().any(|x| x.token == gem.address) {
+                                        info!("💎 TRENDING: {} (${:.8}) Score: {}", 
+                                            gem.symbol, gem.price, gem.score);
                                         
-                                        for b in balances {
-                                            let mint = b.mint;
-                                            if mint != wsol && b.ui_token_amount.decimals > 0 {
-                                                if let Ok(pk) = Pubkey::from_str(&mint) {
-                                                    // Safety check
-                                                    if let Ok(rep) = safety::check_token_safety(&n_an, &pk).await {
-                                                        if rep.is_safe {
-                                                            sleep(Duration::from_secs(2)).await;
-                                                            if let Ok(mkt) = jupiter::get_token_market_data(&mint).await {
-                                                                // Filtro qualità
-                                                                if mkt.liquidity_usd > 5000.0 && mkt.price > 0.0 {
-                                                                    info!("💎 SNIPER HIT: {} (${:.8}) Liq: ${:.0}", 
-                                                                        mkt.symbol, mkt.price, mkt.liquidity_usd);
-                                                                    
-                                                                    // Aggiungi a gems
-                                                                    {
-                                                                        let mut g = s_an.found_gems.lock().unwrap();
-                                                                        g.insert(0, GemData { 
-                                                                            token: mint.clone(), 
-                                                                            symbol: mkt.symbol.clone(), 
-                                                                            name: mkt.name.clone(),
-                                                                            price: mkt.price, 
-                                                                            safety_score: mkt.score, 
-                                                                            liquidity_usd: mkt.liquidity_usd,
-                                                                            market_cap: mkt.market_cap,
-                                                                            volume_24h: mkt.volume_24h,
-                                                                            change_1h: mkt.change_1h,
-                                                                            change_24h: mkt.change_24h,
-                                                                            image_url: mkt.image_url.clone(),
-                                                                            timestamp: chrono::Utc::now().timestamp(), 
-                                                                            source: "SNIPER".into() 
-                                                                        });
-                                                                        g.sort_by(|a, b| b.safety_score.cmp(&a.safety_score));
-                                                                        if g.len() > 30 { g.pop(); }
-                                                                    }
-                                                                    
-                                                                    // Auto buy con dati esterni - Sniper = nuovi token = BREAKOUT mode
-                                                                    let ext = strategy::ExternalData {
-                                                                        price: mkt.price,
-                                                                        change_5m: 5.0, // Nuovo = pump
-                                                                        change_1h: mkt.change_1h,
-                                                                        change_24h: mkt.change_24h,
-                                                                        volume_24h: mkt.volume_24h,
-                                                                        liquidity_usd: mkt.liquidity_usd,
-                                                                        market_cap: mkt.market_cap,
-                                                                    };
-                                                                    
-                                                                    // Nuovi token = BREAKOUT (cavalcano l'onda del lancio)
-                                                                    execute_amms_auto_buy(&p_an, &n_an, &s_an, &pk, Some(&ext), strategy::TradingMode::Breakout).await;
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                break;
-                                            }
-                                        }
+                                        g.insert(0, GemData { 
+                                            token: gem.address.clone(), 
+                                            symbol: gem.symbol.clone(), 
+                                            name: gem.name.clone(),
+                                            price: gem.price, 
+                                            safety_score: gem.score, 
+                                            liquidity_usd: gem.liquidity_usd,
+                                            market_cap: gem.market_cap,
+                                            volume_24h: gem.volume_24h,
+                                            change_1h: gem.change_1h,
+                                            change_24h: gem.change_24h,
+                                            image_url: get_image_url(&gem.image_url, &gem.address),
+                                            timestamp: chrono::Utc::now().timestamp(), 
+                                            source: "TRENDING".into() 
+                                        });
+                                        g.sort_by(|a, b| b.safety_score.cmp(&a.safety_score));
+                                        if g.len() > 30 { g.pop(); }
                                     }
                                 }
+                                
+                                // Auto buy se score buono e metriche decenti
+                                // Soglie più permissive per più opportunità
+                                let should_buy = 
+                                    (gem.score >= 65 && gem.change_1h > 2.0 && gem.liquidity_usd > 20000.0) ||
+                                    (gem.score >= 70 && gem.change_24h > 10.0) ||
+                                    (gem.change_1h > 8.0 && gem.volume_24h > 100000.0);
+                                
+                                if should_buy {
+                                    info!("🎯 AUTO-BUY TRIGGER: {} Score:{} 1h:{:+.1}% Liq:${:.0}k", 
+                                        gem.symbol, gem.score, gem.change_1h, gem.liquidity_usd/1000.0);
+                                    
+                                    let ext = strategy::ExternalData {
+                                        price: gem.price,
+                                        change_5m: gem.change_1h / 12.0,
+                                        change_1h: gem.change_1h,
+                                        change_24h: gem.change_24h,
+                                        volume_24h: gem.volume_24h,
+                                        liquidity_usd: gem.liquidity_usd,
+                                        market_cap: gem.market_cap,
+                                    };
+                                    
+                                    let mode = if gem.change_1h > 5.0 {
+                                        strategy::TradingMode::Breakout
+                                    } else {
+                                        strategy::TradingMode::Dip
+                                    };
+                                    
+                                    execute_amms_auto_buy(&pool, &net, &state, &pk, Some(&ext), mode).await;
+                                }
                             }
-                        });
+                        }
                     }
                 }
             },
             Err(e) => {
-                warn!("⚠️ Sniper WS error: {}", e);
-                sleep(Duration::from_secs(5)).await;
+                debug!("⚠️ Trending scan error: {}", e);
             }
         }
+        
+        // Scan ogni 30 secondi
+        sleep(Duration::from_secs(30)).await;
     }
 }
 
@@ -752,28 +752,80 @@ async fn run_daily_report_task(
 // GEM DISCOVERY - Trova token promettenti
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Verifica se un token deve essere escluso
+fn is_excluded_token(address: &str, symbol: &str) -> bool {
+    // Token esclusi per indirizzo
+    if EXCLUDED_TOKENS.contains(&address) {
+        return true;
+    }
+    // Stablecoins escluse per simbolo
+    let stable_symbols = ["USDC", "USDT", "USDH", "DAI", "USDD", "BUSD", "TUSD"];
+    if stable_symbols.contains(&symbol.to_uppercase().as_str()) {
+        return true;
+    }
+    false
+}
+
+/// Ottieni URL immagine con fallback DexScreener
+fn get_image_url(original: &str, token_address: &str) -> String {
+    // Verifica se l'URL originale è valido
+    let is_valid = !original.is_empty() 
+        && original.len() > 15 
+        && original.starts_with("http")
+        && !original.to_lowercase().contains("undefined")
+        && !original.to_lowercase().contains("null")
+        && !original.to_lowercase().contains("placeholder");
+    
+    if is_valid {
+        original.to_string()
+    } else {
+        // Fallback a DexScreener che ha la maggior parte delle immagini
+        format!("https://dd.dexscreener.com/ds-data/tokens/solana/{}.png", token_address)
+    }
+}
+
+/// Verifica se un token ha un'immagine valida
+fn has_valid_image(url: &str) -> bool {
+    if url.len() < 15 { return false; }
+    if !url.starts_with("http") { return false; }
+    
+    let bad = ["undefined", "null", "placeholder", "default", "missing"];
+    let url_lower = url.to_lowercase();
+    for pattern in bad {
+        if url_lower.contains(pattern) { return false; }
+    }
+    true
+}
+
 async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient>) {
     info!("💎 AMMS Gem Discovery avviato");
     
-    // TOP ALTCOIN - Solo indirizzi, dati REALI dalle API
+    // TOP ALTCOIN - Solo indirizzi, dati REALI dalle API (NO SOL, NO stablecoins)
     let top_token_addresses = vec![
-        "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz",  // JUP
-        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK  
-        "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", // WIF
-        "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", // POPCAT
-        "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",  // RENDER
+        ("JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz", "JUP"),
+        ("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "BONK"),
+        ("EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "WIF"),
+        ("7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", "POPCAT"),
+        ("rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof", "RENDER"),
+        ("4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "RAY"),
+        ("orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE", "ORCA"),
     ];
     
     // Carica dati LIVE per le top altcoin all'avvio
     info!("📊 Caricamento dati LIVE per {} top altcoin...", top_token_addresses.len());
     
-    for token_addr in &top_token_addresses {
+    for (token_addr, fallback_symbol) in &top_token_addresses {
+        // Salta token esclusi
+        if is_excluded_token(token_addr, fallback_symbol) {
+            continue;
+        }
+        
         match jupiter::get_token_market_data(token_addr).await {
             Ok(mkt) => {
-                if mkt.price > 0.0 {
+                if mkt.price > 0.0 && mkt.liquidity_usd > 5000.0 {
                     let gem = GemData {
                         token: mkt.address.clone(),
-                        symbol: mkt.symbol.clone(),
+                        symbol: if mkt.symbol == "UNK" { fallback_symbol.to_string() } else { mkt.symbol.clone() },
                         name: mkt.name.clone(),
                         price: mkt.price,
                         safety_score: mkt.score.max(85), // Top altcoin hanno score alto
@@ -782,7 +834,7 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
                         volume_24h: mkt.volume_24h,
                         change_1h: mkt.change_1h,
                         change_24h: mkt.change_24h,
-                        image_url: mkt.image_url.clone(),
+                        image_url: get_image_url(&mkt.image_url, token_addr),
                         timestamp: chrono::Utc::now().timestamp(),
                         source: "TOP".to_string(),
                     };
@@ -790,16 +842,16 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
                     let mut found = state.found_gems.lock().unwrap();
                     if !found.iter().any(|g| g.token == gem.token) {
                         info!("✅ {} | ${:.6} | MCap: ${:.0}M | Vol: ${:.0}K", 
-                            mkt.symbol, mkt.price, mkt.market_cap / 1_000_000.0, mkt.volume_24h / 1_000.0);
+                            gem.symbol, mkt.price, mkt.market_cap / 1_000_000.0, mkt.volume_24h / 1_000.0);
                         found.push(gem);
                     }
                 }
             }
             Err(e) => {
-                warn!("⚠️ API error per {}: {}", &token_addr[..8], e);
+                warn!("⚠️ API error per {}: {}", fallback_symbol, e);
             }
         }
-        sleep(Duration::from_millis(300)).await;
+        sleep(Duration::from_millis(200)).await;
     }
     
     {
@@ -849,11 +901,15 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
         
         let mut all_gems: Vec<GemData> = Vec::new();
         
-        // PARTE 1: ALTCOIN AFFERMATE
+        // PARTE 1: ALTCOIN AFFERMATE (filtrate)
         match jupiter::find_profitable_altcoins().await {
             Ok(altcoins) => {
                 debug!("📊 {} altcoin affermate trovate", altcoins.len());
                 for coin in altcoins {
+                    // Salta token esclusi (SOL, stablecoins)
+                    if is_excluded_token(&coin.address, &coin.symbol) {
+                        continue;
+                    }
                     all_gems.push(GemData {
                         token: coin.address.clone(),
                         symbol: coin.symbol.clone(),
@@ -865,7 +921,7 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
                         volume_24h: coin.volume_24h,
                         change_1h: coin.change_1h,
                         change_24h: coin.change_24h,
-                        image_url: coin.image_url.clone(),
+                        image_url: get_image_url(&coin.image_url, &coin.address),
                         timestamp: chrono::Utc::now().timestamp(),
                         source: "ALTCOIN".into(),
                     });
@@ -874,13 +930,18 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
             Err(e) => debug!("⚠️ Altcoin fetch: {}", e),
         }
         
-        // PARTE 2: NUOVE GEMME (ogni 3 cicli)
+        // PARTE 2: NUOVE GEMME (ogni 3 cicli) - filtrate
         if cycle % 3 == 0 {
             match jupiter::discover_trending_gems().await {
                 Ok(gems) => {
                     debug!("💎 {} nuove gemme trovate", gems.len());
                     
                     for gem in gems {
+                        // Salta token esclusi (SOL, stablecoins)
+                        if is_excluded_token(&gem.address, &gem.symbol) {
+                            continue;
+                        }
+                        
                         if let Ok(pk) = Pubkey::from_str(&gem.address) {
                             if let Ok(report) = safety::check_token_safety(&net, &pk).await {
                                 if report.is_safe && gem.score >= 45 {
@@ -896,7 +957,7 @@ async fn run_gem_discovery(state: Arc<AppState>, net: Arc<network::NetworkClient
                                             volume_24h: gem.volume_24h,
                                             change_1h: gem.change_1h,
                                             change_24h: gem.change_24h,
-                                            image_url: gem.image_url.clone(),
+                                            image_url: get_image_url(&gem.image_url, &gem.address),
                                             timestamp: chrono::Utc::now().timestamp(),
                                             source: "DISCOVERY".into(),
                                         });
@@ -976,38 +1037,52 @@ async fn main() {
     // ═══════════════════════════════════════════════════════════════
     info!("💎 Precaricamento gemme per UI...");
     {
-        // Top token da caricare subito
+        // Top token da caricare subito (NO SOL, NO stablecoins)
         let top_tokens = vec![
-            "JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz",  // JUP
-            "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", // BONK
-            "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", // WIF
-            "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", // POPCAT
-            "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",  // RENDER
+            ("JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz", "JUP", "https://static.jup.ag/jup/icon.png"),
+            ("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "BONK", "https://arweave.net/hQiPZOsRZXGXBJd_82PhVdlM_hACsT_q6wqwf5cSY7I"),
+            ("EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "WIF", "https://dd.dexscreener.com/ds-data/tokens/solana/EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm.png"),
+            ("7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", "POPCAT", "https://dd.dexscreener.com/ds-data/tokens/solana/7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr.png"),
+            ("rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof", "RENDER", "https://dd.dexscreener.com/ds-data/tokens/solana/rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof.png"),
+            ("4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "RAY", "https://dd.dexscreener.com/ds-data/tokens/solana/4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R.png"),
+            ("orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE", "ORCA", "https://dd.dexscreener.com/ds-data/tokens/solana/orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE.png"),
         ];
         
         let mut preloaded_gems: Vec<GemData> = Vec::new();
-        for addr in &top_tokens {
-            if let Ok(mkt) = jupiter::get_token_market_data(addr).await {
-                if mkt.price > 0.0 {
-                    preloaded_gems.push(GemData {
-                        token: mkt.address.clone(),
-                        symbol: mkt.symbol.clone(),
-                        name: mkt.name.clone(),
-                        price: mkt.price,
-                        safety_score: mkt.score.max(85),
-                        liquidity_usd: mkt.liquidity_usd,
-                        market_cap: mkt.market_cap,
-                        volume_24h: mkt.volume_24h,
-                        change_1h: mkt.change_1h,
-                        change_24h: mkt.change_24h,
-                        image_url: mkt.image_url.clone(),
-                        timestamp: chrono::Utc::now().timestamp(),
-                        source: "TOP".to_string(),
-                    });
-                    info!("  ✓ {} | ${:.6}", mkt.symbol, mkt.price);
+        for (addr, fallback_symbol, fallback_img) in &top_tokens {
+            match jupiter::get_token_market_data(addr).await {
+                Ok(mkt) => {
+                    if mkt.price > 0.0 && mkt.liquidity_usd > 5000.0 {
+                        // Usa immagine DexScreener se API non restituisce immagine valida
+                        let image = if mkt.image_url.is_empty() || mkt.image_url.contains("undefined") {
+                            fallback_img.to_string()
+                        } else {
+                            mkt.image_url.clone()
+                        };
+                        
+                        preloaded_gems.push(GemData {
+                            token: mkt.address.clone(),
+                            symbol: if mkt.symbol == "UNK" { fallback_symbol.to_string() } else { mkt.symbol.clone() },
+                            name: mkt.name.clone(),
+                            price: mkt.price,
+                            safety_score: mkt.score.max(85),
+                            liquidity_usd: mkt.liquidity_usd,
+                            market_cap: mkt.market_cap,
+                            volume_24h: mkt.volume_24h,
+                            change_1h: mkt.change_1h,
+                            change_24h: mkt.change_24h,
+                            image_url: image,
+                            timestamp: chrono::Utc::now().timestamp(),
+                            source: "TOP".to_string(),
+                        });
+                        info!("  ✓ {} | ${:.6} | Liq: ${:.0}K", mkt.symbol, mkt.price, mkt.liquidity_usd/1000.0);
+                    }
+                },
+                Err(e) => {
+                    warn!("  ⚠️ {} - Errore: {}", fallback_symbol, e);
                 }
             }
-            sleep(Duration::from_millis(100)).await;
+            sleep(Duration::from_millis(150)).await;
         }
         
         if !preloaded_gems.is_empty() {
@@ -1040,11 +1115,11 @@ async fn main() {
     let s4 = state.clone();
     tokio::spawn(async move { run_position_manager(p4, n4, s4).await; });
 
-    // Sniper Listener
+    // Trending Scanner (sostituisce Raydium Sniper)
     let p5 = pool.clone();
     let n5 = net.clone();
     let s5 = state.clone();
-    tokio::spawn(async move { run_sniper_listener(n5, s5, p5).await; });
+    tokio::spawn(async move { run_trending_scanner(n5, s5, p5).await; });
 
     // Gem Discovery
     let n6 = net.clone();

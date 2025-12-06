@@ -4,7 +4,7 @@ use std::env;
 use std::str::FromStr;
 use std::fs;
 use std::path::Path;
-use log::{info, warn, error};
+use log::{info, error};
 use chrono::{Utc, Duration, DateTime};
 
 /// Connette al DB con Backup di Sicurezza e WAL Mode
@@ -127,6 +127,29 @@ async fn init_schema(pool: &SqlitePool) {
         .await;
     
     info!("✅ Schema Database verificato (Full Features + Migrazioni PnL).");
+    
+    // ═══════════════════════════════════════════════════════════════
+    // OTTIMIZZAZIONE AWS - Pulizia automatica vecchi dati (30GB limit)
+    // ═══════════════════════════════════════════════════════════════
+    cleanup_old_data(pool).await;
+}
+
+/// Pulisce dati vecchi per mantenere il DB sotto 30GB
+async fn cleanup_old_data(pool: &SqlitePool) {
+    // Mantieni solo ultimi 90 giorni di trades chiusi
+    let _ = sqlx::query(
+        "DELETE FROM trades WHERE status = 'SOLD' AND entry_time < datetime('now', '-90 days')"
+    ).execute(pool).await;
+    
+    // Mantieni solo ultimi 60 giorni di prelievi completati
+    let _ = sqlx::query(
+        "DELETE FROM withdrawals WHERE status = 'COMPLETED' AND created_at < datetime('now', '-60 days')"
+    ).execute(pool).await;
+    
+    // Vacuum per recuperare spazio (solo se DB > 100MB)
+    let _ = sqlx::query("PRAGMA page_count").fetch_one(pool).await;
+    
+    info!("🧹 Pulizia database completata");
 }
 
 // --- FUNZIONI OPERATIVE (Tutte PUBBLICHE) ---
@@ -369,20 +392,25 @@ pub async fn get_open_trades_all(pool: &SqlitePool) -> Result<Vec<(i32, String, 
     Ok(results)
 }
 
-/// Trade aperto per un utente specifico
+/// Trade aperto per un utente specifico - COMPLETO con tutti i dati per UI
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct OpenTrade {
     pub id: i32,
     pub token_address: String,
-    pub amount_lamports: u64,
-    pub entry_price: f64,
+    pub amount_sol: f64,           // Importo in SOL
+    pub entry_price: f64,          // Prezzo di entrata USD
+    pub token_symbol: String,      // Simbolo (BONK, JUP)
+    pub token_image: String,       // URL immagine
+    pub entry_time: String,        // Quando è stato aperto
+    pub trading_mode: String,      // AUTO, MANUAL, BOT
 }
 
-/// Recupera trade aperti per un utente specifico
+/// Recupera trade aperti per un utente specifico - FULL DATA
 pub async fn get_open_trades(pool: &SqlitePool, user_id: &str) -> Result<Vec<OpenTrade>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, token_address, amount_in_lamports, entry_price 
-         FROM trades WHERE user_id = ? AND status = 'OPEN'"
+        "SELECT id, token_address, amount_in_lamports, entry_price, token_symbol, token_image, entry_time, trading_mode 
+         FROM trades WHERE user_id = ? AND status = 'OPEN'
+         ORDER BY entry_time DESC"
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -390,14 +418,35 @@ pub async fn get_open_trades(pool: &SqlitePool, user_id: &str) -> Result<Vec<Ope
     
     let mut results = Vec::new();
     for row in rows {
+        let token_addr: String = row.get("token_address");
+        let lamports: i64 = row.get("amount_in_lamports");
         results.push(OpenTrade {
             id: row.get("id"),
-            token_address: row.get("token_address"),
-            amount_lamports: row.get::<i64, _>("amount_in_lamports") as u64,
+            token_address: token_addr.clone(),
+            amount_sol: lamports as f64 / 1_000_000_000.0,
             entry_price: row.try_get("entry_price").unwrap_or(0.0),
+            token_symbol: row.try_get("token_symbol").unwrap_or_else(|_| "???".to_string()),
+            token_image: row.try_get::<String, _>("token_image")
+                .unwrap_or_else(|_| format!("https://img.jup.ag/v6/{}/logo", token_addr)),
+            entry_time: row.try_get("entry_time").unwrap_or_else(|_| "".to_string()),
+            trading_mode: row.try_get("trading_mode").unwrap_or_else(|_| "AUTO".to_string()),
         });
     }
     Ok(results)
+}
+
+/// Calcola il totale SOL bloccato in posizioni aperte
+pub async fn get_locked_sol(pool: &SqlitePool, user_id: &str) -> Result<f64, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT COALESCE(SUM(amount_in_lamports), 0) as total 
+         FROM trades WHERE user_id = ? AND status = 'OPEN'"
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    
+    let total: i64 = row.get("total");
+    Ok(total as f64 / 1_000_000_000.0)
 }
 
 /// Statistiche utente
@@ -526,4 +575,108 @@ pub async fn get_all_history(pool: &SqlitePool, user_id: &str) -> Result<(Vec<Tr
     let trades = get_user_trades(pool, user_id).await?;
     let withdrawals = get_user_withdrawals(pool, user_id).await?;
     Ok((trades, withdrawals))
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PERSISTENZA STATO BOT
+// ═══════════════════════════════════════════════════════════════
+
+/// Recupera lo stato del bot (is_active) per un utente
+pub async fn get_bot_status(pool: &SqlitePool, user_id: &str) -> Result<bool, sqlx::Error> {
+    let row_opt = sqlx::query("SELECT is_active FROM users WHERE tg_id = ?")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+    
+    if let Some(row) = row_opt {
+        let is_active: i32 = row.try_get("is_active").unwrap_or(0);
+        Ok(is_active == 1)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Imposta lo stato del bot (is_active) per un utente
+pub async fn set_bot_status(pool: &SqlitePool, user_id: &str, active: bool) -> Result<(), sqlx::Error> {
+    let is_active = if active { 1 } else { 0 };
+    
+    sqlx::query("UPDATE users SET is_active = ? WHERE tg_id = ?")
+        .bind(is_active)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    
+    info!("🤖 Bot stato aggiornato per {}: {}", user_id, if active { "ATTIVO" } else { "FERMO" });
+    Ok(())
+}
+
+/// Recupera tutti gli utenti con bot attivo (per auto-restart)
+pub async fn get_active_users(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query("SELECT tg_id FROM users WHERE is_active = 1")
+        .fetch_all(pool)
+        .await?;
+    
+    let mut users = Vec::new();
+    for row in rows {
+        users.push(row.get("tg_id"));
+    }
+    Ok(users)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AUTENTICAZIONE WEB - Persistenza account
+// ═══════════════════════════════════════════════════════════════
+
+/// Registra o aggiorna un utente web (email/password)
+pub async fn register_web_user(pool: &SqlitePool, email_hash: &str, password_hash: &str, pubkey: &str, private_key_enc: &str) -> Result<(), sqlx::Error> {
+    // Prima controlla se l'utente esiste già
+    let exists = sqlx::query("SELECT 1 FROM users WHERE tg_id = ?")
+        .bind(email_hash)
+        .fetch_optional(pool)
+        .await?;
+    
+    if exists.is_some() {
+        // Utente esiste, aggiorna la password se cambiata
+        sqlx::query("UPDATE users SET settings = ? WHERE tg_id = ?")
+            .bind(password_hash)
+            .bind(email_hash)
+            .execute(pool)
+            .await?;
+    } else {
+        // Nuovo utente
+        sqlx::query(
+            "INSERT INTO users (tg_id, pubkey, private_key_enc, is_active, settings) VALUES (?, ?, ?, 0, ?)"
+        )
+        .bind(email_hash)
+        .bind(pubkey)
+        .bind(private_key_enc)
+        .bind(password_hash)
+        .execute(pool)
+        .await?;
+    }
+    
+    info!("👤 Utente web registrato/aggiornato: {}", &email_hash[..12]);
+    Ok(())
+}
+
+/// Verifica credenziali utente web
+pub async fn verify_web_user(pool: &SqlitePool, email_hash: &str, password_hash: &str) -> Result<Option<String>, sqlx::Error> {
+    let row_opt = sqlx::query("SELECT pubkey, settings FROM users WHERE tg_id = ?")
+        .bind(email_hash)
+        .fetch_optional(pool)
+        .await?;
+    
+    if let Some(row) = row_opt {
+        let stored_pwd_hash: Option<String> = row.try_get("settings").ok();
+        let pubkey: String = row.get("pubkey");
+        
+        // Verifica password
+        if let Some(stored) = stored_pwd_hash {
+            if stored == password_hash {
+                return Ok(Some(pubkey));
+            }
+        }
+    }
+    
+    Ok(None)
 }

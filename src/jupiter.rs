@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::time::Duration;
-use std::sync::Arc;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use solana_sdk::transaction::{Transaction, VersionedTransaction};
+use solana_sdk::transaction::VersionedTransaction;
 use solana_sdk::message::VersionedMessage;
 use solana_sdk::signature::{Keypair, Signer};
 use base64::{Engine as _, engine::general_purpose};
@@ -690,7 +689,36 @@ fn passes_quality_filters(token: &TokenMarketData) -> bool {
     let vol_liq_ratio = token.volume_24h / token.liquidity_usd;
     if vol_liq_ratio < 0.05 || vol_liq_ratio > 20.0 { return false; }
     
+    // 8. DEVE avere immagine valida (non vuota e non placeholder)
+    if !is_valid_image_url(&token.image_url) {
+        return false;
+    }
+    
     true
+}
+
+/// Verifica se un URL immagine è valido
+fn is_valid_image_url(url: &str) -> bool {
+    // Deve avere lunghezza minima
+    if url.len() < 15 { return false; }
+    
+    // Deve iniziare con http
+    if !url.starts_with("http") { return false; }
+    
+    // Non deve contenere placeholder
+    let bad_patterns = ["undefined", "null", "placeholder", "default", "unknown", "missing"];
+    for pattern in bad_patterns {
+        if url.to_lowercase().contains(pattern) { return false; }
+    }
+    
+    // Deve avere estensione immagine o essere da CDN noto
+    let valid_sources = [
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+        "arweave.net", "ipfs.io", "cloudflare", "jup.ag", "dexscreener",
+        "githubusercontent", "s3.amazonaws", "token-icons", "raw.githubusercontent"
+    ];
+    
+    valid_sources.iter().any(|s| url.to_lowercase().contains(s))
 }
 
 pub async fn get_token_info(mint: &str) -> Result<(f64, String), Box<dyn Error + Send + Sync>> {
@@ -825,6 +853,61 @@ pub async fn find_profitable_altcoins() -> Result<Vec<TokenMarketData>, Box<dyn 
     }
     
     Ok(profitable)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// JUPITER QUOTE - Per comparazione con altri DEX
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Struttura Quote Jupiter per comparazione
+#[derive(Debug, Clone)]
+pub struct JupiterQuote {
+    pub in_amount: u64,
+    pub out_amount: u64,
+    pub price_impact_pct: f64,
+    pub slippage_bps: u16,
+}
+
+/// Ottiene solo la quote da Jupiter (senza transazione)
+pub async fn get_jupiter_quote(
+    input_mint: &str, 
+    output_mint: &str, 
+    amount_lamports: u64, 
+    slippage_bps: u16
+) -> Result<JupiterQuote, Box<dyn Error + Send + Sync>> {
+    let quote_url = format!("{}?inputMint={}&outputMint={}&amount={}&slippageBps={}", 
+        JUP_QUOTE_API, input_mint, output_mint, amount_lamports, slippage_bps);
+    
+    let quote_resp = match robust_get(&quote_url).await {
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(json) => json,
+            Err(e) => return Err(format!("Quote JSON parse error: {}", e).into()),
+        },
+        Err(e) => return Err(format!("Quote request failed: {}", e).into()),
+    };
+    
+    if quote_resp.get("error").is_some() { 
+        return Err(format!("Jupiter Quote Error: {}", quote_resp).into()); 
+    }
+    
+    let in_amount = quote_resp["inAmount"].as_str()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(amount_lamports);
+    
+    let out_amount = quote_resp["outAmount"].as_str()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    
+    let price_impact_pct = quote_resp["priceImpactPct"].as_str()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    
+    Ok(JupiterQuote {
+        in_amount,
+        out_amount,
+        price_impact_pct,
+        slippage_bps,
+    })
 }
 
 /// Ottiene transazione swap da Jupiter con priority fees ottimizzate
