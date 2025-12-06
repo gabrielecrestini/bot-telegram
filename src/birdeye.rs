@@ -127,7 +127,7 @@ pub struct PortfolioItem {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn build_client() -> Result<reqwest::Client, Box<dyn Error + Send + Sync>> {
-    let mut builder = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(10));
     
     Ok(builder.build()?)

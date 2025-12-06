@@ -1,4 +1,5 @@
-use crate::{db, jito, jupiter, meteora, network, orca, wallet_manager, AppState, GemData};
+use crate::{db, jito, jupiter, network, orca, wallet_manager, AppState, GemData};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -171,7 +172,7 @@ fn parse_google_id_token(token: &str) -> Option<(String, Option<String>)> {
         return None;
     }
 
-    let payload = base64::decode_config(parts[1], base64::URL_SAFE_NO_PAD).ok()?;
+    let payload = URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
     let payload_json: serde_json::Value = serde_json::from_slice(&payload).ok()?;
 
     // Controlla exp se presente
@@ -1303,7 +1304,7 @@ async fn handle_withdraw(
                 "Richiesta inviata: {} verso IBAN {} (provider bancario)",
                 token, iban_clean
             ),
-            tx_signature: "offramp",
+            tx_signature: "offramp".to_string(),
             solscan_url: None,
         }));
     }
@@ -1461,6 +1462,7 @@ async fn handle_auth(
                 user_id: "".into(),
                 session_token: "".into(),
                 message: "Email già registrata. Usa Login.".into(),
+                email: Some(req.email.clone()),
             }));
         }
 
@@ -1532,12 +1534,21 @@ async fn handle_auth(
         }
 
         return Ok(warp::reply::json(&AuthResponse {
+            success: false,
+            user_id: "".into(),
+            session_token: "".into(),
+            message: "Email o password errati".into(),
+            email: None,
+        }));
+    }
+
+    Ok(warp::reply::json(&AuthResponse {
         success: false,
         user_id: "".into(),
         session_token: "".into(),
-        message: "Email o password errati".into(),
+        message: "Azione non valida".into(),
         email: None,
-    }));
+    }))
 }
 
 /// Login/Link con Google per riutilizzare il wallet Telegram su qualsiasi device
@@ -1611,8 +1622,9 @@ async fn handle_google_auth(
         .await
         .unwrap_or(None);
 
-    let mut settings_json = match row_opt.and_then(|r| r.try_get("settings").ok()) {
-        Some(s) => serde_json::from_str::<serde_json::Value>(&s).unwrap_or_else(|_| serde_json::json!({})),
+    let mut settings_json = match row_opt.and_then(|r| r.try_get::<String, _>("settings").ok()) {
+        Some(s) => serde_json::from_str::<serde_json::Value>(&s)
+            .unwrap_or_else(|_| serde_json::json!({})),
         None => serde_json::json!({}),
     };
 
@@ -1642,16 +1654,6 @@ async fn handle_google_auth(
         email: google_email,
     }))
 }
-
-    Ok(warp::reply::json(&AuthResponse {
-        success: false,
-        user_id: "".into(),
-        session_token: "".into(),
-        message: "Azione non valida".into(),
-        email: None,
-    }))
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // BOT HANDLERS
 // ═══════════════════════════════════════════════════════════════════════════════

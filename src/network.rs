@@ -77,7 +77,7 @@ impl NetworkClient {
 
     /// Invia transazione con retry automatico (TPU first, RPC fallback)
     pub async fn send_transaction_fast(&self, transaction: &solana_sdk::transaction::Transaction) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let sig = transaction.signatures[0].to_string();
+        let _sig = transaction.signatures[0].to_string();
         
         // Prima prova TPU (più veloce, salta mempool)
         if self.tpu.send_transaction(transaction) {
@@ -98,7 +98,7 @@ impl NetworkClient {
     /// Invia VersionedTransaction (Jupiter V6) con retry automatico
     /// Include retry robusto per gestire problemi DNS su AWS
     pub async fn send_versioned_transaction(&self, transaction: &solana_sdk::transaction::VersionedTransaction) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let sig = transaction.signatures[0].to_string();
+        let _sig = transaction.signatures[0].to_string();
         let mut last_error = String::new();
         
         // Retry con backoff esponenziale (gestisce problemi DNS su AWS)
