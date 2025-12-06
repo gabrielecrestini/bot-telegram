@@ -11,7 +11,11 @@ registry = "https://github.com/rust-lang/crates.io-index"
 
 [net]
 retry = 3
-git-fetch-with-cli = true
+# Prefer libgit2 HTTP(S) fetching instead of shelling out to the `git` CLI.
+# Some corporate proxies block CONNECT tunneling used by the CLI, while the
+# library implementation can fall back to plain HTTPS requests that pass
+# through filtering appliances.
+git-fetch-with-cli = false
 # Leave offline disabled by default so builds can fetch when connectivity is
 # available. To force a cached/offline build in locked-down environments, set
 # `CARGO_NET_OFFLINE=true` in the CI/CD job.
