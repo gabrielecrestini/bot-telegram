@@ -10,6 +10,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <!-- Chart.js per grafici live -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- Google Identity Services per login cross-device -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <style>
@@ -221,11 +223,12 @@
         .stable-toggle.active { background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.4); color: #4ade80; box-shadow: 0 8px 20px rgba(74,222,128,0.15); }
     </style>
 </head>
-<body>
+<body data-google-client-id="YOUR_GOOGLE_CLIENT_ID">
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
         const API = "https://api.domisia.it";
+        const GOOGLE_CLIENT_ID = document.body.dataset.googleClientId || window.GOOGLE_CLIENT_ID || 'YOUR_GOOGLE_CLIENT_ID';
         const SOLSCAN = "https://solscan.io/tx/";
         const SOLSCAN_ADDR = "https://solscan.io/account/";
         
@@ -1187,6 +1190,19 @@
                         <i data-lucide="arrow-right" class="w-5 h-5 inline mr-2"></i>
                         <span id="authBtnText">Accedi</span>
                     </button>
+
+                    <div class="flex items-center gap-3 my-4">
+                        <span class="flex-1 h-px bg-zinc-800"></span>
+                        <span class="text-[11px] text-zinc-500">Oppure</span>
+                        <span class="flex-1 h-px bg-zinc-800"></span>
+                    </div>
+
+                    <div id="googleBtnWrap" class="space-y-2">
+                        <div id="googleBtn" class="flex justify-center"></div>
+                        <p class="text-[11px] text-zinc-500 text-center">Accedi con Google e ritrova il wallet collegato al bot Telegram su ogni dispositivo.</p>
+                        <p id="googleSpinner" class="hidden text-[11px] text-indigo-300 text-center">Collego Google in modo sicuro...</p>
+                        <p id="googleUnavailable" class="hidden text-[11px] text-red-300 text-center">Configura il CLIENT_ID Google per abilitare il login rapido.</p>
+                    </div>
                 </div>
             </div>
 
@@ -2903,6 +2919,91 @@
         // ═══════════════════════════════════════════════════════════════
         
         let authMode = 'login';
+        let googleInitialized = false;
+        let lastAuthMethod = localStorage.getItem('auth_method') || '';
+
+        function initGoogleLogin() {
+            const wrap = document.getElementById('googleBtnWrap');
+            const btn = document.getElementById('googleBtn');
+            const unavailable = document.getElementById('googleUnavailable');
+
+            if (!wrap || !btn) return;
+
+            // Se non è configurato il client_id, nascondi il pulsante
+            if (!GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID.includes('YOUR_GOOGLE_CLIENT_ID')) {
+                unavailable.classList.remove('hidden');
+                wrap.classList.add('opacity-60');
+                return;
+            }
+
+            if (!window.google || !google.accounts) {
+                // Ritenta dopo il caricamento asincrono dello script Google
+                setTimeout(initGoogleLogin, 800);
+                return;
+            }
+
+            if (googleInitialized) return;
+
+            google.accounts.id.initialize({
+                client_id: GOOGLE_CLIENT_ID,
+                callback: (res) => handleGoogleCredential(res.credential),
+                cancel_on_tap_outside: true
+            });
+
+            google.accounts.id.renderButton(btn, {
+                theme: 'outline',
+                size: 'large',
+                shape: 'pill',
+                text: 'continue_with'
+            });
+
+            googleInitialized = true;
+        }
+
+        async function handleGoogleCredential(idToken) {
+            const errorEl = document.getElementById('authError');
+            const spinner = document.getElementById('googleSpinner');
+
+            if (!idToken) return;
+
+            spinner.classList.remove('hidden');
+            errorEl.classList.add('hidden');
+
+            try {
+                const res = await fetch(`${API}/auth/google`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ id_token: idToken })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    sessionToken = data.session_token;
+                    userId = data.user_id;
+                    userEmail = data.email || 'Google Account';
+                    lastAuthMethod = 'google';
+                    localStorage.setItem('session_token', sessionToken);
+                    localStorage.setItem('user_id', userId);
+                    localStorage.setItem('user_email', userEmail);
+                    localStorage.setItem('auth_method', lastAuthMethod);
+
+                    toast('Successo', 'Login Google collegato al tuo wallet');
+                    showMainApp();
+                    sync();
+                    setInterval(sync, 5000);
+                    startLivePrices();
+                } else {
+                    errorEl.innerText = data.message || 'Login Google fallito';
+                    errorEl.classList.remove('hidden');
+                }
+            } catch (e) {
+                errorEl.innerText = 'Errore di rete durante il login Google';
+                errorEl.classList.remove('hidden');
+            } finally {
+                spinner.classList.add('hidden');
+            }
+        }
         
         function setAuthMode(mode) {
             authMode = mode;
@@ -2960,10 +3061,12 @@
                     sessionToken = data.session_token;
                     userId = data.user_id;
                     userEmail = email;
+                    lastAuthMethod = 'email';
                     localStorage.setItem('session_token', sessionToken);
                     localStorage.setItem('user_id', userId);
                     localStorage.setItem('user_email', email);
-                    
+                    localStorage.setItem('auth_method', lastAuthMethod);
+
                     toast('Successo', data.message);
                     showMainApp();
                     sync();
@@ -2985,9 +3088,11 @@
             sessionToken = '';
             userId = '';
             userEmail = '';
+            lastAuthMethod = '';
             localStorage.removeItem('session_token');
             localStorage.removeItem('user_id');
             localStorage.removeItem('user_email');
+            localStorage.removeItem('auth_method');
             
             toast('Info', 'Logout effettuato');
             showLoginPage();
@@ -3036,8 +3141,9 @@
                 idEl.innerText = 'ID: ' + telegramId + ' (Permanente)';
                 logoutBtn.classList.add('hidden');
             } else if (sessionToken && userId) {
-                typeEl.innerText = '🌐 Account Web';
-                typeEl.className = 'text-sm font-semibold text-green-400';
+                const isGoogle = lastAuthMethod === 'google';
+                typeEl.innerText = isGoogle ? '🟣 Google Login' : '🌐 Account Web';
+                typeEl.className = 'text-sm font-semibold ' + (isGoogle ? 'text-purple-300' : 'text-green-400');
                 idEl.innerText = userEmail || 'Email registrata (Permanente)';
                 logoutBtn.classList.remove('hidden');
             } else {
@@ -4026,7 +4132,10 @@
         
         function init() {
             lucide.createIcons();
-            
+
+            // Inizializza login Google (per link con Telegram e accesso cross-device)
+            initGoogleLogin();
+
             // ═══════════════════════════════════════════════════════════════
             // SICUREZZA: Solo utenti autenticati possono usare wallet
             // Questo previene perdita di fondi se si cambia dispositivo

@@ -89,6 +89,8 @@ struct AuthResponse {
     user_id: String,
     session_token: String,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
 }
 
 async fn get_stable_balance(
@@ -114,6 +116,11 @@ struct WebAuthRequest {
     email: String,
     password: String,
     action: String, // "login" o "register"
+}
+
+#[derive(Deserialize)]
+struct GoogleAuthRequest {
+    id_token: String,
 }
 
 #[derive(Deserialize)]
@@ -155,6 +162,29 @@ fn generate_session_token(user_id: &str) -> String {
     hasher.update(chrono::Utc::now().timestamp().to_string().as_bytes());
     let result = hasher.finalize();
     hex::encode(&result[..16])
+}
+
+/// Estrai sub/email dal token Google (senza dipendere da rete esterna)
+fn parse_google_id_token(token: &str) -> Option<(String, Option<String>)> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    let payload = base64::decode_config(parts[1], base64::URL_SAFE_NO_PAD).ok()?;
+    let payload_json: serde_json::Value = serde_json::from_slice(&payload).ok()?;
+
+    // Controlla exp se presente
+    if let Some(exp) = payload_json.get("exp").and_then(|v| v.as_i64()) {
+        if exp < chrono::Utc::now().timestamp() {
+            warn!("Google token scaduto");
+            return None;
+        }
+    }
+
+    let sub = payload_json.get("sub")?.as_str()?.to_string();
+    let email = payload_json.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
+    Some((sub, email))
 }
 
 /// Estrae user_id da header - SOLO utenti autenticati
@@ -318,6 +348,16 @@ pub async fn start_server(
         .and(pool_filter.clone())
         .and_then(handle_auth);
 
+    // Google Auth endpoint (link + login)
+    let google_auth = warp::path!("auth" / "google")
+        .and(warp::post())
+        .and(tg_id_filter.clone())
+        .and(session_filter.clone())
+        .and(tg_data_filter.clone())
+        .and(warp::body::json())
+        .and(pool_filter.clone())
+        .and_then(handle_google_auth);
+
     // Bot Start endpoint
     let bot_start = warp::path!("bot" / "start")
         .and(warp::post())
@@ -368,6 +408,7 @@ pub async fn start_server(
         .or(convert)
         .or(withdraw)
         .or(auth)
+        .or(google_auth)
         .or(bot_start)
         .or(bot_stop)
         .with(cors)
@@ -375,7 +416,9 @@ pub async fn start_server(
 
     info!("🌍 API Server LIVE: Porta 3000 (TPU Priority)");
     info!("   ✓ Multi-user: Telegram + Web Auth");
-    info!("   ✓ Endpoints: /health, /status, /trade, /convert, /withdraw, /auth, /bot/start, /bot/stop");
+    info!(
+        "   ✓ Endpoints: /health, /status, /trade, /convert, /withdraw, /auth, /auth/google, /bot/start, /bot/stop"
+    );
 
     warp::serve(routes).run(([0, 0, 0, 0], 3000)).await;
 }
@@ -1382,6 +1425,7 @@ async fn handle_auth(
             user_id: "".into(),
             session_token: "".into(),
             message: "Email non valida".into(),
+            email: None,
         }));
     }
 
@@ -1391,6 +1435,7 @@ async fn handle_auth(
             user_id: "".into(),
             session_token: "".into(),
             message: "Password minimo 6 caratteri".into(),
+            email: None,
         }));
     }
 
@@ -1441,6 +1486,7 @@ async fn handle_auth(
                     user_id: user_id.clone(),
                     session_token: session,
                     message: "Registrazione completata!".into(),
+                    email: Some(req.email.clone()),
                 }));
             }
             Err(e) => {
@@ -1450,6 +1496,7 @@ async fn handle_auth(
                     user_id: "".into(),
                     session_token: "".into(),
                     message: "Errore creazione account".into(),
+                    email: None,
                 }));
             }
         }
@@ -1476,6 +1523,7 @@ async fn handle_auth(
                                 user_id: user_id.clone(),
                                 session_token: session,
                                 message: "Login riuscito!".into(),
+                                email: Some(req.email.clone()),
                             }));
                         }
                     }
@@ -1484,18 +1532,123 @@ async fn handle_auth(
         }
 
         return Ok(warp::reply::json(&AuthResponse {
-            success: false,
-            user_id: "".into(),
-            session_token: "".into(),
-            message: "Email o password errati".into(),
-        }));
+        success: false,
+        user_id: "".into(),
+        session_token: "".into(),
+        message: "Email o password errati".into(),
+        email: None,
+    }));
+}
+
+/// Login/Link con Google per riutilizzare il wallet Telegram su qualsiasi device
+async fn handle_google_auth(
+    tg_id: Option<String>,
+    session: Option<String>,
+    tg_data: Option<String>,
+    req: GoogleAuthRequest,
+    pool: sqlx::SqlitePool,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let (google_sub, google_email) = match parse_google_id_token(&req.id_token) {
+        Some(res) => res,
+        None => {
+            return Ok(warp::reply::json(&AuthResponse {
+                success: false,
+                user_id: "".into(),
+                session_token: "".into(),
+                message: "Token Google non valido o scaduto".into(),
+                email: None,
+            }));
+        }
+    };
+
+    // 1) Se l'utente è già autenticato (Telegram/Web), colleghiamo Google a QUEL wallet
+    let current_user = extract_user_id(tg_id, session, tg_data);
+    let mut target_user = current_user;
+
+    // 2) Cerca se esiste già un link Google -> utente
+    if target_user.is_none() {
+        if let Ok(rows) = sqlx::query("SELECT tg_id, settings FROM users")
+            .fetch_all(&pool)
+            .await
+        {
+            for row in rows {
+                let uid: String = row.try_get("tg_id").unwrap_or_default();
+                let settings: Option<String> = row.try_get("settings").ok();
+                if let Some(settings_str) = settings {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&settings_str) {
+                        if json["google_sub"].as_str() == Some(google_sub.as_str()) {
+                            target_user = Some(uid);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
+
+    // 3) Se non esiste, creiamo un utente dedicato Google
+    if target_user.is_none() {
+        let new_user = format!("gg_{}", &google_sub[..std::cmp::min(16, google_sub.len())]);
+        if let Err(e) = wallet_manager::create_user_wallet(&pool, &new_user).await {
+            error!("❌ Errore creazione wallet Google: {}", e);
+            return Ok(warp::reply::json(&AuthResponse {
+                success: false,
+                user_id: "".into(),
+                session_token: "".into(),
+                message: "Impossibile creare wallet".into(),
+                email: None,
+            }));
+        }
+        target_user = Some(new_user);
+    }
+
+    let user_id = target_user.unwrap();
+
+    // 4) Aggiorna settings con i dati Google e, se presente, con il Telegram linkato
+    let row_opt = sqlx::query("SELECT settings FROM users WHERE tg_id = ?")
+        .bind(&user_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or(None);
+
+    let mut settings_json = match row_opt.and_then(|r| r.try_get("settings").ok()) {
+        Some(s) => serde_json::from_str::<serde_json::Value>(&s).unwrap_or_else(|_| serde_json::json!({})),
+        None => serde_json::json!({}),
+    };
+
+    settings_json["google_sub"] = serde_json::Value::String(google_sub.clone());
+    if let Some(email) = google_email.as_ref() {
+        settings_json["google_email"] = serde_json::Value::String(email.clone());
+    }
+
+    if let Some(tg) = current_user.as_ref() {
+        settings_json["linked_telegram"] = serde_json::Value::String(tg.clone());
+    }
+
+    let _ = sqlx::query("UPDATE users SET settings = ? WHERE tg_id = ?")
+        .bind(settings_json.to_string())
+        .bind(&user_id)
+        .execute(&pool)
+        .await;
+
+    let session_token = generate_session_token(&user_id);
+    info!("✅ Login/Link Google per {} (email: {:?})", user_id, google_email);
+
+    Ok(warp::reply::json(&AuthResponse {
+        success: true,
+        user_id,
+        session_token,
+        message: "Accesso Google riuscito".into(),
+        email: google_email,
+    }))
+}
 
     Ok(warp::reply::json(&AuthResponse {
         success: false,
         user_id: "".into(),
         session_token: "".into(),
         message: "Azione non valida".into(),
+        email: None,
     }))
 }
 
