@@ -185,6 +185,40 @@
         
         /* Gradient text */
         .gradient-text { background: linear-gradient(135deg, #a78bfa, #8b5cf6, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+
+        /* Bank UI */
+        .bank-card {
+            background: linear-gradient(135deg, #0f172a 0%, #0b0f1f 40%, #0a0a0f 100%);
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+            position: relative;
+            overflow: hidden;
+        }
+        .bank-card::after {
+            content: '';
+            position: absolute;
+            width: 160px;
+            height: 160px;
+            background: radial-gradient(circle, rgba(99,102,241,0.18) 0%, transparent 60%);
+            top: -40px;
+            right: -20px;
+            filter: blur(2px);
+        }
+        .bank-cta {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+            color: white;
+            box-shadow: 0 10px 30px rgba(34, 197, 94, 0.25);
+        }
+        .stable-toggle {
+            padding: 10px 14px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.03);
+            color: #e5e7eb;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .stable-toggle.active { background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.4); color: #4ade80; box-shadow: 0 8px 20px rgba(74,222,128,0.15); }
     </style>
 </head>
 <body>
@@ -265,6 +299,13 @@
         function canUseWallet() {
             return isAuthenticated();
         }
+
+        function formatIban(address) {
+            if (!address || address.length < 8) return 'IT98 XXXX XXXX XXXX';
+            const prefix = address.slice(0, 6).toUpperCase();
+            const suffix = address.slice(-6).toUpperCase();
+            return `IT98 ${prefix.slice(0,4)} ${prefix.slice(4)}XX XXXX ${suffix}`;
+        }
     </script>
 
     <!-- Toast -->
@@ -322,6 +363,29 @@
             </div>
         </div>
 
+        <!-- Banking Look & Fiat Exit -->
+        <div class="bank-card card p-5 mb-4">
+            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div class="space-y-2">
+                    <p class="text-[11px] text-zinc-500 uppercase tracking-[0.2em]">Conto Corrente</p>
+                    <div class="flex items-baseline gap-2">
+                        <span class="text-3xl font-bold mono" id="balanceEUR">€0.00</span>
+                        <span class="text-sm text-emerald-400">protetto</span>
+                    </div>
+                    <p class="text-xs text-zinc-400">IBAN Digitale: <span id="bankIban" class="mono text-indigo-300"></span></p>
+                    <p class="text-xs text-zinc-500">Stile banca: saldo in euro, pulsante uscita fiat, indicazioni chiare.</p>
+                </div>
+                <div class="flex flex-col gap-2 w-full md:w-60">
+                    <button onclick="openFiatExit()" class="bank-cta btn w-full flex items-center justify-center gap-2">
+                        <i data-lucide="credit-card" class="w-4 h-4"></i> Fiat Exit (MoonPay)
+                    </button>
+                    <button onclick="openConvertCard()" class="btn btn-secondary w-full flex items-center justify-center gap-2">
+                        <i data-lucide="shield-check" class="w-4 h-4"></i> Proteggi in Stable
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Wallet Address Compact -->
         <div class="card p-4 mb-4">
             <div class="flex items-center justify-between">
@@ -348,6 +412,33 @@
             <button onclick="openWithdraw()" class="btn bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center gap-2 text-zinc-300">
                 <i data-lucide="arrow-up" class="w-4 h-4"></i> Preleva
             </button>
+        </div>
+
+        <!-- Stablecoin hedge -->
+        <div class="card p-4 mb-4">
+            <div class="flex items-center justify-between mb-3">
+                <div>
+                    <p class="text-xs text-zinc-500 uppercase tracking-wide">Metti al sicuro</p>
+                    <p class="font-semibold">Converti SOL in stablecoin prima del prelievo</p>
+                </div>
+                <div class="flex gap-2" id="stableSelector">
+                    <button class="stable-toggle active" data-stable="USDC" onclick="setStable('USDC')">USDC</button>
+                    <button class="stable-toggle" data-stable="EURC" onclick="setStable('EURC')">EURC</button>
+                </div>
+            </div>
+            <div class="flex gap-2 mb-3">
+                <input type="number" id="hedgeAmount" placeholder="0.00 SOL" step="0.0001" class="mono flex-1">
+                <button onclick="setHedgeMax()" class="px-3 py-2 rounded-lg bg-indigo-500/20 text-indigo-300 text-xs">MAX</button>
+            </div>
+            <div class="flex flex-col md:flex-row gap-2">
+                <button onclick="convertToStable()" id="convertBtn" class="btn btn-primary flex-1 flex items-center justify-center gap-2">
+                    <i data-lucide="shield" class="w-4 h-4"></i> Converti in <span id="stableLabel">USDC</span>
+                </button>
+                <button onclick="openFiatExit()" class="btn bg-white/5 flex items-center justify-center gap-2">
+                    <i data-lucide="banknote" class="w-4 h-4"></i> Exit su carta
+                </button>
+            </div>
+            <p class="text-[11px] text-zinc-500 mt-2">Suggerimento: converti prima in stablecoin (USDC/EURC), poi usa l'exit fiat per ricevere Euro su carta.</p>
         </div>
 
         <!-- Stats -->
@@ -1366,6 +1457,7 @@
             openPositions: [],
             lockedSol: 0,
             availableSol: 0,
+            selectedStable: 'USDC',
         };
 
         // Navigation
@@ -1398,17 +1490,89 @@
             document.getElementById('depAddr').innerText = state.address || '...';
         }
 
+        function openConvertCard() {
+            document.getElementById('hedgeAmount').focus();
+            document.getElementById('hedgeAmount').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
         function openWithdraw() {
             // Blocca prelievo se bot attivo
             if (botState.active) {
                 toast('Bot Attivo', 'Ferma il bot prima di prelevare. Il bot venderà le posizioni e restituirà i SOL.');
                 return;
             }
-            
+
             openSheet('withdrawSheet');
             document.getElementById('wAvail').innerText = state.balance.toFixed(4) + ' SOL';
             document.getElementById('wResult').classList.add('hidden');
             document.getElementById('btnWithdraw').disabled = false;
+        }
+
+        function setStable(code) {
+            state.selectedStable = code;
+            document.querySelectorAll('#stableSelector .stable-toggle').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.stable === code);
+            });
+            document.getElementById('stableLabel').innerText = code;
+        }
+
+        function setHedgeMax() {
+            const max = Math.max(0, state.balance - 0.01);
+            document.getElementById('hedgeAmount').value = max.toFixed(4);
+        }
+
+        async function convertToStable() {
+            if (botState.active) {
+                toast('Bot Attivo', 'Ferma il bot prima di convertire i SOL in stablecoin.');
+                return;
+            }
+
+            const amount = parseFloat(document.getElementById('hedgeAmount').value || '0');
+            if (!amount || amount <= 0) {
+                toast('Importo non valido', 'Inserisci quanto SOL convertire.');
+                return;
+            }
+
+            if (amount > Math.max(0, state.balance - 0.01)) {
+                toast('Importo troppo alto', 'Lascia almeno 0.01 SOL per le fee.');
+                return;
+            }
+
+            const btn = document.getElementById('convertBtn');
+            if (btn) btn.disabled = true;
+
+            try {
+                const res = await fetch(`${API}/convert`, {
+                    method: 'POST',
+                    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount_sol: amount, stable: state.selectedStable })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    toast('Convertito', data.message || 'Swap completato');
+                    if (data.solscan_url) {
+                        window.open(data.solscan_url, '_blank');
+                    }
+                    sync();
+                } else {
+                    toast('Errore', data.message || 'Conversione fallita');
+                }
+            } catch (e) {
+                console.error(e);
+                toast('Errore', 'Impossibile contattare il server');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        function openFiatExit() {
+            if (!state.address) {
+                toast('Wallet non pronto', 'Attendi il sync del wallet');
+                return;
+            }
+            const url = `https://www.moonpay.com/sell?baseCurrencyCode=SOL&walletAddress=${state.address}`;
+            window.open(url, '_blank');
         }
 
         // Token Trading - Apri per indice (più affidabile)
@@ -2824,8 +2988,10 @@
 
                 document.getElementById('balanceSOL').innerText = state.balance.toFixed(4);
                 document.getElementById('balanceUSD').innerText = '≈ $' + (data.balance_usd || 0).toFixed(2);
+                document.getElementById('balanceEUR').innerText = '€' + ((data.balance_usd || 0) * 0.92).toFixed(2);
                 document.getElementById('walletAddr').innerText = state.address || 'Caricamento...';
                 document.getElementById('addrLink').href = SOLSCAN_ADDR + state.address;
+                document.getElementById('bankIban').innerText = formatIban(state.address);
                 document.getElementById('tradesCount').innerText = data.active_trades_count || 0;
 
                 // Wealth Level dal backend
