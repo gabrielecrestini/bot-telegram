@@ -1,6 +1,18 @@
 [registries.crates-io]
-protocol = "sparse"
+# Force the older git index protocol to bypass proxies that block the
+# HTTPS sparse registry (`https://index.crates.io`). GitHub access is often
+# still allowed in locked-down CI environments (e.g. AWS CodeBuild with
+# restrictive proxies), so switching protocols gives Cargo an alternate path
+# to download crates.
+protocol = "git"
+
+[source.crates-io]
+registry = "https://github.com/rust-lang/crates.io-index"
 
 [net]
 retry = 3
 git-fetch-with-cli = true
+# Leave offline disabled by default so builds can fetch when connectivity is
+# available. To force a cached/offline build in locked-down environments, set
+# `CARGO_NET_OFFLINE=true` in the CI/CD job.
+offline = false
