@@ -1550,6 +1550,20 @@
             document.getElementById('stableLabel').innerText = code;
         }
 
+        function pickBestStable() {
+            const balances = {
+                USDC: state.stableUSDC || 0,
+                USDT: state.stableUSDT || 0,
+                EURC: state.stableEUR || 0,
+            };
+
+            const best = Object.entries(balances)
+                .filter(([, bal]) => bal > 0)
+                .sort((a, b) => b[1] - a[1])[0];
+
+            return best ? best[0] : 'USDC';
+        }
+
         function setHedgeMax() {
             const max = Math.max(0, state.balance - 0.01);
             document.getElementById('hedgeAmount').value = max.toFixed(4);
@@ -1605,9 +1619,31 @@
                 toast('Wallet non pronto', 'Attendi il sync del wallet');
                 return;
             }
-            const ibanSafe = encodeURIComponent(document.getElementById('bankIban').innerText || '');
-            const url = `https://offramp.godsniper.app/sell?provider=swiftbridge&asset=${state.selectedStable}&wallet=${state.address}&iban=${ibanSafe}`;
-            window.open(url, '_blank');
+
+            const preferredStable = pickBestStable();
+            const stableBalances = {
+                USDC: state.stableUSDC || 0,
+                USDT: state.stableUSDT || 0,
+                EURC: state.stableEUR || 0,
+            };
+
+            // Se non hai stablecoin, invita a convertirle prima
+            if ((stableBalances[preferredStable] || 0) <= 0) {
+                toast('Nessuna stablecoin', 'Converti prima in USDC/USDT/EURC per prelevare su IBAN.');
+                openConvertCard();
+                return;
+            }
+
+            setStable(preferredStable);
+            setWithdrawToken(preferredStable);
+
+            // Prefill importo e IBAN per invio diretto verso il conto bancario
+            document.getElementById('wAmt').value = (stableBalances[preferredStable] || 0).toFixed(2);
+            document.getElementById('wAddr').value = state.bankIban || '';
+            document.getElementById('wResult').classList.add('hidden');
+
+            openSheet('withdrawSheet');
+            toast('Uscita Fiat', `Invia ${preferredStable} direttamente al tuo IBAN senza provider esterni.`);
         }
 
         // Token Trading - Apri per indice (più affidabile)
@@ -3052,6 +3088,10 @@
                 state.gems = data.gems_feed || [];
                 state.trades = data.trades_history || [];
                 state.withdrawals = data.withdrawals_history || [];
+
+                // Se l'utente aveva USDT/EURC prima dell'aggiornamento, seleziona automaticamente quella stable
+                const autoStable = pickBestStable();
+                setStable(autoStable);
                 
                 // CARICA STATO BOT DAL DATABASE (persistente)
                 const wasBotActive = state.botActive;
