@@ -1965,7 +1965,7 @@
             try {
                 const res = await fetch(`${API}/withdraw`, {
                     method: 'POST',
-                    headers: getAuthHeaders(),
+                    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
                     body: JSON.stringify({ amount: amt, token: state.withdrawToken, destination_address: addr })
                 });
                 const d = await res.json();

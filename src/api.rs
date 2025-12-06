@@ -1187,7 +1187,7 @@ async fn handle_withdraw(
     // Percorso fiat/IBAN per stablecoin: delega a provider integrato
     if ["USDC", "USDT", "EURC"].contains(&token.as_str()) {
         let iban = req.destination_address.trim();
-        let iban_clean = iban.replace(' ', "");
+        let iban_clean = iban.replace(' ', "").to_uppercase();
 
         if iban_clean.len() < 15 || iban_clean.len() > 34 {
             return Ok(warp::reply::json(&ApiResponse {
@@ -1198,12 +1198,59 @@ async fn handle_withdraw(
             }));
         }
 
+        // Convalida saldo stable effettivo prima di inviare la richiesta
+        let mint = match token.as_str() {
+            "USDC" => USDC_MINT,
+            "USDT" => USDT_MINT,
+            _ => EURC_MINT,
+        };
+
+        let wallet_address = wallet_manager::create_user_wallet(&pool, &user_id)
+            .await
+            .unwrap_or_default();
+
+        let owner = match Pubkey::from_str(&wallet_address) {
+            Ok(pk) => pk,
+            Err(_) => {
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: "Wallet non valido".into(),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
+
+        let ata = get_associated_token_address(&owner, &Pubkey::from_str(mint).unwrap());
+        let (available, decimals) = match net.rpc.get_token_account_balance(&ata).await {
+            Ok(res) => {
+                let ui_amount = res.ui_amount.unwrap_or(0.0);
+                (ui_amount, res.decimals as u8)
+            }
+            Err(_) => (0.0, 6u8),
+        };
+
+        if req.amount <= 0.0 || req.amount > available {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: format!(
+                    "Saldo insufficiente: hai {:.2} {} disponibili",
+                    available, token
+                ),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+
+        let unit_multiplier = 10u64.saturating_pow(decimals as u32) as f64;
+        let amount_base_units = (req.amount * unit_multiplier).round() as u64;
+
         // Simula l'invio al provider bancario configurato (processo off-chain)
         let _ = db::record_withdrawal_request(
             &pool,
             &user_id,
-            (req.amount * LAMPORTS_PER_SOL as f64) as u64,
-            &req.destination_address,
+            amount_base_units,
+            &iban_clean,
         )
         .await;
 
