@@ -621,11 +621,20 @@ impl Position {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MONEY MANAGEMENT
+// MONEY MANAGEMENT - With Single Trade Mode for Low Balance
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const MIN_TRADE_SOL: f64 = 0.015;
 const FEE_RESERVE_SOL: f64 = 0.003;
+
+/// Threshold below which single trade mode is activated (in SOL)
+const SINGLE_TRADE_THRESHOLD: f64 = 0.1; // ~€18 at $200/SOL
+
+/// Maximum open positions allowed in single trade mode
+const SINGLE_TRADE_MAX_POSITIONS: usize = 1;
+
+/// Normal mode maximum positions
+const NORMAL_MAX_POSITIONS: usize = 5;
 
 pub enum WealthLevel {
     Micro,
@@ -634,6 +643,114 @@ pub enum WealthLevel {
     Medium,
     HighMedium,
     Rich,
+}
+
+/// Configuration for trading mode based on balance
+#[derive(Debug, Clone)]
+pub struct TradingConfig {
+    pub single_trade_mode: bool,
+    pub max_positions: usize,
+    pub investment_pct: f64,
+    pub min_trade_sol: f64,
+    pub risk_level: RiskProfile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RiskProfile {
+    UltraAggressive, // Low balance - all-in single trade
+    Aggressive,      // Low-medium balance
+    Balanced,        // Medium balance
+    Conservative,    // High balance
+}
+
+impl TradingConfig {
+    pub fn from_balance(balance_sol: f64) -> Self {
+        if balance_sol < SINGLE_TRADE_THRESHOLD {
+            // SINGLE TRADE MODE: Low balance = one trade at a time, maximum risk
+            TradingConfig {
+                single_trade_mode: true,
+                max_positions: SINGLE_TRADE_MAX_POSITIONS,
+                investment_pct: 0.95, // 95% of balance
+                min_trade_sol: MIN_TRADE_SOL,
+                risk_level: RiskProfile::UltraAggressive,
+            }
+        } else if balance_sol < 0.3 {
+            TradingConfig {
+                single_trade_mode: false,
+                max_positions: 2,
+                investment_pct: 0.80,
+                min_trade_sol: MIN_TRADE_SOL,
+                risk_level: RiskProfile::Aggressive,
+            }
+        } else if balance_sol < 1.0 {
+            TradingConfig {
+                single_trade_mode: false,
+                max_positions: 3,
+                investment_pct: 0.55,
+                min_trade_sol: MIN_TRADE_SOL,
+                risk_level: RiskProfile::Balanced,
+            }
+        } else {
+            TradingConfig {
+                single_trade_mode: false,
+                max_positions: NORMAL_MAX_POSITIONS,
+                investment_pct: 0.25,
+                min_trade_sol: 0.02,
+                risk_level: RiskProfile::Conservative,
+            }
+        }
+    }
+    
+    /// Check if we can open a new position given current open positions
+    pub fn can_open_position(&self, current_positions: usize) -> bool {
+        current_positions < self.max_positions
+    }
+    
+    /// Calculate investment for this config
+    pub fn calculate_investment(&self, balance_sol: f64, atr_pct: Option<f64>) -> f64 {
+        let safe_balance = (balance_sol - FEE_RESERVE_SOL).max(0.0);
+        
+        if safe_balance < self.min_trade_sol {
+            return 0.0;
+        }
+        
+        // Risk adjustment based on ATR
+        let risk_factor = match atr_pct {
+            Some(atr) if atr > 5.0 => 0.7,
+            Some(atr) if atr > 3.0 => 0.85,
+            _ => 1.0,
+        };
+        
+        let base = safe_balance * self.investment_pct * risk_factor;
+        
+        // In single trade mode, ensure we use almost everything
+        if self.single_trade_mode {
+            return base.max(self.min_trade_sol).min(safe_balance * 0.98);
+        }
+        
+        base.max(self.min_trade_sol).min(safe_balance)
+    }
+}
+
+/// Check if should auto-liquidate (balance too low with open positions)
+pub fn should_auto_liquidate(balance_sol: f64, open_positions: usize) -> bool {
+    // Auto-liquidate if balance is very low AND we have positions
+    // This helps prevent getting stuck with tiny positions
+    let critical_threshold = 0.02; // ~€3.60
+    
+    if balance_sol < critical_threshold && open_positions > 0 {
+        info!("⚠️ Auto-liquidation triggered: balance {:.4} SOL < threshold {:.4}", 
+            balance_sol, critical_threshold);
+        return true;
+    }
+    
+    // Also liquidate if we can't afford fees to trade anymore
+    if balance_sol < FEE_RESERVE_SOL * 3.0 && open_positions > 0 {
+        info!("⚠️ Auto-liquidation: insufficient fee reserve");
+        return true;
+    }
+    
+    false
 }
 
 pub fn get_wealth_level(balance_sol: f64) -> WealthLevel {
@@ -646,40 +763,47 @@ pub fn get_wealth_level(balance_sol: f64) -> WealthLevel {
 }
 
 /// Calcola importo da investire (considera anche la modalità)
+/// Now uses TradingConfig for better single-trade mode support
 pub fn calculate_investment_amount(wallet_balance_sol: f64, atr_pct: Option<f64>) -> f64 {
-    let safe_balance = (wallet_balance_sol - FEE_RESERVE_SOL).max(0.0);
+    let config = TradingConfig::from_balance(wallet_balance_sol);
+    config.calculate_investment(wallet_balance_sol, atr_pct)
+}
+
+/// Calcola importo da investire with position count check
+/// Returns 0 if max positions reached
+pub fn calculate_investment_amount_with_positions(
+    wallet_balance_sol: f64, 
+    atr_pct: Option<f64>,
+    current_positions: usize
+) -> f64 {
+    let config = TradingConfig::from_balance(wallet_balance_sol);
     
-    if safe_balance < MIN_TRADE_SOL {
+    // In single trade mode, only allow 1 position
+    if !config.can_open_position(current_positions) {
+        info!("⏸️ Max positions reached ({}/{}), waiting for trade to close", 
+            current_positions, config.max_positions);
         return 0.0;
     }
     
-    let risk_factor = match atr_pct {
-        Some(atr) if atr > 5.0 => 0.7,
-        Some(atr) if atr > 3.0 => 0.85,
-        _ => 1.0,
-    };
-    
-    let base_investment = match get_wealth_level(wallet_balance_sol) {
-        WealthLevel::Micro => safe_balance * 0.95,
-        WealthLevel::Poor => safe_balance * 0.88,
-        WealthLevel::LowMedium => safe_balance * 0.75,
-        WealthLevel::Medium => safe_balance * 0.55,
-        WealthLevel::HighMedium => safe_balance * 0.40,
-        WealthLevel::Rich => {
-            let pct = if wallet_balance_sol < 3.0 { 0.25 } 
-                     else if wallet_balance_sol < 5.0 { 0.18 } 
-                     else { 0.12 };
-            safe_balance * pct
-        }
-    };
-    
-    (base_investment * risk_factor).max(MIN_TRADE_SOL).min(safe_balance)
+    config.calculate_investment(wallet_balance_sol, atr_pct)
 }
 
 /// Calcola importo per BREAKOUT (leggermente più cauto)
 pub fn calculate_breakout_investment(wallet_balance_sol: f64, atr_pct: Option<f64>) -> f64 {
+    let config = TradingConfig::from_balance(wallet_balance_sol);
+    
     // BREAKOUT è più rischioso, usa 80% dell'importo normale
-    calculate_investment_amount(wallet_balance_sol, atr_pct) * 0.80
+    // But in single trade mode, go all-in
+    if config.single_trade_mode {
+        config.calculate_investment(wallet_balance_sol, atr_pct) * 0.90
+    } else {
+        config.calculate_investment(wallet_balance_sol, atr_pct) * 0.80
+    }
+}
+
+/// Get trading configuration for a given balance
+pub fn get_trading_config(balance_sol: f64) -> TradingConfig {
+    TradingConfig::from_balance(balance_sol)
 }
 
 pub fn get_investment_percentage(wallet_balance_sol: f64) -> u8 {

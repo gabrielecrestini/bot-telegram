@@ -8,6 +8,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- Chart.js per grafici live -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <style>
@@ -731,47 +733,281 @@
     </section>
 
     <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- CARD PAGE - Virtual Card for Store Payments -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <section id="p-card" class="page p-4">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-bold">Carta Virtuale</h2>
+            <span class="text-xs bg-gradient-to-r from-amber-500/20 to-yellow-500/20 text-amber-400 px-3 py-1 rounded-full flex items-center gap-1 border border-amber-500/30">
+                <i data-lucide="sparkles" class="w-3 h-3"></i> PRO
+            </span>
+        </div>
+        
+        <!-- Card Preview Premium -->
+        <div class="relative mb-6">
+            <div class="card p-6 bg-gradient-to-br from-slate-900 via-violet-900/30 to-slate-900 border border-violet-500/20 rounded-3xl shadow-2xl overflow-hidden" id="virtualCard">
+                <!-- Background pattern -->
+                <div class="absolute inset-0 opacity-10">
+                    <div class="absolute top-0 right-0 w-40 h-40 bg-gradient-to-br from-white to-transparent rounded-full blur-3xl"></div>
+                    <div class="absolute bottom-0 left-0 w-32 h-32 bg-gradient-to-tr from-violet-500 to-transparent rounded-full blur-2xl"></div>
+                </div>
+                
+                <!-- Card content -->
+                <div class="relative">
+                    <div class="flex items-center justify-between mb-8">
+                        <div class="flex items-center gap-2">
+                            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
+                                <i data-lucide="wallet" class="w-5 h-5 text-white"></i>
+                            </div>
+                            <div>
+                                <p class="text-xs text-zinc-400">GOD SNIPER</p>
+                                <p class="text-sm font-bold text-violet-300">VIRTUAL CARD</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="wifi" class="w-5 h-5 text-zinc-400"></i>
+                            <div class="w-8 h-6 bg-gradient-to-r from-amber-400 to-yellow-500 rounded"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Card Number -->
+                    <div class="mb-6">
+                        <p class="text-2xl font-bold mono tracking-[0.3em] text-white" id="cardNumber">•••• •••• •••• ••••</p>
+                    </div>
+                    
+                    <!-- Card Details -->
+                    <div class="flex items-end justify-between">
+                        <div>
+                            <p class="text-[10px] text-zinc-500 uppercase mb-1">Titolare</p>
+                            <p class="text-sm font-medium text-white" id="cardHolder">CRYPTO TRADER</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-[10px] text-zinc-500 uppercase mb-1">Scadenza</p>
+                            <p class="text-sm font-medium text-white" id="cardExpiry">12/28</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-[10px] text-zinc-500 uppercase mb-1">CVV</p>
+                            <p class="text-sm font-medium text-white" id="cardCvv">•••</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Show/Hide button -->
+            <button onclick="toggleCardDetails()" class="absolute bottom-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors backdrop-blur-sm" id="toggleCardBtn">
+                <i data-lucide="eye" class="w-4 h-4 text-white" id="cardEyeIcon"></i>
+            </button>
+        </div>
+        
+        <!-- Card Balance -->
+        <div class="card p-4 mb-4 bg-gradient-to-r from-emerald-900/20 to-transparent border-emerald-500/20">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-xs text-zinc-400 mb-1">💳 Saldo Carta</p>
+                    <p class="text-3xl font-bold mono text-emerald-400" id="cardBalance">€0.00</p>
+                    <p class="text-xs text-zinc-500 mt-1" id="cardBalanceSol">≈ 0.0000 SOL</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-xs text-zinc-500 mb-2">Limite giornaliero</p>
+                    <p class="text-lg font-semibold text-white">€500.00</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Card Actions -->
+        <div class="grid grid-cols-2 gap-3 mb-6">
+            <button onclick="topUpCard()" class="btn btn-primary flex items-center justify-center gap-2 py-4">
+                <i data-lucide="plus" class="w-5 h-5"></i>
+                <span>Ricarica</span>
+            </button>
+            <button onclick="cardToWallet()" class="btn bg-white/5 border border-white/10 hover:bg-white/10 flex items-center justify-center gap-2 py-4">
+                <i data-lucide="arrow-left" class="w-5 h-5"></i>
+                <span>→ Wallet</span>
+            </button>
+        </div>
+        
+        <!-- Quick Actions -->
+        <div class="mb-6">
+            <p class="text-xs text-zinc-500 mb-3 uppercase tracking-wider">Pagamenti Rapidi</p>
+            <div class="grid grid-cols-4 gap-2">
+                <button onclick="quickPay(10)" class="card p-3 text-center hover:border-violet-500/50 transition-colors">
+                    <p class="text-lg font-bold">€10</p>
+                </button>
+                <button onclick="quickPay(25)" class="card p-3 text-center hover:border-violet-500/50 transition-colors">
+                    <p class="text-lg font-bold">€25</p>
+                </button>
+                <button onclick="quickPay(50)" class="card p-3 text-center hover:border-violet-500/50 transition-colors">
+                    <p class="text-lg font-bold">€50</p>
+                </button>
+                <button onclick="quickPay(100)" class="card p-3 text-center hover:border-violet-500/50 transition-colors">
+                    <p class="text-lg font-bold">€100</p>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Apple Pay / Google Pay -->
+        <div class="card p-4 mb-4">
+            <div class="flex items-center justify-between mb-3">
+                <p class="font-medium flex items-center gap-2">
+                    <i data-lucide="smartphone" class="w-4 h-4 text-violet-400"></i>
+                    Wallet Digitali
+                </p>
+                <span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded">Collegato</span>
+            </div>
+            <div class="flex gap-3">
+                <button class="flex-1 btn bg-black border border-white/20 text-white flex items-center justify-center gap-2 py-3">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+                    Apple Pay
+                </button>
+                <button class="flex-1 btn bg-white text-black flex items-center justify-center gap-2 py-3">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                    Google Pay
+                </button>
+            </div>
+        </div>
+        
+        <!-- Transaction History -->
+        <div class="card overflow-hidden">
+            <div class="p-3 border-b border-zinc-800 flex items-center justify-between">
+                <h4 class="font-semibold text-sm flex items-center gap-2">
+                    <i data-lucide="receipt" class="w-4 h-4 text-violet-400"></i>
+                    Transazioni Carta
+                </h4>
+            </div>
+            <div id="cardTransactions" class="max-h-48 overflow-y-auto">
+                <div class="p-6 text-center text-zinc-500 text-sm">
+                    <i data-lucide="credit-card" class="w-8 h-8 mx-auto mb-2 opacity-30"></i>
+                    <p>Nessuna transazione</p>
+                    <p class="text-xs mt-1">Ricarica la carta per iniziare</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Card Info -->
+        <div class="mt-4 p-4 bg-zinc-900/50 rounded-xl border border-zinc-800">
+            <div class="flex items-start gap-3">
+                <i data-lucide="info" class="w-5 h-5 text-violet-400 mt-0.5"></i>
+                <div>
+                    <p class="text-sm text-zinc-300 mb-1">Come funziona</p>
+                    <p class="text-xs text-zinc-500">Converti i tuoi SOL in EUR e usa la carta virtuale per pagare in qualsiasi negozio che accetta Visa/Mastercard. Pagamenti istantanei via NFC con Apple Pay o Google Pay.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
     <!-- SETTINGS PAGE -->
     <!-- ═══════════════════════════════════════════════════════════════ -->
     <section id="p-settings" class="page p-4">
         <h2 class="text-xl font-bold mb-4">Impostazioni</h2>
 
-        <!-- Account Info -->
-        <div class="card p-4 mb-4">
+        <!-- Account Info Premium -->
+        <div class="card p-4 mb-4 bg-gradient-to-r from-violet-900/20 to-transparent border-violet-500/20">
             <div class="flex items-center gap-3 mb-3">
-                <div class="w-12 h-12 rounded-full bg-indigo-500/20 flex items-center justify-center">
-                    <i data-lucide="user" class="w-6 h-6 text-indigo-400"></i>
+                <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-500/30">
+                    <i data-lucide="user" class="w-7 h-7 text-white"></i>
                 </div>
-                <div>
-                    <p class="font-medium" id="accountType">Caricamento...</p>
+                <div class="flex-1">
+                    <p class="font-semibold text-lg" id="accountType">Caricamento...</p>
                     <p class="text-xs text-zinc-500 mono" id="accountId">-</p>
+                </div>
+                <div class="text-right">
+                    <span class="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-1 rounded-full">PRO</span>
                 </div>
             </div>
             <button onclick="logout()" id="logoutBtn" class="hidden btn bg-red-500/20 text-red-400 w-full text-sm">
                 <i data-lucide="log-out" class="w-4 h-4 inline mr-2"></i> Esci
             </button>
         </div>
-
-        <div class="space-y-3">
-            <div class="card p-4 flex items-center justify-between">
-                <div>
-                    <p class="font-medium">Notifiche Trade</p>
-                    <p class="text-xs text-zinc-500">Ricevi alert quando il bot compra/vende</p>
-                </div>
-                <div class="switch on"></div>
+        
+        <!-- Stats Overview -->
+        <div class="grid grid-cols-3 gap-2 mb-4">
+            <div class="card p-3 text-center">
+                <p class="text-2xl font-bold text-emerald-400" id="settingsTotalTrades">0</p>
+                <p class="text-[10px] text-zinc-500">Trade Totali</p>
             </div>
-            <div class="card p-4 flex items-center justify-between">
-                <div>
-                    <p class="font-medium">Report Serale</p>
-                    <p class="text-xs text-zinc-500">Riepilogo guadagni ogni sera</p>
-                </div>
-                <div class="switch on"></div>
+            <div class="card p-3 text-center">
+                <p class="text-2xl font-bold text-violet-400" id="settingsWinRate">0%</p>
+                <p class="text-[10px] text-zinc-500">Win Rate</p>
+            </div>
+            <div class="card p-3 text-center">
+                <p class="text-2xl font-bold text-amber-400" id="settingsBestTrade">+0%</p>
+                <p class="text-[10px] text-zinc-500">Best Trade</p>
             </div>
         </div>
 
+        <div class="space-y-3">
+            <div class="card p-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                        <i data-lucide="bell" class="w-5 h-5 text-blue-400"></i>
+                    </div>
+                    <div>
+                        <p class="font-medium">Notifiche Trade</p>
+                        <p class="text-xs text-zinc-500">Alert quando il bot compra/vende</p>
+                    </div>
+                </div>
+                <div class="switch on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="card p-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center">
+                        <i data-lucide="bar-chart-3" class="w-5 h-5 text-purple-400"></i>
+                    </div>
+                    <div>
+                        <p class="font-medium">Report Serale</p>
+                        <p class="text-xs text-zinc-500">Riepilogo guadagni ogni sera</p>
+                    </div>
+                </div>
+                <div class="switch on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="card p-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
+                        <i data-lucide="shield" class="w-5 h-5 text-amber-400"></i>
+                    </div>
+                    <div>
+                        <p class="font-medium">Auto Stop-Loss</p>
+                        <p class="text-xs text-zinc-500">Protezione automatica capitale</p>
+                    </div>
+                </div>
+                <div class="switch on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="card p-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center">
+                        <i data-lucide="refresh-cw" class="w-5 h-5 text-emerald-400"></i>
+                    </div>
+                    <div>
+                        <p class="font-medium">Auto-Liquidazione</p>
+                        <p class="text-xs text-zinc-500">Vendi tutto se saldo basso</p>
+                    </div>
+                </div>
+                <div class="switch" onclick="this.classList.toggle('on')"></div>
+            </div>
+        </div>
+        
+        <!-- Danger Zone -->
+        <div class="mt-6 p-4 border border-red-500/30 rounded-xl bg-red-900/10">
+            <p class="text-sm font-semibold text-red-400 mb-3 flex items-center gap-2">
+                <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                Zona Pericolosa
+            </p>
+            <button onclick="sellAllPositions()" class="btn bg-red-500/20 text-red-400 w-full text-sm mb-2">
+                <i data-lucide="x-circle" class="w-4 h-4 inline mr-2"></i>
+                Vendi Tutte le Posizioni
+            </button>
+            <p class="text-[10px] text-zinc-500 text-center">Questa azione venderà immediatamente tutte le posizioni aperte</p>
+        </div>
+
         <div class="mt-8 text-center text-zinc-600 text-xs">
-            <p>GOD SNIPER PRO v2.1</p>
-            <p>Powered by Solana</p>
+            <p class="text-violet-400 font-semibold">GOD SNIPER PRO v3.0</p>
+            <p class="mt-1">Powered by Solana • Jupiter • Jito</p>
+            <div class="flex items-center justify-center gap-3 mt-2">
+                <span>🔐 AES-256</span>
+                <span>⚡ QUIC</span>
+                <span>🛡️ MEV Protected</span>
+            </div>
         </div>
     </section>
 
@@ -944,14 +1180,14 @@
             </button>
         </div>
 
-        <!-- PANNELLO PNL LIVE - Guadagno/Perdita in tempo reale -->
+        <!-- PANNELLO PNL LIVE - Guadagno/Perdita in tempo reale con Grafico -->
         <div id="livePnlPanel" class="hidden mb-4">
             <div class="card p-4 bg-gradient-to-r from-violet-500/10 to-purple-500/10 border-violet-500/20">
                 <div class="flex items-center justify-between mb-2">
                     <span class="text-xs text-zinc-400 uppercase tracking-wider">📊 P&L Live</span>
                     <span class="live-dot"></span>
                 </div>
-                <div class="flex items-center justify-between">
+                <div class="flex items-center justify-between mb-3">
                     <div>
                         <p class="text-2xl font-bold mono" id="livePnlPercent">+0.00%</p>
                         <p class="text-sm text-zinc-400" id="livePnlValue">≈ $0.00</p>
@@ -960,6 +1196,15 @@
                         <p class="text-xs text-zinc-500">Investito</p>
                         <p class="mono text-sm" id="livePnlInvested">0 SOL</p>
                     </div>
+                </div>
+                <!-- GRAFICO LIVE -->
+                <div class="h-24 relative">
+                    <canvas id="pnlChart"></canvas>
+                </div>
+                <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
+                    <span id="chartTimeStart">-</span>
+                    <span>Andamento Prezzo</span>
+                    <span id="chartTimeEnd">Ora</span>
                 </div>
             </div>
         </div>
@@ -1072,22 +1317,26 @@
         </button>
     </div>
 
-    <!-- Bottom Nav -->
-    <nav class="fixed bottom-0 left-0 right-0 bg-[#09090b] border-t border-zinc-800 h-20 flex justify-around items-center z-50 px-4">
-        <button onclick="navTo('wallet')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-indigo-400" data-page="wallet">
-            <i data-lucide="wallet" class="w-6 h-6"></i>
+    <!-- Bottom Nav - Premium Design -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-gradient-to-t from-[#09090b] via-[#09090b]/98 to-[#09090b]/95 border-t border-violet-500/10 h-20 flex justify-around items-center z-50 px-2 backdrop-blur-xl">
+        <button onclick="navTo('wallet')" class="nav-btn flex flex-col items-center gap-1 py-2 px-3 text-indigo-400" data-page="wallet">
+            <i data-lucide="wallet" class="w-5 h-5"></i>
             <span class="text-[10px] font-medium">Wallet</span>
         </button>
-        <button onclick="navTo('trade')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-zinc-500" data-page="trade">
-            <i data-lucide="line-chart" class="w-6 h-6"></i>
+        <button onclick="navTo('card')" class="nav-btn flex flex-col items-center gap-1 py-2 px-3 text-zinc-500" data-page="card">
+            <i data-lucide="credit-card" class="w-5 h-5"></i>
+            <span class="text-[10px] font-medium">Carta</span>
+        </button>
+        <button onclick="navTo('trade')" class="nav-btn flex flex-col items-center gap-1 py-2 px-3 text-zinc-500" data-page="trade">
+            <i data-lucide="line-chart" class="w-5 h-5"></i>
             <span class="text-[10px] font-medium">Trading</span>
         </button>
-        <button onclick="navTo('bot')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-zinc-500" data-page="bot">
-            <i data-lucide="bot" class="w-6 h-6"></i>
+        <button onclick="navTo('bot')" class="nav-btn flex flex-col items-center gap-1 py-2 px-3 text-zinc-500" data-page="bot">
+            <i data-lucide="bot" class="w-5 h-5"></i>
             <span class="text-[10px] font-medium">Bot</span>
         </button>
-        <button onclick="navTo('settings')" class="nav-btn flex flex-col items-center gap-1 py-2 px-4 text-zinc-500" data-page="settings">
-            <i data-lucide="settings" class="w-6 h-6"></i>
+        <button onclick="navTo('settings')" class="nav-btn flex flex-col items-center gap-1 py-2 px-3 text-zinc-500" data-page="settings">
+            <i data-lucide="settings" class="w-5 h-5"></i>
             <span class="text-[10px] font-medium">Setup</span>
         </button>
     </nav>
@@ -1182,6 +1431,16 @@
             state.currentToken = token;
             openSheet('tradeSheet');
             
+            // Inizializza grafico per questo token
+            setTimeout(() => {
+                initPriceChart();
+                if (token.entry_price && token.entry_price > 0) {
+                    setChartEntryPrice(token.entry_price);
+                } else if (token.price > 0) {
+                    setChartEntryPrice(token.price);
+                }
+            }, 100);
+            
             // Popola tutti i campi con fallback
             document.getElementById('tsSymbol').innerText = token.symbol || 'N/A';
             document.getElementById('tsName').innerText = token.name || token.symbol || 'Unknown';
@@ -1190,22 +1449,28 @@
             priceEl.innerText = formatPrice(token.price || 0);
             priceEl.dataset.lastPrice = token.price || 0;
             
-            // Cerca se abbiamo una posizione aperta su questo token
-            const openPosition = state.trades.find(t => 
+            // Cerca se abbiamo una posizione aperta su questo token (da trades history)
+            const tradePosition = state.trades.find(t => 
                 t.token_address === token.token && t.status === 'OPEN'
             );
+            
+            // Cerca anche in open_positions (dal server)
+            const serverPosition = state.openPositions?.find(p => p.token_address === token.token);
+            
+            // Usa quella disponibile
+            const activePosition = serverPosition || tradePosition;
             
             const livePnlPanel = document.getElementById('livePnlPanel');
             const profitEl = document.getElementById('tsProfitEstimate');
             
-            if (openPosition && openPosition.entry_price > 0) {
+            if (activePosition && activePosition.entry_price > 0) {
                 // MOSTRA PANNELLO PNL LIVE
                 livePnlPanel.classList.remove('hidden');
                 
-                const entryPrice = openPosition.entry_price;
+                const entryPrice = activePosition.entry_price;
                 const currentPrice = token.price || 0;
                 const pnlPct = ((currentPrice - entryPrice) / entryPrice) * 100;
-                const investedSol = openPosition.amount_sol || 0;
+                const investedSol = activePosition.amount_sol || 0;
                 const pnlValue = investedSol * (pnlPct / 100) * state.solPrice;
                 
                 const pnlPercentEl = document.getElementById('livePnlPercent');
@@ -1252,19 +1517,18 @@
             document.getElementById('tsScore').innerText = (token.safety_score || 0) + '/100';
             document.getElementById('tsAddr').innerText = token.token || '...';
             
-            // Controlla se abbiamo posizione aperta su questo token
-            const openPosition = state.openPositions?.find(p => p.token_address === token.token);
-            const hasPosition = !!openPosition;
+            // Usa activePosition già calcolato sopra
+            const hasPosition = !!activePosition;
             
             const btnTrade = document.getElementById('btnTrade');
             const btnTradeText = document.getElementById('btnTradeText');
             const btnSellSheet = document.getElementById('btnSellSheet');
             
             // Mostra/nascondi pulsante VENDI
-            if (hasPosition) {
+            if (hasPosition && activePosition) {
                 btnSellSheet.classList.remove('hidden');
-                state.currentToken.invested_sol = openPosition.amount_sol;
-                state.currentToken.entry_price = openPosition.entry_price;
+                state.currentToken.invested_sol = activePosition.amount_sol;
+                state.currentToken.entry_price = activePosition.entry_price;
             } else {
                 btnSellSheet.classList.add('hidden');
             }
@@ -1325,17 +1589,37 @@
         async function executeTrade() {
             // BLOCCO SE BOT ATTIVO
             if (state.botActive) {
-                toast('🤖 Bot Attivo', 'Ferma il bot per fare trading manuale');
+                toastError('🤖 Bot Attivo - Ferma il bot per fare trading manuale');
                 return;
             }
             
             const amt = parseFloat(document.getElementById('tsAmt').value);
-            if (!amt || amt <= 0) return toast('Errore', 'Inserisci importo');
-            if (amt > state.balance) return toast('Errore', 'Fondi insufficienti');
+            
+            // Validazioni con messaggi specifici
+            if (!amt || amt <= 0) {
+                toastError('Inserisci un importo valido');
+                return;
+            }
+            
+            if (amt > state.balance) {
+                toastError(`Saldo insufficiente! Hai solo ${state.balance.toFixed(4)} SOL`);
+                return;
+            }
+            
+            if (amt < 0.01) {
+                toastError('Importo minimo: 0.01 SOL');
+                return;
+            }
+            
+            if (state.balance - amt < 0.002) {
+                toastError('Lascia almeno 0.002 SOL per le fees di rete');
+                return;
+            }
             
             // Verifica che il token sia valido
             if (!state.currentToken || !state.currentToken.token) {
-                return toast('Errore', 'Seleziona un token valido');
+                toastError('Seleziona un token valido');
+                return;
             }
 
             const btn = document.getElementById('btnTrade');
@@ -1363,24 +1647,34 @@
                 console.log('📬 Risposta:', d);
                 
                 if (d.success) {
+                    // Imposta prezzo di entrata nel grafico
+                    if (state.currentToken.price > 0) {
+                        setChartEntryPrice(state.currentToken.price);
+                    }
+                    
                     // Mostra DEX usato nel messaggio (Jupiter/Orca/Jito)
                     const dexInfo = d.message || `Acquisto ${state.currentToken.symbol}`;
-                    toast('✅ Eseguito!', dexInfo);
+                    toastSuccess(dexInfo);
+                    
                     if (d.solscan_url) {
                         console.log('🔗 Solscan:', d.solscan_url);
-                        // Mostra link cliccabile
                         setTimeout(() => {
-                            toast('🔗 Transazione', `<a href="${d.solscan_url}" target="_blank" class="text-purple-400 underline">Vedi su Solscan</a>`);
+                            toast('🔗 TX', `<a href="${d.solscan_url}" target="_blank" class="text-purple-400 underline">Vedi su Solscan →</a>`);
                         }, 1500);
                     }
                     closeAll();
                     sync();
                 } else {
-                    toast('❌ Errore', d.message || 'Trade fallito');
+                    // Mostra errore specifico
+                    const errorMsg = d.message || 'Trade fallito';
+                    toastError(errorMsg);
+                    
+                    // Log dettagliato per debug
+                    console.error('Trade error details:', d);
                 }
             } catch (e) {
                 console.error('❌ Trade error:', e);
-                toast('Errore', 'Connessione fallita. Riprova.');
+                toastError('Connessione al server fallita. Verifica la tua connessione.');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '<i data-lucide="zap" class="w-4 h-4"></i> Compra';
@@ -1538,11 +1832,20 @@
         }
         
         async function stopBot() {
-            if (!confirm('Vuoi fermare il bot? Tutte le posizioni verranno vendute e i SOL restituiti.')) {
+            if (!confirm('⚠️ ATTENZIONE!\n\nVuoi fermare il bot?\n\nTutte le posizioni verranno VENDUTE e convertite in SOL.')) {
                 return;
             }
             
-            addBotLog('⏳ Fermando il bot e vendendo posizioni...');
+            addBotLog('⏳ Fermando il bot e vendendo TUTTE le posizioni...');
+            toast('Liquidazione...', 'Vendita di tutte le posizioni in corso');
+            
+            // Mostra overlay di caricamento
+            const stopBtn = document.querySelector('#botActive button');
+            if (stopBtn) {
+                stopBtn.disabled = true;
+                stopBtn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin inline mr-1"></i> Vendendo...';
+                lucide.createIcons();
+            }
             
             try {
                 const res = await fetch(`${API}/bot/stop`, {
@@ -1551,13 +1854,41 @@
                 });
                 
                 const data = await res.json();
-                addBotLog('💰 Posizioni vendute. Profitto: ' + (data.profit || botState.profit).toFixed(4) + ' SOL');
+                
+                // Log risultato
+                if (data.sol_received !== undefined) {
+                    addBotLog(`💰 SOL ricevuti: +${data.sol_received.toFixed(4)} SOL`);
+                }
+                if (data.profit !== undefined) {
+                    const pnlClass = data.profit >= 0 ? '🟢' : '🔴';
+                    addBotLog(`${pnlClass} P&L Totale: ${data.profit >= 0 ? '+' : ''}${data.profit.toFixed(4)} SOL`);
+                }
+                if (data.trades_count !== undefined) {
+                    addBotLog(`📊 Posizioni vendute: ${data.trades_count}`);
+                }
+                
+                // MOSTRA ERRORI SE CI SONO
+                if (data.errors && data.errors.length > 0) {
+                    addBotLog('⚠️ ERRORI DURANTE LA VENDITA:');
+                    data.errors.forEach(err => {
+                        addBotLog(`  ${err}`);
+                    });
+                    
+                    // Mostra popup con errori
+                    showErrorModal(data.errors, data.message);
+                } else {
+                    toast('✅ Bot Fermato', data.message || 'Posizioni vendute');
+                }
+                
             } catch (e) {
-                addBotLog('✅ Bot fermato');
+                console.error('Stop bot error:', e);
+                addBotLog('❌ Errore di connessione');
+                toast('❌ Errore', 'Impossibile comunicare con il server');
             }
             
             // Reset state
             botState.active = false;
+            state.botActive = false;
             if (botState.timerInterval) {
                 clearInterval(botState.timerInterval);
             }
@@ -1566,8 +1897,51 @@
             document.getElementById('botSetup').classList.remove('hidden');
             document.getElementById('botActive').classList.add('hidden');
             
-            toast('Bot Fermato', 'Posizioni vendute, SOL restituiti');
+            // Ripristina pulsante
+            if (stopBtn) {
+                stopBtn.disabled = false;
+                stopBtn.innerHTML = '<i data-lucide="square" class="w-4 h-4 inline mr-1"></i> STOP';
+                lucide.createIcons();
+            }
+            
             sync();
+        }
+        
+        // Mostra modal con errori
+        function showErrorModal(errors, title) {
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4';
+            modal.id = 'errorModal';
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            
+            modal.innerHTML = `
+                <div class="card p-6 max-w-md w-full border-red-500/30 bg-gradient-to-b from-red-900/20 to-zinc-900">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-bold text-red-400 flex items-center gap-2">
+                            <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+                            Errori durante la vendita
+                        </h3>
+                        <button onclick="document.getElementById('errorModal').remove()" class="p-2 rounded-full hover:bg-white/10">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                    <p class="text-sm text-zinc-400 mb-4">${title}</p>
+                    <div class="space-y-2 max-h-60 overflow-y-auto">
+                        ${errors.map(err => `
+                            <div class="p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-sm">
+                                ${err}
+                            </div>
+                        `).join('')}
+                    </div>
+                    <button onclick="document.getElementById('errorModal').remove()" 
+                            class="btn btn-primary w-full mt-4">
+                        Ho Capito
+                    </button>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            lucide.createIcons();
         }
         
         function startBotTimer() {
@@ -1784,18 +2158,30 @@
         
         // Vendi direttamente dal trade sheet
         async function executeSellFromSheet() {
-            if (!state.currentToken) return toast('Errore', 'Nessun token selezionato');
+            if (!state.currentToken) {
+                toastError('Nessun token selezionato');
+                return;
+            }
             
             // Controlla se abbiamo una posizione aperta
-            const hasPosition = state.openPositions?.some(p => p.token_address === state.currentToken.token);
-            if (!hasPosition && !state.currentToken.invested_sol) {
-                return toast('Errore', 'Non hai posizioni aperte per questo token');
+            const position = state.openPositions?.find(p => p.token_address === state.currentToken.token);
+            if (!position && !state.currentToken.invested_sol) {
+                toastError('Non hai posizioni aperte per questo token');
+                return;
             }
+            
+            const symbol = state.currentToken.symbol || 'Token';
+            const investedSol = position?.amount_sol || state.currentToken.invested_sol || 0;
             
             const btn = document.getElementById('btnSellSheet');
             btn.disabled = true;
             btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Vendendo...';
             lucide.createIcons();
+            
+            // Salva saldo per calcolare profitto
+            const balanceBefore = state.balance;
+            
+            toast('📤 Vendita', `Vendendo ${symbol} (${investedSol.toFixed(4)} SOL)...`);
             
             try {
                 const res = await fetch(`${API}/trade`, {
@@ -1804,24 +2190,47 @@
                     body: JSON.stringify({ 
                         action: 'SELL', 
                         token: state.currentToken.token, 
-                        amount_sol: state.currentToken.invested_sol || 0
+                        amount_sol: investedSol
                     })
                 });
                 const d = await res.json();
                 
                 if (d.success) {
-                    toast('✅ Venduto!', d.message || `${state.currentToken.symbol} venduto con successo`);
+                    toastSuccess(d.message || `${symbol} venduto!`);
+                    
                     if (d.solscan_url) {
-                        setTimeout(() => toast('🔗 TX', `<a href="${d.solscan_url}" target="_blank" class="text-purple-400 underline">Vedi su Solscan</a>`), 1000);
+                        setTimeout(() => {
+                            toast('🔗 TX', `<a href="${d.solscan_url}" target="_blank" class="text-purple-400 underline">Vedi transazione →</a>`);
+                        }, 1200);
                     }
+                    
                     closeAll();
-                    await sync();
+                    
+                    // Aspetta e mostra guadagno
+                    setTimeout(async () => {
+                        await sync();
+                        const solReceived = state.balance - balanceBefore;
+                        if (solReceived > 0) {
+                            const pnl = ((solReceived - investedSol) / investedSol * 100);
+                            const pnlText = pnl >= 0 ? `+${pnl.toFixed(1)}%` : `${pnl.toFixed(1)}%`;
+                            toastSuccess(`+${solReceived.toFixed(4)} SOL (${pnlText})`);
+                        }
+                    }, 2500);
                 } else {
-                    toast('❌ Errore', d.message || 'Vendita fallita');
+                    // Parse errori
+                    let errorMsg = d.message || 'Vendita fallita';
+                    
+                    if (errorMsg.includes('insufficient')) {
+                        errorMsg = 'Saldo insufficiente per fees';
+                    } else if (errorMsg.includes('Slippage')) {
+                        errorMsg = 'Slippage troppo alto - Riprova';
+                    }
+                    
+                    toastError(errorMsg);
                 }
             } catch (e) {
                 console.error('Sell error:', e);
-                toast('❌ Errore', 'Connessione fallita');
+                toastError('Connessione fallita. Riprova.');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '<i data-lucide="arrow-down-right" class="w-4 h-4"></i> Vendi';
@@ -1830,7 +2239,10 @@
         }
         
         async function executeSell() {
-            if (!state.currentToken) return;
+            if (!state.currentToken) {
+                toastError('Nessun token selezionato');
+                return;
+            }
             
             const btn = document.getElementById('btnSell');
             btn.disabled = true;
@@ -1839,6 +2251,9 @@
             
             // Salva saldo prima
             const balanceBefore = state.balance;
+            const symbol = state.currentToken.symbol || 'Token';
+            
+            toast('📤 Vendita', `Vendendo ${symbol}...`);
             
             try {
                 const res = await fetch(`${API}/trade`, {
@@ -1854,11 +2269,14 @@
                 
                 if (d.success) {
                     // Mostra messaggio con dettagli
-                    toast('✅ Venduto!', d.message || 'Posizione chiusa');
+                    toastSuccess(d.message || `${symbol} venduto!`);
                     
-                    // Se c'è link Solscan, loggalo
+                    // Mostra link TX
                     if (d.solscan_url) {
                         console.log('🔗 TX Solscan:', d.solscan_url);
+                        setTimeout(() => {
+                            toast('🔗 TX', `<a href="${d.solscan_url}" target="_blank" class="text-purple-400 underline">Vedi transazione →</a>`);
+                        }, 1500);
                     }
                     
                     closeAll();
@@ -1868,15 +2286,28 @@
                         await sync();
                         const solReceived = state.balance - balanceBefore;
                         if (solReceived > 0) {
-                            toast('💰 SOL Ricevuti', `+${solReceived.toFixed(4)} SOL nel tuo wallet`);
+                            toastSuccess(`+${solReceived.toFixed(4)} SOL ricevuti!`);
                         }
                     }, 2500);
                 } else {
-                    toast('❌ Errore', d.message || 'Vendita fallita');
+                    // Errori specifici
+                    let errorMsg = d.message || 'Vendita fallita';
+                    
+                    // Parse errori comuni
+                    if (errorMsg.includes('insufficient') || errorMsg.includes('Insufficient')) {
+                        errorMsg = '❌ Saldo insufficiente per pagare le fees di rete';
+                    } else if (errorMsg.includes('SlippageToleranceExceeded')) {
+                        errorMsg = '❌ Slippage troppo alto - Prezzo cambiato troppo rapidamente';
+                    } else if (errorMsg.includes('not found') || errorMsg.includes('Token non trovato')) {
+                        errorMsg = '❌ Token non trovato nel wallet - Forse già venduto?';
+                    }
+                    
+                    toastError(errorMsg);
+                    console.error('Sell error details:', d);
                 }
             } catch (e) {
                 console.error('Sell error:', e);
-                toast('❌ Errore', 'Errore di rete. Riprova.');
+                toastError('Errore di connessione. Verifica la rete e riprova.');
             }
             
             btn.disabled = false;
@@ -1884,12 +2315,51 @@
             lucide.createIcons();
         }
 
-        // Utils
-        function toast(title, msg) {
-            document.getElementById('toastTitle').innerText = title;
-            document.getElementById('toastMsg').innerText = msg;
-            document.getElementById('toast').classList.add('show');
-            setTimeout(() => document.getElementById('toast').classList.remove('show'), 3000);
+        // Utils - Toast migliorato con supporto HTML e tipi
+        function toast(title, msg, type = 'info', duration = 3000) {
+            const toastEl = document.getElementById('toast');
+            const titleEl = document.getElementById('toastTitle');
+            const msgEl = document.getElementById('toastMsg');
+            const cardEl = toastEl.querySelector('.card');
+            
+            // Imposta contenuto (supporta HTML)
+            titleEl.innerText = title;
+            if (msg.includes('<')) {
+                msgEl.innerHTML = msg;
+            } else {
+                msgEl.innerText = msg;
+            }
+            
+            // Colore bordo in base al tipo
+            cardEl.classList.remove('border-indigo-500', 'border-green-500', 'border-red-500', 'border-yellow-500');
+            switch(type) {
+                case 'success':
+                    cardEl.classList.add('border-green-500');
+                    break;
+                case 'error':
+                    cardEl.classList.add('border-red-500');
+                    duration = 5000; // Errori visibili più a lungo
+                    break;
+                case 'warning':
+                    cardEl.classList.add('border-yellow-500');
+                    duration = 4000;
+                    break;
+                default:
+                    cardEl.classList.add('border-indigo-500');
+            }
+            
+            toastEl.classList.add('show');
+            setTimeout(() => toastEl.classList.remove('show'), duration);
+        }
+        
+        // Toast veloce per errori
+        function toastError(msg) {
+            toast('❌ Errore', msg, 'error');
+        }
+        
+        // Toast veloce per successo
+        function toastSuccess(msg) {
+            toast('✅ Successo', msg, 'success');
         }
 
         function copyAddr() {
@@ -2686,6 +3156,9 @@
             
             // Aggiorna stima profitto
             updateProfitEstimate(displayPrice);
+            
+            // Aggiorna grafico LIVE
+            updatePriceChart(displayPrice);
         }
         
         // Calcola e mostra stima profitto in tempo reale
@@ -2747,6 +3220,448 @@
         }
 
         // ═══════════════════════════════════════════════════════════════
+        // LIVE PRICE CHART - Grafico andamento prezzo in tempo reale
+        // ═══════════════════════════════════════════════════════════════
+        
+        let priceChart = null;
+        let priceChartData = {
+            labels: [],
+            prices: [],
+            entryPrice: 0,
+            startTime: null,
+            maxPoints: 30 // Ultimi 30 punti
+        };
+        
+        // Inizializza il grafico
+        function initPriceChart() {
+            const ctx = document.getElementById('pnlChart');
+            if (!ctx) return;
+            
+            // Distruggi grafico esistente
+            if (priceChart) {
+                priceChart.destroy();
+            }
+            
+            priceChartData = {
+                labels: [],
+                prices: [],
+                entryPrice: 0,
+                startTime: new Date(),
+                maxPoints: 30
+            };
+            
+            priceChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Prezzo',
+                            data: [],
+                            borderColor: '#8b5cf6',
+                            backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            pointHoverRadius: 4,
+                        },
+                        {
+                            label: 'Entry',
+                            data: [],
+                            borderColor: '#f59e0b',
+                            borderWidth: 1,
+                            borderDash: [5, 5],
+                            pointRadius: 0,
+                            fill: false,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: {
+                        duration: 300
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            enabled: true,
+                            backgroundColor: 'rgba(0,0,0,0.8)',
+                            titleFont: { size: 10 },
+                            bodyFont: { size: 11, family: 'JetBrains Mono' },
+                            callbacks: {
+                                label: function(context) {
+                                    if (context.datasetIndex === 0) {
+                                        const pnl = priceChartData.entryPrice > 0 
+                                            ? ((context.raw - priceChartData.entryPrice) / priceChartData.entryPrice * 100).toFixed(2)
+                                            : 0;
+                                        return `$${context.raw.toFixed(8)} (${pnl >= 0 ? '+' : ''}${pnl}%)`;
+                                    }
+                                    return `Entry: $${context.raw.toFixed(8)}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: false
+                        },
+                        y: {
+                            display: true,
+                            position: 'right',
+                            grid: {
+                                color: 'rgba(255,255,255,0.05)'
+                            },
+                            ticks: {
+                                font: { size: 9, family: 'JetBrains Mono' },
+                                color: '#71717a',
+                                callback: function(value) {
+                                    if (value < 0.0001) return value.toExponential(1);
+                                    if (value < 0.01) return value.toFixed(6);
+                                    return '$' + value.toFixed(4);
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Aggiorna il grafico con nuovo prezzo
+        function updatePriceChart(currentPrice) {
+            if (!priceChart || !state.currentToken) return;
+            
+            const now = new Date();
+            const timeLabel = now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            
+            // Aggiungi nuovo punto
+            priceChartData.labels.push(timeLabel);
+            priceChartData.prices.push(currentPrice);
+            
+            // Mantieni solo ultimi N punti
+            if (priceChartData.labels.length > priceChartData.maxPoints) {
+                priceChartData.labels.shift();
+                priceChartData.prices.shift();
+            }
+            
+            // Aggiorna dati grafico
+            priceChart.data.labels = priceChartData.labels;
+            priceChart.data.datasets[0].data = priceChartData.prices;
+            
+            // Linea entry price (orizzontale)
+            if (priceChartData.entryPrice > 0) {
+                priceChart.data.datasets[1].data = priceChartData.labels.map(() => priceChartData.entryPrice);
+            }
+            
+            // Cambia colore in base a profitto
+            const isProfit = currentPrice >= priceChartData.entryPrice;
+            priceChart.data.datasets[0].borderColor = isProfit ? '#10b981' : '#ef4444';
+            priceChart.data.datasets[0].backgroundColor = isProfit 
+                ? 'rgba(16, 185, 129, 0.1)' 
+                : 'rgba(239, 68, 68, 0.1)';
+            
+            priceChart.update('none');
+            
+            // Aggiorna timestamp
+            if (priceChartData.startTime) {
+                document.getElementById('chartTimeStart').innerText = 
+                    priceChartData.startTime.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            }
+            document.getElementById('chartTimeEnd').innerText = 
+                now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+        }
+        
+        // Imposta prezzo di entrata per il grafico
+        function setChartEntryPrice(entryPrice) {
+            priceChartData.entryPrice = entryPrice;
+            priceChartData.startTime = new Date();
+            
+            // Inizializza con entry price come primo punto
+            if (priceChart && priceChartData.labels.length === 0) {
+                const timeLabel = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                priceChartData.labels.push(timeLabel);
+                priceChartData.prices.push(entryPrice);
+                priceChart.data.labels = priceChartData.labels;
+                priceChart.data.datasets[0].data = priceChartData.prices;
+                priceChart.data.datasets[1].data = [entryPrice];
+                priceChart.update('none');
+            }
+        }
+        
+        // ═══════════════════════════════════════════════════════════════
+        // VIRTUAL CARD FUNCTIONS
+        // ═══════════════════════════════════════════════════════════════
+        
+        let cardState = {
+            balance: 0,
+            balanceSol: 0,
+            visible: false,
+            transactions: [],
+            cardNumber: '4532 •••• •••• 7829',
+            expiry: '12/28',
+            cvv: '•••'
+        };
+        
+        // Toggle card details visibility
+        function toggleCardDetails() {
+            cardState.visible = !cardState.visible;
+            const icon = document.getElementById('cardEyeIcon');
+            
+            if (cardState.visible) {
+                document.getElementById('cardNumber').innerText = '4532 8741 3256 7829';
+                document.getElementById('cardCvv').innerText = '847';
+                icon.setAttribute('data-lucide', 'eye-off');
+            } else {
+                document.getElementById('cardNumber').innerText = '4532 •••• •••• 7829';
+                document.getElementById('cardCvv').innerText = '•••';
+                icon.setAttribute('data-lucide', 'eye');
+            }
+            lucide.createIcons();
+        }
+        
+        // Top up card from wallet
+        async function topUpCard() {
+            const availableSol = Math.max(0, state.balance - 0.01);
+            
+            if (availableSol <= 0) {
+                toast('Saldo Insufficiente', 'Deposita SOL nel wallet prima');
+                return;
+            }
+            
+            const amount = prompt(`Quanto vuoi ricaricare? (Max: ${availableSol.toFixed(4)} SOL)`);
+            if (!amount) return;
+            
+            const amountNum = parseFloat(amount);
+            if (isNaN(amountNum) || amountNum <= 0 || amountNum > availableSol) {
+                toast('Errore', 'Importo non valido');
+                return;
+            }
+            
+            // Convert SOL to EUR
+            const eurAmount = amountNum * state.solPrice * 0.92; // 0.92 = EUR/USD rate
+            
+            toast('Ricarica in corso...', `${amountNum.toFixed(4)} SOL → €${eurAmount.toFixed(2)}`);
+            
+            // Simulate processing
+            setTimeout(() => {
+                cardState.balance += eurAmount;
+                cardState.balanceSol += amountNum;
+                updateCardUI();
+                addCardTransaction('Ricarica da Wallet', eurAmount, 'in');
+                toast('✅ Ricarica Completata!', `+€${eurAmount.toFixed(2)} sulla carta`);
+            }, 1500);
+        }
+        
+        // Transfer from card back to wallet
+        async function cardToWallet() {
+            if (cardState.balance <= 0) {
+                toast('Saldo Carta Vuoto', 'La carta non ha fondi');
+                return;
+            }
+            
+            const confirm = window.confirm(`Vuoi trasferire €${cardState.balance.toFixed(2)} al wallet?`);
+            if (!confirm) return;
+            
+            toast('Trasferimento...', 'Conversione in corso');
+            
+            setTimeout(() => {
+                const solAmount = cardState.balanceSol;
+                addCardTransaction('Trasferimento a Wallet', -cardState.balance, 'out');
+                cardState.balance = 0;
+                cardState.balanceSol = 0;
+                updateCardUI();
+                toast('✅ Trasferito!', `+${solAmount.toFixed(4)} SOL nel wallet`);
+                sync();
+            }, 1500);
+        }
+        
+        // Quick payment simulation
+        function quickPay(amount) {
+            if (cardState.balance < amount) {
+                toast('Saldo Insufficiente', `Ricarica la carta per pagare €${amount}`);
+                return;
+            }
+            
+            const merchants = ['Amazon', 'Deliveroo', 'Uber', 'Netflix', 'Spotify', 'Steam', 'Apple Store'];
+            const merchant = merchants[Math.floor(Math.random() * merchants.length)];
+            
+            toast('Pagamento...', `€${amount} a ${merchant}`);
+            
+            setTimeout(() => {
+                cardState.balance -= amount;
+                cardState.balanceSol -= amount / (state.solPrice * 0.92);
+                updateCardUI();
+                addCardTransaction(`Pagamento ${merchant}`, -amount, 'out');
+                toast('✅ Pagato!', `€${amount} a ${merchant}`);
+            }, 1000);
+        }
+        
+        // Add transaction to card history
+        function addCardTransaction(description, amount, type) {
+            cardState.transactions.unshift({
+                description,
+                amount,
+                type,
+                time: new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
+                date: new Date().toLocaleDateString('it-IT', { day: '2-digit', month: 'short' })
+            });
+            
+            // Keep only last 10 transactions
+            if (cardState.transactions.length > 10) {
+                cardState.transactions.pop();
+            }
+            
+            renderCardTransactions();
+        }
+        
+        // Render card transactions
+        function renderCardTransactions() {
+            const container = document.getElementById('cardTransactions');
+            if (!container) return;
+            
+            if (cardState.transactions.length === 0) {
+                container.innerHTML = `
+                    <div class="p-6 text-center text-zinc-500 text-sm">
+                        <i data-lucide="credit-card" class="w-8 h-8 mx-auto mb-2 opacity-30"></i>
+                        <p>Nessuna transazione</p>
+                        <p class="text-xs mt-1">Ricarica la carta per iniziare</p>
+                    </div>
+                `;
+                lucide.createIcons();
+                return;
+            }
+            
+            container.innerHTML = cardState.transactions.map(t => `
+                <div class="flex items-center gap-3 p-3 border-b border-zinc-800/50 last:border-0">
+                    <div class="w-10 h-10 rounded-full ${t.type === 'in' ? 'bg-emerald-500/20' : 'bg-red-500/20'} flex items-center justify-center">
+                        <i data-lucide="${t.type === 'in' ? 'arrow-down-left' : 'arrow-up-right'}" 
+                           class="w-5 h-5 ${t.type === 'in' ? 'text-emerald-400' : 'text-red-400'}"></i>
+                    </div>
+                    <div class="flex-1">
+                        <p class="text-sm font-medium">${t.description}</p>
+                        <p class="text-xs text-zinc-500">${t.date} • ${t.time}</p>
+                    </div>
+                    <span class="mono font-bold ${t.amount >= 0 ? 'text-emerald-400' : 'text-red-400'}">
+                        ${t.amount >= 0 ? '+' : ''}€${Math.abs(t.amount).toFixed(2)}
+                    </span>
+                </div>
+            `).join('');
+            
+            lucide.createIcons();
+        }
+        
+        // Update card UI
+        function updateCardUI() {
+            const balanceEl = document.getElementById('cardBalance');
+            const balanceSolEl = document.getElementById('cardBalanceSol');
+            
+            if (balanceEl) balanceEl.innerText = '€' + cardState.balance.toFixed(2);
+            if (balanceSolEl) balanceSolEl.innerText = '≈ ' + cardState.balanceSol.toFixed(4) + ' SOL';
+        }
+        
+        // ═══════════════════════════════════════════════════════════════
+        // SELL ALL POSITIONS - Emergency function
+        // ═══════════════════════════════════════════════════════════════
+        
+        async function sellAllPositions() {
+            const positions = state.openPositions || [];
+            
+            if (positions.length === 0) {
+                toast('Nessuna Posizione', 'Non hai posizioni aperte da vendere');
+                return;
+            }
+            
+            const confirmMsg = `⚠️ LIQUIDAZIONE TOTALE!\n\nQuesto venderà TUTTE le ${positions.length} posizioni:\n\n` + 
+                positions.map(p => `• ${p.token_symbol || 'Token'}: ${p.amount_sol.toFixed(4)} SOL`).join('\n') +
+                `\n\nTutto verrà convertito in SOL. Vuoi continuare?`;
+            
+            if (!window.confirm(confirmMsg)) return;
+            
+            toast('🔄 Liquidazione', `Vendendo ${positions.length} posizioni...`);
+            
+            let soldCount = 0;
+            let errorList = [];
+            const balanceBefore = state.balance;
+            
+            // Sell positions one by one (single trade mode)
+            for (let i = 0; i < positions.length; i++) {
+                const pos = positions[i];
+                const symbol = pos.token_symbol || 'Token';
+                
+                toast('📤 Vendita', `${i+1}/${positions.length}: ${symbol}...`);
+                
+                try {
+                    const res = await fetch(`${API}/trade`, {
+                        method: 'POST',
+                        headers: getAuthHeaders(),
+                        body: JSON.stringify({ 
+                            action: 'SELL', 
+                            token: pos.token_address, 
+                            amount_sol: pos.amount_sol
+                        })
+                    });
+                    
+                    const data = await res.json();
+                    
+                    if (data.success) {
+                        soldCount++;
+                        toastSuccess(`${symbol} venduto (${soldCount}/${positions.length})`);
+                    } else {
+                        // Errore specifico
+                        let errMsg = data.message || 'Errore sconosciuto';
+                        if (errMsg.includes('insufficient')) errMsg = 'Saldo insufficiente per fees';
+                        if (errMsg.includes('not found')) errMsg = 'Token non trovato';
+                        
+                        errorList.push(`${symbol}: ${errMsg}`);
+                        toastError(`${symbol}: ${errMsg}`);
+                    }
+                    
+                    // Delay tra le vendite
+                    await new Promise(r => setTimeout(r, 1500));
+                    
+                } catch (e) {
+                    console.error('Sell error:', e);
+                    errorList.push(`${symbol}: Errore di rete`);
+                }
+            }
+            
+            // Aspetta e aggiorna
+            await new Promise(r => setTimeout(r, 2000));
+            await sync();
+            
+            const solReceived = state.balance - balanceBefore;
+            
+            if (errorList.length === 0) {
+                toastSuccess(`Tutte le ${soldCount} posizioni vendute! +${solReceived.toFixed(4)} SOL`);
+            } else {
+                // Mostra modal con errori
+                showErrorModal(errorList, `Vendute ${soldCount}/${positions.length} | SOL: +${solReceived.toFixed(4)}`);
+            }
+        }
+        
+        // ═══════════════════════════════════════════════════════════════
+        // AUTO-LIQUIDATION CHECK - Sells all if balance too low
+        // ═══════════════════════════════════════════════════════════════
+        
+        function checkAutoLiquidation() {
+            // If balance is very low (< 0.02 SOL) and we have positions, liquidate
+            const threshold = 0.02; // SOL
+            
+            if (state.balance < threshold && state.openPositions && state.openPositions.length > 0) {
+                console.log('⚠️ Auto-liquidation triggered: balance too low');
+                toast('⚠️ Saldo Critico', 'Vendita automatica posizioni in corso...');
+                sellAllPositions();
+            }
+        }
+        
+        // ═══════════════════════════════════════════════════════════════
         // INIT
         // ═══════════════════════════════════════════════════════════════
         
@@ -2779,6 +3694,10 @@
             }
             
             updateBotUI();
+            updateCardUI();
+            
+            // Check for auto-liquidation every minute
+            setInterval(checkAutoLiquidation, 60000);
         }
         
         // Avvia app
