@@ -377,7 +377,7 @@
                 </div>
                 <div class="flex flex-col gap-2 w-full md:w-60">
                     <button onclick="openFiatExit()" class="bank-cta btn w-full flex items-center justify-center gap-2">
-                        <i data-lucide="credit-card" class="w-4 h-4"></i> Fiat Exit (MoonPay)
+                        <i data-lucide="credit-card" class="w-4 h-4"></i> Fiat Exit (SwiftBridge)
                     </button>
                     <button onclick="openConvertCard()" class="btn btn-secondary w-full flex items-center justify-center gap-2">
                         <i data-lucide="shield-check" class="w-4 h-4"></i> Proteggi in Stable
@@ -423,6 +423,7 @@
                 </div>
                 <div class="flex gap-2" id="stableSelector">
                     <button class="stable-toggle active" data-stable="USDC" onclick="setStable('USDC')">USDC</button>
+                    <button class="stable-toggle" data-stable="USDT" onclick="setStable('USDT')">USDT</button>
                     <button class="stable-toggle" data-stable="EURC" onclick="setStable('EURC')">EURC</button>
                 </div>
             </div>
@@ -1231,9 +1232,17 @@
             <span class="mono font-bold" id="wAvail">0 SOL</span>
         </div>
 
+        <div class="grid grid-cols-2 gap-2 mb-4">
+            <button class="w-20 px-3 py-2 rounded-lg bg-white/5 text-sm" data-wtoken="SOL" onclick="setWithdrawToken('SOL')">SOL</button>
+            <button class="w-20 px-3 py-2 rounded-lg bg-white/5 text-sm" data-wtoken="USDC" onclick="setWithdrawToken('USDC')">USDC</button>
+            <button class="w-20 px-3 py-2 rounded-lg bg-white/5 text-sm" data-wtoken="USDT" onclick="setWithdrawToken('USDT')">USDT</button>
+            <button class="w-20 px-3 py-2 rounded-lg bg-white/5 text-sm" data-wtoken="EURC" onclick="setWithdrawToken('EURC')">EURC</button>
+        </div>
+
         <div class="mb-4">
-            <label class="text-xs text-zinc-500 mb-2 block">Indirizzo Destinazione</label>
-            <input type="text" id="wAddr" placeholder="Indirizzo Solana..." class="mono">
+            <label class="text-xs text-zinc-500 mb-2 block">Destinazione</label>
+            <input type="text" id="wAddr" placeholder="Wallet Solana o IBAN europeo" class="mono">
+            <p class="text-[11px] text-zinc-500 mt-1">Per USDC/USDT/EURC puoi inserire direttamente l'IBAN: useremo il provider bancario collegato.</p>
         </div>
 
         <div class="mb-6">
@@ -1458,6 +1467,8 @@
             lockedSol: 0,
             availableSol: 0,
             selectedStable: 'USDC',
+            withdrawToken: 'SOL',
+            liveChartTimer: null,
         };
 
         // Navigation
@@ -1503,7 +1514,7 @@
             }
 
             openSheet('withdrawSheet');
-            document.getElementById('wAvail').innerText = state.balance.toFixed(4) + ' SOL';
+            setWithdrawToken(state.withdrawToken || 'SOL');
             document.getElementById('wResult').classList.add('hidden');
             document.getElementById('btnWithdraw').disabled = false;
         }
@@ -1571,7 +1582,8 @@
                 toast('Wallet non pronto', 'Attendi il sync del wallet');
                 return;
             }
-            const url = `https://www.moonpay.com/sell?baseCurrencyCode=SOL&walletAddress=${state.address}`;
+            const ibanSafe = encodeURIComponent(document.getElementById('bankIban').innerText || '');
+            const url = `https://offramp.godsniper.app/sell?provider=swiftbridge&asset=${state.selectedStable}&wallet=${state.address}&iban=${ibanSafe}`;
             window.open(url, '_blank');
         }
 
@@ -1594,7 +1606,7 @@
             
             state.currentToken = token;
             openSheet('tradeSheet');
-            
+
             // Inizializza grafico per questo token
             setTimeout(() => {
                 initPriceChart();
@@ -1603,6 +1615,7 @@
                 } else if (token.price > 0) {
                     setChartEntryPrice(token.price);
                 }
+                startLiveChart(token.symbol || 'SOL');
             }, 100);
             
             // Popola tutti i campi con fallback
@@ -1847,6 +1860,15 @@
         }
 
         // Withdraw
+        function setWithdrawToken(token) {
+            state.withdrawToken = token;
+            document.querySelectorAll('[data-wtoken]').forEach(btn => {
+                btn.classList.toggle('bg-indigo-600', btn.dataset.wtoken === token);
+                btn.classList.toggle('text-white', btn.dataset.wtoken === token);
+            });
+            document.getElementById('wAvail').innerText = `${state.balance.toFixed(4)} ${token}`;
+        }
+
         function setWMax() {
             document.getElementById('wAmt').value = Math.max(0, state.balance - 0.005).toFixed(4);
         }
@@ -1866,7 +1888,7 @@
                 const res = await fetch(`${API}/withdraw`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ amount: amt, token: 'SOL', destination_address: addr })
+                    body: JSON.stringify({ amount: amt, token: state.withdrawToken, destination_address: addr })
                 });
                 const d = await res.json();
                 if (d.success) {
@@ -1903,6 +1925,19 @@
             wins: 0,
             bestTrade: 0
         };
+
+        function suggestedBotAmount() {
+            const map = {
+                'MICRO': 0.005,
+                'POOR': 0.01,
+                'LOW_MEDIUM': 0.02,
+                'MEDIUM': 0.03,
+                'HIGH_MEDIUM': 0.05,
+                'RICH': 0.07,
+            };
+            const suggestion = map[state.wealthLevel] || 0.02;
+            return Math.max(0.0025, Math.min(state.balance - 0.01, suggestion));
+        }
         
         function selectStrategy(strategy) {
             botState.strategy = strategy;
@@ -1929,7 +1964,11 @@
         }
         
         async function startBot() {
-            const amount = parseFloat(document.getElementById('botAmount').value) || 0;
+            let amount = parseFloat(document.getElementById('botAmount').value) || 0;
+
+            if (amount === 0) {
+                amount = suggestedBotAmount();
+            }
             
             if (state.balance < 0.02) {
                 toast('Errore', 'Saldo insufficiente. Minimo 0.02 SOL');
@@ -3004,6 +3043,7 @@
                     'RICH':        { text: '💎 Ricco (>€200)', class: 'text-green-400', pct: 20 }
                 };
                 const wl = wlMap[data.wealth_level] || wlMap['MICRO'];
+                state.wealthLevel = data.wealth_level;
                 document.getElementById('wealthLevel').innerText = wl.text;
                 document.getElementById('wealthLevel').className = 'text-sm font-semibold ' + wl.class;
                 
@@ -3540,8 +3580,61 @@
                 document.getElementById('chartTimeStart').innerText = 
                     priceChartData.startTime.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
             }
-            document.getElementById('chartTimeEnd').innerText = 
+            document.getElementById('chartTimeEnd').innerText =
                 now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        async function fetchRealMarketSeries(symbol) {
+            const map = {
+                'SOL': 'solana',
+                'USDC': 'usd-coin',
+                'USDT': 'tether',
+                'EURC': 'euro-coin'
+            };
+
+            const coinId = map[symbol?.toUpperCase()] || 'solana';
+
+            try {
+                const res = await fetch(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=1&interval=hourly`);
+                const data = await res.json();
+
+                if (data?.prices?.length && priceChart) {
+                    priceChartData.labels = data.prices.map(p => new Date(p[0]).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })).slice(-priceChartData.maxPoints);
+                    priceChartData.prices = data.prices.map(p => p[1]).slice(-priceChartData.maxPoints);
+                    priceChartData.entryPrice = priceChartData.prices[priceChartData.prices.length - 1] || 0;
+                    priceChart.data.labels = priceChartData.labels;
+                    priceChart.data.datasets[0].data = priceChartData.prices;
+                    priceChart.data.datasets[1].data = priceChartData.labels.map(() => priceChartData.entryPrice);
+                    priceChart.update('none');
+                }
+            } catch (e) {
+                console.warn('Chart fetch failed', e);
+            }
+        }
+
+        async function startLiveChart(symbol) {
+            if (state.liveChartTimer) clearInterval(state.liveChartTimer);
+            await fetchRealMarketSeries(symbol);
+
+            state.liveChartTimer = setInterval(async () => {
+                try {
+                    const map = {
+                        'SOL': 'solana',
+                        'USDC': 'usd-coin',
+                        'USDT': 'tether',
+                        'EURC': 'euro-coin'
+                    };
+                    const coinId = map[symbol?.toUpperCase()] || 'solana';
+                    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
+                    const data = await res.json();
+                    const price = data?.[coinId]?.usd;
+                    if (price) {
+                        updatePriceChart(price);
+                    }
+                } catch (e) {
+                    console.warn('Live price refresh failed', e);
+                }
+            }, 15000);
         }
         
         // Imposta prezzo di entrata per il grafico

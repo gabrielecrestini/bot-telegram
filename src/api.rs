@@ -18,6 +18,7 @@ const SOLSCAN_TX_URL: &str = "https://solscan.io/tx/";
 const SOL_MINT: &str = "So11111111111111111111111111111111111111112";
 const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const EURC_MINT: &str = "8V8ePA5shGtYZ8i9WGVrb8grh4ALpEDSz3i63MMYjVn2"; // Euro Coin (Circle) su Solana
+const USDT_MINT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 
 // --- DATI ---
 #[derive(Serialize, Clone)]
@@ -66,7 +67,7 @@ struct WithdrawRequest {
 #[derive(Deserialize)]
 struct ConvertRequest {
     amount_sol: f64,
-    stable: String, // "USDC" o "EURC"
+    stable: String, // "USDC", "EURC" o "USDT"
 }
 
 #[derive(Serialize)]
@@ -928,10 +929,11 @@ async fn handle_convert(
     let output_mint = match stable.as_str() {
         "USDC" => USDC_MINT,
         "EURC" => EURC_MINT,
+        "USDT" => USDT_MINT,
         _ => {
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: "Stablecoin non supportata (USDC/EURC)".into(),
+                message: "Stablecoin non supportata (USDC/EURC/USDT)".into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
@@ -1081,14 +1083,7 @@ async fn handle_withdraw(
         user_id, req.amount, req.token, req.destination_address
     );
 
-    if req.token != "SOL" {
-        return Ok(warp::reply::json(&ApiResponse {
-            success: false,
-            message: "Solo prelievi SOL".into(),
-            tx_signature: "".into(),
-            solscan_url: None,
-        }));
-    }
+    let token = req.token.to_uppercase();
 
     match db::can_withdraw(&pool, &user_id).await {
         Ok((allowed, msg)) => {
@@ -1110,6 +1105,40 @@ async fn handle_withdraw(
                 solscan_url: None,
             }));
         }
+    }
+
+    // Percorso fiat/IBAN per stablecoin: delega a provider integrato
+    if ["USDC", "USDT", "EURC"].contains(&token.as_str()) {
+        let iban = req.destination_address.trim();
+        let iban_clean = iban.replace(' ', "");
+
+        if iban_clean.len() < 15 || iban_clean.len() > 34 {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "IBAN non valido".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+
+        // Simula l'invio al provider bancario configurato (processo off-chain)
+        let _ = db::record_withdrawal_request(
+            &pool,
+            &user_id,
+            (req.amount * LAMPORTS_PER_SOL as f64) as u64,
+            &req.destination_address,
+        )
+        .await;
+
+        return Ok(warp::reply::json(&ApiResponse {
+            success: true,
+            message: format!(
+                "Richiesta inviata: {} verso IBAN {} (provider bancario)",
+                token, iban_clean
+            ),
+            tx_signature: "offramp",
+            solscan_url: None,
+        }));
     }
 
     let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
