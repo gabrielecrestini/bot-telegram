@@ -963,7 +963,7 @@ async fn handle_convert(
     };
 
     let bal = net.get_balance_fast(&payer.pubkey()).await;
-    let amount_lamports = (req.amount_sol * LAMPORTS_PER_SOL as f64) as u64;
+    let amount_lamports = (req.amount_sol * LAMPORTS_PER_SOL as f64).round() as u64;
     let fee_buffer = 100_000; // 0.0001 SOL per fee e margine
 
     if amount_lamports + fee_buffer > bal {
@@ -988,12 +988,55 @@ async fn handle_convert(
         }));
     }
 
+    // Pre-quote per validare l'output atteso e l'impatto prezzo
+    let slippage_bps = 120; // 1.2% per conversioni fiat-safe
+    let quote = match jupiter::get_jupiter_quote(
+        SOL_MINT,
+        output_mint,
+        amount_lamports,
+        slippage_bps,
+    )
+    .await
+    {
+        Ok(q) => q,
+        Err(e) => {
+            error!("❌ Quote convert fallita: {}", e);
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: format!("Quote non disponibile: {}", e),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
+
+    if quote.out_amount == 0 {
+        return Ok(warp::reply::json(&ApiResponse {
+            success: false,
+            message: "Quote non valida, riprova con un importo maggiore".into(),
+            tx_signature: "".into(),
+            solscan_url: None,
+        }));
+    }
+
+    if quote.price_impact_pct > 0.015 {
+        return Ok(warp::reply::json(&ApiResponse {
+            success: false,
+            message: format!(
+                "Impatto prezzo troppo alto ({:.2}%). Riduci importo o riprova",
+                quote.price_impact_pct * 100.0
+            ),
+            tx_signature: "".into(),
+            solscan_url: None,
+        }));
+    }
+
     let tx = match jupiter::get_jupiter_swap_tx(
         &payer.pubkey().to_string(),
         SOL_MINT,
         output_mint,
         amount_lamports,
-        150,
+        slippage_bps,
     )
     .await
     {
