@@ -13,7 +13,6 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::time::Duration;
-use log::{info, warn, debug};
 
 // Birdeye API Base
 const BIRDEYE_API: &str = "https://public-api.birdeye.so";

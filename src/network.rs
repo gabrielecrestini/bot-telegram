@@ -77,7 +77,7 @@ impl NetworkClient {
 
     /// Invia transazione con retry automatico (TPU first, RPC fallback)
     pub async fn send_transaction_fast(&self, transaction: &solana_sdk::transaction::Transaction) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let _sig = transaction.signatures[0].to_string();
+        let sig = transaction.signatures[0].to_string();
         
         // Prima prova TPU (più veloce, salta mempool)
         if self.tpu.send_transaction(transaction) {

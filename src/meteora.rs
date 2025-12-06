@@ -11,7 +11,6 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::time::Duration;
-use log::{debug, info, warn};
 
 // Meteora API Endpoints  
 const METEORA_API: &str = "https://dlmm-api.meteora.ag";

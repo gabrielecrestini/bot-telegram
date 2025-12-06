@@ -1574,7 +1574,7 @@ async fn handle_google_auth(
 
     // 1) Se l'utente è già autenticato (Telegram/Web), colleghiamo Google a QUEL wallet
     let current_user = extract_user_id(tg_id, session, tg_data);
-    let mut target_user = current_user;
+    let mut target_user = current_user.clone();
 
     // 2) Cerca se esiste già un link Google -> utente
     if target_user.is_none() {
