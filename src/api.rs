@@ -9,6 +9,7 @@ use solana_sdk::signer::Signer;
 use solana_sdk::system_instruction;
 use solana_sdk::transaction::Transaction;
 use spl_associated_token_account;
+use spl_associated_token_account::get_associated_token_address;
 use sqlx::Row;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -36,6 +37,9 @@ struct DashboardData {
     wallet_address: String,
     balance_sol: f64, // Saldo disponibile wallet
     balance_usd: f64,
+    stable_usdc: f64,
+    stable_usdt: f64,
+    stable_eur: f64,
     sol_price_usd: f64,
     wealth_level: String,
     active_trades_count: usize,
@@ -85,6 +89,24 @@ struct AuthResponse {
     user_id: String,
     session_token: String,
     message: String,
+}
+
+async fn get_stable_balance(
+    net: &network::NetworkClient,
+    owner: &Pubkey,
+    mint: &Pubkey,
+) -> f64 {
+    let ata = get_associated_token_address(owner, mint);
+    match net.rpc.get_token_account_balance(&ata).await {
+        Ok(res) => res
+            .ui_amount
+            .unwrap_or_else(|| {
+                let amount: f64 = res.amount.parse().unwrap_or(0.0);
+                let factor = 10u64.saturating_pow(res.decimals as u32) as f64;
+                amount / factor
+            }),
+        Err(_) => 0.0,
+    }
 }
 
 #[derive(Deserialize)]
@@ -389,8 +411,17 @@ async fn handle_status(
         .unwrap_or_default();
 
     let mut balance = 0.0;
+    let mut usdc_balance = 0.0;
+    let mut usdt_balance = 0.0;
+    let mut eurc_balance = 0.0;
     if let Ok(pk) = Pubkey::from_str(&pubkey_str) {
         balance = net.get_balance_fast(&pk).await as f64 / LAMPORTS_PER_SOL as f64;
+        usdc_balance = get_stable_balance(&net, &pk, &Pubkey::from_str(USDC_MINT).unwrap())
+            .await;
+        usdt_balance = get_stable_balance(&net, &pk, &Pubkey::from_str(USDT_MINT).unwrap())
+            .await;
+        eurc_balance = get_stable_balance(&net, &pk, &Pubkey::from_str(EURC_MINT).unwrap())
+            .await;
     }
 
     let sol_price = get_sol_price().await;
@@ -463,6 +494,9 @@ async fn handle_status(
         wallet_address: pubkey_str,
         balance_sol: balance,
         balance_usd,
+        stable_usdc: usdc_balance,
+        stable_usdt: usdt_balance,
+        stable_eur: eurc_balance,
         sol_price_usd: sol_price,
         wealth_level,
         active_trades_count: active_trades,

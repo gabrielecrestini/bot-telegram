@@ -905,6 +905,25 @@
                 </div>
             </div>
         </div>
+
+        <!-- Stable snapshot coming from on-chain balances -->
+        <div class="grid grid-cols-3 gap-2 mb-5">
+            <div class="card p-3 border border-emerald-500/20">
+                <p class="text-[11px] text-zinc-500 mb-1">USDC</p>
+                <p class="font-bold mono" id="stableUsdc">0.00</p>
+                <p class="text-[11px] text-emerald-400" id="stableUsdcEur">≈ €0.00</p>
+            </div>
+            <div class="card p-3 border border-amber-500/20">
+                <p class="text-[11px] text-zinc-500 mb-1">USDT</p>
+                <p class="font-bold mono" id="stableUsdt">0.00</p>
+                <p class="text-[11px] text-amber-300" id="stableUsdtEur">≈ €0.00</p>
+            </div>
+            <div class="card p-3 border border-blue-500/20">
+                <p class="text-[11px] text-zinc-500 mb-1">EURC</p>
+                <p class="font-bold mono" id="stableEur">0.00</p>
+                <p class="text-[11px] text-blue-300">Pronti per IBAN</p>
+            </div>
+        </div>
         
         <!-- Card Actions -->
         <div class="grid grid-cols-2 gap-3 mb-6">
@@ -1466,9 +1485,13 @@
             openPositions: [],
             lockedSol: 0,
             availableSol: 0,
+            stableUSDC: 0,
+            stableUSDT: 0,
+            stableEUR: 0,
             selectedStable: 'USDC',
             withdrawToken: 'SOL',
             liveChartTimer: null,
+            bankIban: '',
         };
 
         // Navigation
@@ -1866,11 +1889,30 @@
                 btn.classList.toggle('bg-indigo-600', btn.dataset.wtoken === token);
                 btn.classList.toggle('text-white', btn.dataset.wtoken === token);
             });
-            document.getElementById('wAvail').innerText = `${state.balance.toFixed(4)} ${token}`;
+            let available = state.balance;
+            if (token === 'USDC') available = state.stableUSDC;
+            if (token === 'USDT') available = state.stableUSDT;
+            if (token === 'EURC') available = state.stableEUR;
+
+            document.getElementById('wAvail').innerText = `${available.toFixed(4)} ${token}`;
+
+            const dest = document.getElementById('wAddr');
+            if (['USDC', 'USDT', 'EURC'].includes(token)) {
+                dest.placeholder = 'IBAN europeo (es. IT98 XXXX XXXX XXXX)';
+                dest.value = state.bankIban || '';
+            } else {
+                dest.placeholder = 'Indirizzo wallet Solana';
+                dest.value = state.address || '';
+            }
         }
 
         function setWMax() {
-            document.getElementById('wAmt').value = Math.max(0, state.balance - 0.005).toFixed(4);
+            let available = state.balance;
+            if (state.withdrawToken === 'USDC') available = state.stableUSDC;
+            if (state.withdrawToken === 'USDT') available = state.stableUSDT;
+            if (state.withdrawToken === 'EURC') available = state.stableEUR;
+            const buffer = state.withdrawToken === 'SOL' ? 0.005 : 0;
+            document.getElementById('wAmt').value = Math.max(0, available - buffer).toFixed(4);
         }
 
         async function doWithdraw() {
@@ -3003,6 +3045,10 @@
                 state.balance = data.balance_sol || 0;
                 state.address = data.wallet_address || '';
                 state.solPrice = data.sol_price_usd || 180;
+                state.stableUSDC = data.stable_usdc || 0;
+                state.stableUSDT = data.stable_usdt || 0;
+                state.stableEUR = data.stable_eur || 0;
+                state.bankIban = formatIban(state.address);
                 state.gems = data.gems_feed || [];
                 state.trades = data.trades_history || [];
                 state.withdrawals = data.withdrawals_history || [];
@@ -3030,8 +3076,22 @@
                 document.getElementById('balanceEUR').innerText = '€' + ((data.balance_usd || 0) * 0.92).toFixed(2);
                 document.getElementById('walletAddr').innerText = state.address || 'Caricamento...';
                 document.getElementById('addrLink').href = SOLSCAN_ADDR + state.address;
-                document.getElementById('bankIban').innerText = formatIban(state.address);
+                document.getElementById('bankIban').innerText = state.bankIban;
                 document.getElementById('tradesCount').innerText = data.active_trades_count || 0;
+
+                // Aggiorna snapshot stablecoin e carta
+                const eurRate = 0.92;
+                const stableEuroValue = (state.stableUSDC + state.stableUSDT) * eurRate + state.stableEUR;
+                const stableSolEq = state.solPrice > 0 ? stableEuroValue / (state.solPrice * eurRate) : 0;
+                cardState.balance = stableEuroValue;
+                cardState.balanceSol = stableSolEq;
+                updateCardUI();
+
+                document.getElementById('stableUsdc').innerText = state.stableUSDC.toFixed(2) + ' USDC';
+                document.getElementById('stableUsdt').innerText = state.stableUSDT.toFixed(2) + ' USDT';
+                document.getElementById('stableEur').innerText = state.stableEUR.toFixed(2) + ' EURC';
+                document.getElementById('stableUsdcEur').innerText = `≈ €${(state.stableUSDC * eurRate).toFixed(2)}`;
+                document.getElementById('stableUsdtEur').innerText = `≈ €${(state.stableUSDT * eurRate).toFixed(2)}`;
 
                 // Wealth Level dal backend
                 const wlMap = {
