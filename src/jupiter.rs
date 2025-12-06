@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use solana_sdk::transaction::VersionedTransaction;
 use solana_sdk::message::VersionedMessage;
-use solana_sdk::signature::{Keypair, Signer};
+use solana_sdk::signature::Keypair;
 use base64::{Engine as _, engine::general_purpose};
 use reqwest;
 use log::{info, warn, error};

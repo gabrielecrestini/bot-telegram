@@ -14,7 +14,7 @@ use std::error::Error;
 use std::time::Duration;
 use solana_sdk::transaction::VersionedTransaction;
 use solana_sdk::message::VersionedMessage;
-use solana_sdk::signature::{Keypair, Signer};
+use solana_sdk::signature::Keypair;
 use solana_sdk::hash::Hash;
 use base64::{Engine as _, engine::general_purpose};
 use log::{info, warn, debug};
