@@ -385,6 +385,9 @@
                     <button onclick="openConvertCard()" class="btn btn-secondary w-full flex items-center justify-center gap-2">
                         <i data-lucide="shield-check" class="w-4 h-4"></i> Proteggi in Stable
                     </button>
+                    <button onclick="convertCardStableToSol()" class="btn bg-white/5 hover:bg-white/10 w-full flex items-center justify-center gap-2">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i> Stable da carta → SOL
+                    </button>
                 </div>
             </div>
         </div>
@@ -1641,6 +1644,25 @@
             const key = state.selectedStable || 'USDC';
             const bal = key === 'USDC' ? state.stableUSDC : key === 'USDT' ? state.stableUSDT : state.stableEUR;
             document.getElementById('redeemAmount').value = (bal || 0).toFixed(2);
+        }
+
+        function convertCardStableToSol() {
+            const preferred = pickBestStable();
+            const balances = {
+                USDC: state.stableUSDC || 0,
+                USDT: state.stableUSDT || 0,
+                EURC: state.stableEUR || 0,
+            };
+
+            if ((balances[preferred] || 0) <= 0) {
+                toast('Nessuna stable', 'Ricarica con carta (USDC/USDT/EURC) e poi converti in SOL.');
+                openCardProvider();
+                return;
+            }
+
+            setStable(preferred, { manual: false });
+            document.getElementById('redeemAmount').value = (balances[preferred] || 0).toFixed(2);
+            sellStableToSol();
         }
 
         async function convertToStable() {
