@@ -13,7 +13,6 @@
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::time::Duration;
-use log::{info, warn, debug};
 
 // Birdeye API Base
 const BIRDEYE_API: &str = "https://public-api.birdeye.so";
@@ -127,7 +126,7 @@ pub struct PortfolioItem {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 fn build_client() -> Result<reqwest::Client, Box<dyn Error + Send + Sync>> {
-    let mut builder = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(10));
     
     Ok(builder.build()?)

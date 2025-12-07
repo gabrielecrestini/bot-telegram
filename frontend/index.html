@@ -10,6 +10,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <!-- Chart.js per grafici live -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- Google Identity Services per login cross-device -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
     <style>
@@ -185,15 +187,69 @@
         
         /* Gradient text */
         .gradient-text { background: linear-gradient(135deg, #a78bfa, #8b5cf6, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+
+        /* Bank UI */
+        .bank-card {
+            background: linear-gradient(135deg, #0f172a 0%, #0b0f1f 40%, #0a0a0f 100%);
+            border: 1px solid rgba(255,255,255,0.06);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+            position: relative;
+            overflow: hidden;
+        }
+        .bank-card::after {
+            content: '';
+            position: absolute;
+            width: 160px;
+            height: 160px;
+            background: radial-gradient(circle, rgba(99,102,241,0.18) 0%, transparent 60%);
+            top: -40px;
+            right: -20px;
+            filter: blur(2px);
+        }
+        .bank-cta {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+            color: white;
+            box-shadow: 0 10px 30px rgba(34, 197, 94, 0.25);
+        }
+        .stable-toggle {
+            padding: 10px 14px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.03);
+            color: #e5e7eb;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .stable-toggle.active { background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.4); color: #4ade80; box-shadow: 0 8px 20px rgba(74,222,128,0.15); }
     </style>
 </head>
-<body>
+<body data-google-client-id="YOUR_GOOGLE_CLIENT_ID">
 
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
         const API = "https://api.domisia.it";
+        const GOOGLE_CLIENT_ID = document.body.dataset.googleClientId || window.GOOGLE_CLIENT_ID || 'YOUR_GOOGLE_CLIENT_ID';
         const SOLSCAN = "https://solscan.io/tx/";
         const SOLSCAN_ADDR = "https://solscan.io/account/";
+        let tradeBase = 'SOL';
+
+        function setTradeBase(base) {
+            tradeBase = base;
+            const solBtn = document.getElementById('tradeBaseSol');
+            const usdtBtn = document.getElementById('tradeBaseUsdt');
+
+            if (solBtn && usdtBtn) {
+                solBtn.classList.toggle('btn-green', base === 'SOL');
+                usdtBtn.classList.toggle('btn-green', base !== 'SOL');
+            }
+
+            const hint = document.getElementById('tradeBaseHint');
+            if (hint) {
+                hint.innerText = base === 'SOL'
+                    ? 'Routing rapido su Solana (FastSwap)'
+                    : 'Desk USDT/EUR per coppie stabili e fiat-ready';
+            }
+        }
         
         // ═══════════════════════════════════════════════════════════════
         // AUTENTICAZIONE
@@ -265,6 +321,13 @@
         function canUseWallet() {
             return isAuthenticated();
         }
+
+        function formatIban(address) {
+            if (!address || address.length < 8) return 'IT98 XXXX XXXX XXXX';
+            const prefix = address.slice(0, 6).toUpperCase();
+            const suffix = address.slice(-6).toUpperCase();
+            return `IT98 ${prefix.slice(0,4)} ${prefix.slice(4)}XX XXXX ${suffix}`;
+        }
     </script>
 
     <!-- Toast -->
@@ -322,6 +385,32 @@
             </div>
         </div>
 
+        <!-- Banking Look & Fiat Exit -->
+        <div class="bank-card card p-5 mb-4">
+            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div class="space-y-2">
+                    <p class="text-[11px] text-zinc-500 uppercase tracking-[0.2em]">Conto Corrente</p>
+                    <div class="flex items-baseline gap-2">
+                        <span class="text-3xl font-bold mono" id="balanceEUR">€0.00</span>
+                        <span class="text-sm text-emerald-400">protetto</span>
+                    </div>
+                    <p class="text-xs text-zinc-400">IBAN Digitale: <span id="bankIban" class="mono text-indigo-300"></span></p>
+                    <p class="text-xs text-zinc-500">Stile banca: saldo in euro, pulsante uscita fiat, indicazioni chiare.</p>
+                </div>
+                <div class="flex flex-col gap-2 w-full md:w-60">
+                    <button onclick="openFiatExit()" class="bank-cta btn w-full flex items-center justify-center gap-2">
+                        <i data-lucide="credit-card" class="w-4 h-4"></i> Fiat Exit (SwiftBridge)
+                    </button>
+                    <button onclick="openConvertCard()" class="btn btn-secondary w-full flex items-center justify-center gap-2">
+                        <i data-lucide="shield-check" class="w-4 h-4"></i> Proteggi in Stable
+                    </button>
+                    <button onclick="convertCardStableToSol()" class="btn bg-white/5 hover:bg-white/10 w-full flex items-center justify-center gap-2">
+                        <i data-lucide="refresh-cw" class="w-4 h-4"></i> Stable da carta → SOL
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Wallet Address Compact -->
         <div class="card p-4 mb-4">
             <div class="flex items-center justify-between">
@@ -348,6 +437,41 @@
             <button onclick="openWithdraw()" class="btn bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center gap-2 text-zinc-300">
                 <i data-lucide="arrow-up" class="w-4 h-4"></i> Preleva
             </button>
+        </div>
+
+        <!-- Stablecoin hedge -->
+        <div class="card p-4 mb-4">
+            <div class="flex items-center justify-between mb-3">
+                <div>
+                    <p class="text-xs text-zinc-500 uppercase tracking-wide">Metti al sicuro</p>
+                    <p class="font-semibold">Converti SOL in stablecoin prima del prelievo</p>
+                </div>
+                <div class="flex gap-2" id="stableSelector">
+                    <button class="stable-toggle active" data-stable="USDC" onclick="setStable('USDC')">USDC</button>
+                    <button class="stable-toggle" data-stable="USDT" onclick="setStable('USDT')">USDT</button>
+                    <button class="stable-toggle" data-stable="EURC" onclick="setStable('EURC')">EURC</button>
+                </div>
+            </div>
+            <div class="flex gap-2 mb-3">
+                <input type="number" id="hedgeAmount" placeholder="0.00 SOL" step="0.0001" class="mono flex-1">
+                <button onclick="setHedgeMax()" class="px-3 py-2 rounded-lg bg-indigo-500/20 text-indigo-300 text-xs">MAX</button>
+            </div>
+            <div class="flex gap-2 mb-3">
+                <input type="number" id="redeemAmount" placeholder="0.00" step="0.01" class="mono flex-1" aria-label="Importo stable da vendere">
+                <button onclick="setRedeemMax()" class="px-3 py-2 rounded-lg bg-emerald-500/15 text-emerald-300 text-xs">MAX</button>
+            </div>
+            <div class="flex flex-col md:flex-row gap-2">
+                <button onclick="convertToStable()" id="convertBtn" class="btn btn-primary flex-1 flex items-center justify-center gap-2">
+                    <i data-lucide="shield" class="w-4 h-4"></i> Converti in <span id="stableLabel">USDC</span>
+                </button>
+                <button onclick="sellStableToSol()" id="redeemBtn" class="btn btn-secondary flex-1 flex items-center justify-center gap-2">
+                    <i data-lucide="refresh-cw" class="w-4 h-4"></i> Vendi <span class="hidden md:inline">stable → SOL</span>
+                </button>
+                <button onclick="openFiatExit()" class="btn bg-white/5 flex items-center justify-center gap-2">
+                    <i data-lucide="banknote" class="w-4 h-4"></i> Exit su carta
+                </button>
+            </div>
+            <p class="text-[11px] text-zinc-500 mt-2">Suggerimento: converti prima in stablecoin (USDC/EURC/USDT), poi usa l'exit fiat per ricevere Euro su carta o rientra in SOL con "Vendi stable".</p>
         </div>
 
         <!-- Stats -->
@@ -399,11 +523,26 @@
             <p class="text-xs text-zinc-500 mb-2 flex items-center gap-1">
                 <i data-lucide="star" class="w-3 h-3"></i> Top Coins
             </p>
-            <div class="grid grid-cols-3 gap-2" id="topCoinsGrid">
+            <div class="grid grid-cols-3 md:grid-cols-6 gap-2" id="topCoinsGrid">
                 <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('SOL')">
                     <img src="https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" class="w-8 h-8 rounded-full mx-auto mb-1">
                     <p class="font-bold text-sm">SOL</p>
                     <p class="mono text-xs text-green-400" id="price_SOL">$--</p>
+                </div>
+                <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('BTC')">
+                    <img src="https://assets.coingecko.com/coins/images/1/large/bitcoin.png" class="w-8 h-8 rounded-full mx-auto mb-1">
+                    <p class="font-bold text-sm">BTC</p>
+                    <p class="mono text-xs text-green-400" id="price_BTC">$--</p>
+                </div>
+                <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('ETH')">
+                    <img src="https://assets.coingecko.com/coins/images/279/large/ethereum.png" class="w-8 h-8 rounded-full mx-auto mb-1">
+                    <p class="font-bold text-sm">ETH</p>
+                    <p class="mono text-xs text-green-400" id="price_ETH">$--</p>
+                </div>
+                <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('XRP')">
+                    <img src="https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png" class="w-8 h-8 rounded-full mx-auto mb-1">
+                    <p class="font-bold text-sm">XRP</p>
+                    <p class="mono text-xs text-green-400" id="price_XRP">$--</p>
                 </div>
                 <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('JUP')">
                     <img src="https://static.jup.ag/jup/icon.png" class="w-8 h-8 rounded-full mx-auto mb-1">
@@ -419,6 +558,21 @@
         </div>
 
         <!-- SALDO DISPONIBILE PER TRADING -->
+        <div class="card p-4 mb-4 border-emerald-500/30 bg-emerald-500/5">
+            <p class="text-xs text-zinc-400 mb-2">Scegli il desk di trading</p>
+            <div class="grid grid-cols-2 gap-3">
+                <button id="tradeBaseSol" onclick="setTradeBase('SOL')" class="btn btn-green w-full text-sm flex items-center justify-center gap-2">
+                    <i data-lucide="zap" class="w-4 h-4"></i>
+                    Solana FastSwap
+                </button>
+                <button id="tradeBaseUsdt" onclick="setTradeBase('USDT')" class="btn w-full text-sm flex items-center justify-center gap-2">
+                    <i data-lucide="coins" class="w-4 h-4"></i>
+                    Desk USDT / EUR
+                </button>
+            </div>
+            <p id="tradeBaseHint" class="text-[11px] text-zinc-500 mt-3">Routing rapido su Solana (FastSwap)</p>
+        </div>
+
         <div class="card p-4 mb-4 border-green-500/30 bg-gradient-to-r from-green-900/10 to-transparent">
             <div class="flex items-center justify-between">
                 <div>
@@ -474,7 +628,7 @@
                     <span class="live-dot"></span>
                 </h4>
                 <div class="flex items-center gap-2">
-                    <span class="text-[9px] px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-400">Jupiter</span>
+                    <span class="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">FastSwap</span>
                     <span class="text-[9px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">Orca</span>
                     <span class="text-[9px] px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400">Meteora</span>
                 </div>
@@ -813,6 +967,25 @@
                 </div>
             </div>
         </div>
+
+        <!-- Stable snapshot coming from on-chain balances -->
+        <div class="grid grid-cols-3 gap-2 mb-5">
+            <div class="card p-3 border border-emerald-500/20">
+                <p class="text-[11px] text-zinc-500 mb-1">USDC</p>
+                <p class="font-bold mono" id="stableUsdc">0.00</p>
+                <p class="text-[11px] text-emerald-400" id="stableUsdcEur">≈ €0.00</p>
+            </div>
+            <div class="card p-3 border border-amber-500/20">
+                <p class="text-[11px] text-zinc-500 mb-1">USDT</p>
+                <p class="font-bold mono" id="stableUsdt">0.00</p>
+                <p class="text-[11px] text-amber-300" id="stableUsdtEur">≈ €0.00</p>
+            </div>
+            <div class="card p-3 border border-blue-500/20">
+                <p class="text-[11px] text-zinc-500 mb-1">EURC</p>
+                <p class="font-bold mono" id="stableEur">0.00</p>
+                <p class="text-[11px] text-blue-300">Pronti per IBAN</p>
+            </div>
+        </div>
         
         <!-- Card Actions -->
         <div class="grid grid-cols-2 gap-3 mb-6">
@@ -1076,6 +1249,23 @@
                         <i data-lucide="arrow-right" class="w-5 h-5 inline mr-2"></i>
                         <span id="authBtnText">Accedi</span>
                     </button>
+
+                    <div class="flex items-center gap-3 my-4">
+                        <span class="flex-1 h-px bg-zinc-800"></span>
+                        <span class="text-[11px] text-zinc-500">Oppure</span>
+                        <span class="flex-1 h-px bg-zinc-800"></span>
+                    </div>
+
+                    <div id="googleBtnWrap" class="space-y-3">
+                        <div id="googleBtn" class="flex justify-center"></div>
+                        <button onclick="openTelegramLogin()" class="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-zinc-800/70 border border-zinc-700 text-sm font-semibold hover:border-purple-400/50 transition-all">
+                            <img src="https://core.telegram.org/img/website_icon.svg" class="w-5 h-5" alt="Telegram" />
+                            Accedi con Telegram (web)
+                        </button>
+                        <p class="text-[11px] text-zinc-500 text-center">Accedi con Google e ritrova il wallet collegato al bot Telegram su ogni dispositivo oppure apri direttamente il bot con il login Telegram.</p>
+                        <p id="googleSpinner" class="hidden text-[11px] text-indigo-300 text-center">Collego Google in modo sicuro...</p>
+                        <p id="googleUnavailable" class="hidden text-[11px] text-red-300 text-center">Configura il CLIENT_ID Google per abilitare il login rapido.</p>
+                    </div>
                 </div>
             </div>
 
@@ -1124,6 +1314,15 @@
             <i data-lucide="alert-triangle" class="w-5 h-5 text-yellow-500 shrink-0"></i>
             <p class="text-xs text-yellow-200">Invia solo <strong>SOL</strong> su rete Solana</p>
         </div>
+
+        <div class="card p-4 mt-4 bg-emerald-500/5 border-emerald-400/20">
+            <div class="flex items-center gap-2 mb-2">
+                <i data-lucide="credit-card" class="w-4 h-4 text-emerald-300"></i>
+                <p class="font-semibold text-sm">Ricarica con carta</p>
+            </div>
+            <p class="text-xs text-zinc-400 mb-3">Usa FastRamp per acquistare USDC/USDT verso questo wallet, poi converti subito in SOL con "Vendi stable".</p>
+            <button class="btn btn-success w-full" onclick="openCardProvider()">Apri FastRamp</button>
+        </div>
     </div>
 
     <!-- Withdraw Sheet -->
@@ -1140,9 +1339,17 @@
             <span class="mono font-bold" id="wAvail">0 SOL</span>
         </div>
 
+        <div class="grid grid-cols-2 gap-2 mb-4">
+            <button class="w-20 px-3 py-2 rounded-lg bg-white/5 text-sm" data-wtoken="SOL" onclick="setWithdrawToken('SOL')">SOL</button>
+            <button class="w-20 px-3 py-2 rounded-lg bg-white/5 text-sm" data-wtoken="USDC" onclick="setWithdrawToken('USDC')">USDC</button>
+            <button class="w-20 px-3 py-2 rounded-lg bg-white/5 text-sm" data-wtoken="USDT" onclick="setWithdrawToken('USDT')">USDT</button>
+            <button class="w-20 px-3 py-2 rounded-lg bg-white/5 text-sm" data-wtoken="EURC" onclick="setWithdrawToken('EURC')">EURC</button>
+        </div>
+
         <div class="mb-4">
-            <label class="text-xs text-zinc-500 mb-2 block">Indirizzo Destinazione</label>
-            <input type="text" id="wAddr" placeholder="Indirizzo Solana..." class="mono">
+            <label class="text-xs text-zinc-500 mb-2 block">Destinazione</label>
+            <input type="text" id="wAddr" placeholder="Wallet Solana o IBAN europeo" class="mono">
+            <p class="text-[11px] text-zinc-500 mt-1">Per USDC/USDT/EURC puoi inserire direttamente l'IBAN (IT, LT, LU e tutti gli altri). Useremo il provider FastRamp/SwiftBridge senza costi extra.</p>
         </div>
 
         <div class="mb-6">
@@ -1350,6 +1557,8 @@
         
         lucide.createIcons();
 
+        const TELEGRAM_BOT_USERNAME = 'GodSniperProBot';
+
         // State
         let state = {
             balance: 0,
@@ -1366,6 +1575,15 @@
             openPositions: [],
             lockedSol: 0,
             availableSol: 0,
+            stableUSDC: 0,
+            stableUSDT: 0,
+            stableEUR: 0,
+            selectedStable: 'USDC',
+            lastManualStable: 0,
+            withdrawToken: 'SOL',
+            liveChartTimer: null,
+            bankIban: '',
+            prevStableSnapshot: { USDC: 0, USDT: 0, EURC: 0 },
         };
 
         // Navigation
@@ -1398,17 +1616,199 @@
             document.getElementById('depAddr').innerText = state.address || '...';
         }
 
+        function openCardProvider() {
+            if (!state.address) {
+                toast('Wallet non pronto', 'Attendi il sync del wallet');
+                return;
+            }
+            const url = `https://fastramp.example/pay?dest=${encodeURIComponent(state.address)}&asset=USDC`;
+            window.open(url, '_blank');
+        }
+
+        function openConvertCard() {
+            document.getElementById('hedgeAmount').focus();
+            document.getElementById('hedgeAmount').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
         function openWithdraw() {
             // Blocca prelievo se bot attivo
             if (botState.active) {
                 toast('Bot Attivo', 'Ferma il bot prima di prelevare. Il bot venderà le posizioni e restituirà i SOL.');
                 return;
             }
-            
+
             openSheet('withdrawSheet');
-            document.getElementById('wAvail').innerText = state.balance.toFixed(4) + ' SOL';
+            setWithdrawToken(state.withdrawToken || 'SOL');
             document.getElementById('wResult').classList.add('hidden');
             document.getElementById('btnWithdraw').disabled = false;
+        }
+
+        function setStable(code, opts = { manual: true }) {
+            state.selectedStable = code;
+            if (opts.manual) {
+                state.lastManualStable = Date.now();
+                localStorage.setItem('preferred_stable', code);
+            }
+            document.querySelectorAll('#stableSelector .stable-toggle').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.stable === code);
+            });
+            document.getElementById('stableLabel').innerText = code;
+        }
+
+        function pickBestStable() {
+            const balances = {
+                USDC: state.stableUSDC || 0,
+                USDT: state.stableUSDT || 0,
+                EURC: state.stableEUR || 0,
+            };
+
+            const best = Object.entries(balances)
+                .filter(([, bal]) => bal > 0)
+                .sort((a, b) => b[1] - a[1])[0];
+
+            return best ? best[0] : 'USDC';
+        }
+
+        function setHedgeMax() {
+            const max = Math.max(0, state.balance - 0.01);
+            document.getElementById('hedgeAmount').value = max.toFixed(4);
+        }
+
+        function setRedeemMax() {
+            const key = state.selectedStable || 'USDC';
+            const bal = key === 'USDC' ? state.stableUSDC : key === 'USDT' ? state.stableUSDT : state.stableEUR;
+            document.getElementById('redeemAmount').value = (bal || 0).toFixed(2);
+        }
+
+        function convertCardStableToSol() {
+            const preferred = pickBestStable();
+            const balances = {
+                USDC: state.stableUSDC || 0,
+                USDT: state.stableUSDT || 0,
+                EURC: state.stableEUR || 0,
+            };
+
+            if ((balances[preferred] || 0) <= 0) {
+                toast('Nessuna stable', 'Ricarica con carta (USDC/USDT/EURC) e poi converti in SOL.');
+                openCardProvider();
+                return;
+            }
+
+            setStable(preferred, { manual: false });
+            document.getElementById('redeemAmount').value = (balances[preferred] || 0).toFixed(2);
+            sellStableToSol();
+        }
+
+        async function convertToStable() {
+            if (botState.active) {
+                toast('Bot Attivo', 'Ferma il bot prima di convertire i SOL in stablecoin.');
+                return;
+            }
+
+            const amount = parseFloat(document.getElementById('hedgeAmount').value || '0');
+            if (!amount || amount <= 0) {
+                toast('Importo non valido', 'Inserisci quanto SOL convertire.');
+                return;
+            }
+
+            if (amount > Math.max(0, state.balance - 0.01)) {
+                toast('Importo troppo alto', 'Lascia almeno 0.01 SOL per le fee.');
+                return;
+            }
+
+            const btn = document.getElementById('convertBtn');
+            if (btn) btn.disabled = true;
+
+            try {
+                const res = await fetch(`${API}/convert`, {
+                    method: 'POST',
+                    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount_sol: amount, stable: state.selectedStable })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    toast('Convertito', data.message || 'Swap completato');
+                    if (data.solscan_url) {
+                        window.open(data.solscan_url, '_blank');
+                    }
+                    sync();
+                } else {
+                    toast('Errore', data.message || 'Conversione fallita');
+                }
+            } catch (e) {
+                console.error(e);
+                toast('Errore', 'Impossibile contattare il server');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        async function sellStableToSol() {
+            const amount = parseFloat(document.getElementById('redeemAmount').value || '0');
+            if (!amount || amount <= 0) {
+                toast('Importo non valido', 'Inserisci quanto stable vendere in SOL.');
+                return;
+            }
+
+            const btn = document.getElementById('redeemBtn');
+            if (btn) btn.disabled = true;
+
+            try {
+                const res = await fetch(`${API}/convert/stable`, {
+                    method: 'POST',
+                    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount, stable: state.selectedStable })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    toast('Stable venduta', data.message || 'Swap completato');
+                    if (data.solscan_url) {
+                        window.open(data.solscan_url, '_blank');
+                    }
+                    sync();
+                } else {
+                    toast('Errore', data.message || 'Conversione fallita');
+                }
+            } catch (e) {
+                console.error(e);
+                toast('Errore', 'Impossibile contattare il server');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        function openFiatExit() {
+            if (!state.address) {
+                toast('Wallet non pronto', 'Attendi il sync del wallet');
+                return;
+            }
+
+            const preferredStable = pickBestStable();
+            const stableBalances = {
+                USDC: state.stableUSDC || 0,
+                USDT: state.stableUSDT || 0,
+                EURC: state.stableEUR || 0,
+            };
+
+            // Se non hai stablecoin, invita a convertirle prima
+            if ((stableBalances[preferredStable] || 0) <= 0) {
+                toast('Nessuna stablecoin', 'Converti prima in USDC/USDT/EURC per prelevare su IBAN.');
+                openConvertCard();
+                return;
+            }
+
+            setStable(preferredStable);
+            setWithdrawToken(preferredStable);
+
+            // Prefill importo e IBAN per invio diretto verso il conto bancario
+            document.getElementById('wAmt').value = (stableBalances[preferredStable] || 0).toFixed(2);
+            document.getElementById('wAddr').value = state.bankIban || '';
+            document.getElementById('wResult').classList.add('hidden');
+
+            openSheet('withdrawSheet');
+            toast('Uscita Fiat', `Invia ${preferredStable} direttamente al tuo IBAN senza provider esterni.`);
         }
 
         // Token Trading - Apri per indice (più affidabile)
@@ -1430,7 +1830,7 @@
             
             state.currentToken = token;
             openSheet('tradeSheet');
-            
+
             // Inizializza grafico per questo token
             setTimeout(() => {
                 initPriceChart();
@@ -1439,6 +1839,7 @@
                 } else if (token.price > 0) {
                     setChartEntryPrice(token.price);
                 }
+                startLiveChart(token.symbol || 'SOL');
             }, 100);
             
             // Popola tutti i campi con fallback
@@ -1516,10 +1917,11 @@
             document.getElementById('tsVol').innerText = formatMcap(token.volume_24h || 0);
             document.getElementById('tsScore').innerText = (token.safety_score || 0) + '/100';
             document.getElementById('tsAddr').innerText = token.token || '...';
-            
+
             // Usa activePosition già calcolato sopra
             const hasPosition = !!activePosition;
-            
+            const readOnly = token.trade_disabled || (token.token && token.token.startsWith('COINGECKO:'));
+
             const btnTrade = document.getElementById('btnTrade');
             const btnTradeText = document.getElementById('btnTradeText');
             const btnSellSheet = document.getElementById('btnSellSheet');
@@ -1543,6 +1945,12 @@
                 if (hasPosition) {
                     btnSellSheet.classList.remove('hidden');
                 }
+            } else if (readOnly) {
+                document.getElementById('tsMax').innerText = 'Solo visualizzazione multi-chain';
+                btnTrade.disabled = true;
+                btnTrade.className = 'btn bg-zinc-700 text-zinc-300 w-full flex items-center justify-center gap-2 cursor-not-allowed';
+                btnTradeText.innerText = 'Solo view';
+                btnSellSheet.classList.add('hidden');
             } else {
                 document.getElementById('tsMax').innerText = Math.max(0, state.balance - 0.005).toFixed(4);
                 btnTrade.disabled = false;
@@ -1637,10 +2045,11 @@
                 const res = await fetch(`${API}/trade`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ 
-                        action: 'BUY', 
-                        token: state.currentToken.token, 
-                        amount_sol: amt 
+                    body: JSON.stringify({
+                        action: 'BUY',
+                        token: state.currentToken.token,
+                        amount_sol: amt,
+                        base: tradeBase
                     })
                 });
                 const d = await res.json();
@@ -1683,8 +2092,36 @@
         }
 
         // Withdraw
+        function setWithdrawToken(token) {
+            state.withdrawToken = token;
+            document.querySelectorAll('[data-wtoken]').forEach(btn => {
+                btn.classList.toggle('bg-indigo-600', btn.dataset.wtoken === token);
+                btn.classList.toggle('text-white', btn.dataset.wtoken === token);
+            });
+            let available = state.balance;
+            if (token === 'USDC') available = state.stableUSDC;
+            if (token === 'USDT') available = state.stableUSDT;
+            if (token === 'EURC') available = state.stableEUR;
+
+            document.getElementById('wAvail').innerText = `${available.toFixed(4)} ${token}`;
+
+            const dest = document.getElementById('wAddr');
+            if (['USDC', 'USDT', 'EURC'].includes(token)) {
+                dest.placeholder = 'IBAN europeo (es. IT98 XXXX XXXX XXXX)';
+                dest.value = state.bankIban || '';
+            } else {
+                dest.placeholder = 'Indirizzo wallet Solana';
+                dest.value = state.address || '';
+            }
+        }
+
         function setWMax() {
-            document.getElementById('wAmt').value = Math.max(0, state.balance - 0.005).toFixed(4);
+            let available = state.balance;
+            if (state.withdrawToken === 'USDC') available = state.stableUSDC;
+            if (state.withdrawToken === 'USDT') available = state.stableUSDT;
+            if (state.withdrawToken === 'EURC') available = state.stableEUR;
+            const buffer = state.withdrawToken === 'SOL' ? 0.005 : 0;
+            document.getElementById('wAmt').value = Math.max(0, available - buffer).toFixed(4);
         }
 
         async function doWithdraw() {
@@ -1701,8 +2138,8 @@
             try {
                 const res = await fetch(`${API}/withdraw`, {
                     method: 'POST',
-                    headers: getAuthHeaders(),
-                    body: JSON.stringify({ amount: amt, token: 'SOL', destination_address: addr })
+                    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount: amt, token: state.withdrawToken, destination_address: addr })
                 });
                 const d = await res.json();
                 if (d.success) {
@@ -1739,6 +2176,19 @@
             wins: 0,
             bestTrade: 0
         };
+
+        function suggestedBotAmount() {
+            const map = {
+                'MICRO': 0.005,
+                'POOR': 0.01,
+                'LOW_MEDIUM': 0.02,
+                'MEDIUM': 0.03,
+                'HIGH_MEDIUM': 0.05,
+                'RICH': 0.07,
+            };
+            const suggestion = map[state.wealthLevel] || 0.02;
+            return Math.max(0.0025, Math.min(state.balance - 0.01, suggestion));
+        }
         
         function selectStrategy(strategy) {
             botState.strategy = strategy;
@@ -1765,7 +2215,11 @@
         }
         
         async function startBot() {
-            const amount = parseFloat(document.getElementById('botAmount').value) || 0;
+            let amount = parseFloat(document.getElementById('botAmount').value) || 0;
+
+            if (amount === 0) {
+                amount = suggestedBotAmount();
+            }
             
             if (state.balance < 0.02) {
                 toast('Errore', 'Saldo insufficiente. Minimo 0.02 SOL');
@@ -1994,85 +2448,131 @@
         // ═══════════════════════════════════════════════════════════════
         
         const TOP_COINS = {
-            'SOL': 'So11111111111111111111111111111111111111112',
-            'JUP': 'JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz',
-            'BONK': 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'
+            'SOL': { token: 'So11111111111111111111111111111111111111112', coingeckoId: 'solana' },
+            'BTC': { coingeckoId: 'bitcoin' },
+            'ETH': { coingeckoId: 'ethereum' },
+            'XRP': { coingeckoId: 'ripple' },
+            'JUP': { token: 'JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz', coingeckoId: 'jupiter-exchange-solana' },
+            'BONK': { token: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', coingeckoId: 'bonk' }
         };
         
         async function updateTopCoins() {
-            // SOL usa il prezzo dal backend (già disponibile)
-            const solEl = document.getElementById('price_SOL');
-            if (solEl && state.solPrice > 0) {
-                solEl.innerText = '$' + state.solPrice.toFixed(2);
-                solEl.className = 'mono text-xs text-green-400';
-            }
-            
-            // Altre coin da DexScreener con retry
-            for (const [symbol, address] of Object.entries(TOP_COINS)) {
-                if (symbol === 'SOL') continue; // Già gestito sopra
-                
+            const coingeckoIds = Object.values(TOP_COINS)
+                .map(c => c.coingeckoId)
+                .filter(Boolean);
+
+            let cgData = {};
+            if (coingeckoIds.length) {
                 try {
-                    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, {
-                        signal: AbortSignal.timeout(5000) // 5s timeout
+                    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coingeckoIds.join(',')}&vs_currencies=usd&include_24hr_change=true`, {
+                        signal: AbortSignal.timeout(6000)
                     });
-                    const data = await res.json();
-                    if (data.pairs && data.pairs[0]) {
-                        const price = parseFloat(data.pairs[0].priceUsd || 0);
-                        const change = data.pairs[0].priceChange?.h24 || 0;
-                        const el = document.getElementById('price_' + symbol);
-                        if (el) {
-                            el.innerText = formatPrice(price);
-                            el.className = 'mono text-xs ' + (change >= 0 ? 'text-green-400' : 'text-red-400');
-                        }
-                    }
+                    cgData = await res.json();
                 } catch (e) {
-                    console.log('Error fetching ' + symbol + ':', e.message);
+                    console.warn('CG price fetch failed', e.message);
+                }
+            }
+
+            for (const [symbol, cfg] of Object.entries(TOP_COINS)) {
+                const el = document.getElementById('price_' + symbol);
+                if (!el) continue;
+
+                let price = 0;
+                let change = 0;
+
+                // Prefer DexScreener quando abbiamo l'indirizzo on-chain
+                if (cfg.token) {
+                    try {
+                        const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${cfg.token}`, {
+                            signal: AbortSignal.timeout(5000)
+                        });
+                        const data = await res.json();
+                        if (data.pairs && data.pairs[0]) {
+                            price = parseFloat(data.pairs[0].priceUsd || 0);
+                            change = data.pairs[0].priceChange?.h24 || 0;
+                        }
+                    } catch (e) {
+                        console.log('Error fetching ' + symbol + ':', e.message);
+                    }
+                }
+
+                // Fallback a CoinGecko se DexScreener non restituisce nulla
+                if ((!price || price === 0) && cfg.coingeckoId && cgData[cfg.coingeckoId]) {
+                    price = cgData[cfg.coingeckoId].usd || 0;
+                    change = cgData[cfg.coingeckoId].usd_24h_change || 0;
+                }
+
+                if (symbol === 'SOL' && state.solPrice > 0) {
+                    price = state.solPrice;
+                }
+
+                if (price) {
+                    el.innerText = formatPrice(price);
+                    el.className = 'mono text-xs ' + (change >= 0 ? 'text-green-400' : 'text-red-400');
                 }
             }
         }
         
         async function openTopCoin(symbol) {
-            const address = TOP_COINS[symbol];
+            const cfg = TOP_COINS[symbol];
             toast('Caricamento...', 'Recupero dati live per ' + symbol);
-            
+
             try {
-                // Carica dati REALI da DexScreener
-                const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, {
-                    signal: AbortSignal.timeout(8000)
-                });
-                const data = await res.json();
-                
-                if (data.pairs && data.pairs[0]) {
-                    const pair = data.pairs[0];
+                // Se abbiamo indirizzo on-chain, prova DexScreener
+                if (cfg?.token) {
+                    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${cfg.token}`, {
+                        signal: AbortSignal.timeout(8000)
+                    });
+                    const data = await res.json();
+
+                    if (data.pairs && data.pairs[0]) {
+                        const pair = data.pairs[0];
+                        const token = {
+                            token: cfg.token,
+                            symbol: symbol,
+                            name: pair.baseToken?.name || symbol,
+                            price: parseFloat(pair.priceUsd || 0),
+                            change_1h: pair.priceChange?.h1 || 0,
+                            change_24h: pair.priceChange?.h24 || 0,
+                            market_cap: pair.marketCap || pair.fdv || 0,
+                            liquidity_usd: pair.liquidity?.usd || 0,
+                            volume_24h: pair.volume?.h24 || 0,
+                            safety_score: 95,
+                            image_url: pair.info?.imageUrl || (symbol === 'SOL' ? 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' :
+                                       symbol === 'JUP' ? 'https://static.jup.ag/jup/icon.png' : '')
+                        };
+                        openToken(token);
+                        return;
+                    }
+                }
+
+                // Fallback multi-catena con CoinGecko: visualizza ma blocca il trade
+                if (cfg?.coingeckoId) {
+                    const res = await fetch(`https://api.coingecko.com/api/v3/coins/${cfg.coingeckoId}`, {
+                        signal: AbortSignal.timeout(8000)
+                    });
+                    const data = await res.json();
+
                     const token = {
-                        token: address,
+                        token: `COINGECKO:${cfg.coingeckoId}`,
+                        coingeckoId: cfg.coingeckoId,
                         symbol: symbol,
-                        name: pair.baseToken?.name || symbol,
-                        price: parseFloat(pair.priceUsd || 0),
-                        change_1h: pair.priceChange?.h1 || 0,
-                        change_24h: pair.priceChange?.h24 || 0,
-                        market_cap: pair.marketCap || pair.fdv || 0,
-                        liquidity_usd: pair.liquidity?.usd || 0,
-                        volume_24h: pair.volume?.h24 || 0,
-                        safety_score: 95,
-                        image_url: pair.info?.imageUrl || (symbol === 'SOL' ? 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' : 
-                                   symbol === 'JUP' ? 'https://static.jup.ag/jup/icon.png' : '')
+                        name: data?.name || symbol,
+                        price: data?.market_data?.current_price?.usd || 0,
+                        change_1h: data?.market_data?.price_change_percentage_1h_in_currency?.usd || 0,
+                        change_24h: data?.market_data?.price_change_percentage_24h || 0,
+                        market_cap: data?.market_data?.market_cap?.usd || 0,
+                        liquidity_usd: data?.market_data?.total_volume?.usd || 0,
+                        volume_24h: data?.market_data?.total_volume?.usd || 0,
+                        safety_score: 90,
+                        image_url: data?.image?.large || data?.image?.small,
+                        trade_disabled: true
                     };
                     openToken(token);
-                } else {
-                    // Fallback se DexScreener non ha dati
-                    openToken({
-                        token: address,
-                        symbol: symbol,
-                        name: symbol,
-                        price: symbol === 'SOL' ? state.solPrice : 0,
-                        change_24h: 0,
-                        market_cap: 0,
-                        liquidity_usd: 0,
-                        volume_24h: 0,
-                        safety_score: 95
-                    });
+                    return;
                 }
+
+                toast('Errore', 'Impossibile caricare dati per ' + symbol);
             } catch (e) {
                 console.error('Errore caricamento ' + symbol + ':', e);
                 toast('Errore', 'Impossibile caricare dati per ' + symbol);
@@ -2187,10 +2687,11 @@
                 const res = await fetch(`${API}/trade`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ 
-                        action: 'SELL', 
-                        token: state.currentToken.token, 
-                        amount_sol: investedSol
+                    body: JSON.stringify({
+                        action: 'SELL',
+                        token: state.currentToken.token,
+                        amount_sol: investedSol,
+                        base: tradeBase
                     })
                 });
                 const d = await res.json();
@@ -2259,10 +2760,11 @@
                 const res = await fetch(`${API}/trade`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ 
-                        action: 'SELL', 
-                        token: state.currentToken.token, 
-                        amount_sol: state.currentToken.invested_sol || state.currentToken.amount || 0
+                    body: JSON.stringify({
+                        action: 'SELL',
+                        token: state.currentToken.token,
+                        amount_sol: state.currentToken.invested_sol || state.currentToken.amount || 0,
+                        base: tradeBase
                     })
                 });
                 const d = await res.json();
@@ -2622,6 +3124,97 @@
         // ═══════════════════════════════════════════════════════════════
         
         let authMode = 'login';
+        let googleInitialized = false;
+        let lastAuthMethod = localStorage.getItem('auth_method') || '';
+
+        function openTelegramLogin() {
+            const botLink = `https://t.me/${TELEGRAM_BOT_USERNAME}?start=webapp_login`;
+            window.open(botLink, '_blank', 'noopener');
+            toast('Telegram', 'Apri il bot e conferma per collegare il wallet su questo browser.');
+        }
+
+        function initGoogleLogin() {
+            const wrap = document.getElementById('googleBtnWrap');
+            const btn = document.getElementById('googleBtn');
+            const unavailable = document.getElementById('googleUnavailable');
+
+            if (!wrap || !btn) return;
+
+            // Se non è configurato il client_id, nascondi il pulsante
+            if (!GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID.includes('YOUR_GOOGLE_CLIENT_ID')) {
+                unavailable.classList.remove('hidden');
+                wrap.classList.add('opacity-60');
+                return;
+            }
+
+            if (!window.google || !google.accounts) {
+                // Ritenta dopo il caricamento asincrono dello script Google
+                setTimeout(initGoogleLogin, 800);
+                return;
+            }
+
+            if (googleInitialized) return;
+
+            google.accounts.id.initialize({
+                client_id: GOOGLE_CLIENT_ID,
+                callback: (res) => handleGoogleCredential(res.credential),
+                cancel_on_tap_outside: true
+            });
+
+            google.accounts.id.renderButton(btn, {
+                theme: 'outline',
+                size: 'large',
+                shape: 'pill',
+                text: 'continue_with'
+            });
+
+            googleInitialized = true;
+        }
+
+        async function handleGoogleCredential(idToken) {
+            const errorEl = document.getElementById('authError');
+            const spinner = document.getElementById('googleSpinner');
+
+            if (!idToken) return;
+
+            spinner.classList.remove('hidden');
+            errorEl.classList.add('hidden');
+
+            try {
+                const res = await fetch(`${API}/auth/google`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ id_token: idToken })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    sessionToken = data.session_token;
+                    userId = data.user_id;
+                    userEmail = data.email || 'Google Account';
+                    lastAuthMethod = 'google';
+                    localStorage.setItem('session_token', sessionToken);
+                    localStorage.setItem('user_id', userId);
+                    localStorage.setItem('user_email', userEmail);
+                    localStorage.setItem('auth_method', lastAuthMethod);
+
+                    toast('Successo', 'Login Google collegato al tuo wallet');
+                    showMainApp();
+                    sync();
+                    setInterval(sync, 5000);
+                    startLivePrices();
+                } else {
+                    errorEl.innerText = data.message || 'Login Google fallito';
+                    errorEl.classList.remove('hidden');
+                }
+            } catch (e) {
+                errorEl.innerText = 'Errore di rete durante il login Google';
+                errorEl.classList.remove('hidden');
+            } finally {
+                spinner.classList.add('hidden');
+            }
+        }
         
         function setAuthMode(mode) {
             authMode = mode;
@@ -2679,10 +3272,12 @@
                     sessionToken = data.session_token;
                     userId = data.user_id;
                     userEmail = email;
+                    lastAuthMethod = 'email';
                     localStorage.setItem('session_token', sessionToken);
                     localStorage.setItem('user_id', userId);
                     localStorage.setItem('user_email', email);
-                    
+                    localStorage.setItem('auth_method', lastAuthMethod);
+
                     toast('Successo', data.message);
                     showMainApp();
                     sync();
@@ -2704,9 +3299,11 @@
             sessionToken = '';
             userId = '';
             userEmail = '';
+            lastAuthMethod = '';
             localStorage.removeItem('session_token');
             localStorage.removeItem('user_id');
             localStorage.removeItem('user_email');
+            localStorage.removeItem('auth_method');
             
             toast('Info', 'Logout effettuato');
             showLoginPage();
@@ -2755,8 +3352,9 @@
                 idEl.innerText = 'ID: ' + telegramId + ' (Permanente)';
                 logoutBtn.classList.add('hidden');
             } else if (sessionToken && userId) {
-                typeEl.innerText = '🌐 Account Web';
-                typeEl.className = 'text-sm font-semibold text-green-400';
+                const isGoogle = lastAuthMethod === 'google';
+                typeEl.innerText = isGoogle ? '🟣 Google Login' : '🌐 Account Web';
+                typeEl.className = 'text-sm font-semibold ' + (isGoogle ? 'text-purple-300' : 'text-green-400');
                 idEl.innerText = userEmail || 'Email registrata (Permanente)';
                 logoutBtn.classList.remove('hidden');
             } else {
@@ -2797,12 +3395,40 @@
                     localStorage.setItem('user_id', userId);
                 }
 
+                const prevStable = { ...state.prevStableSnapshot };
+
                 state.balance = data.balance_sol || 0;
                 state.address = data.wallet_address || '';
                 state.solPrice = data.sol_price_usd || 180;
+                state.stableUSDC = data.stable_usdc || 0;
+                state.stableUSDT = data.stable_usdt || 0;
+                state.stableEUR = data.stable_eur || 0;
+                state.prevStableSnapshot = { USDC: state.stableUSDC, USDT: state.stableUSDT, EURC: state.stableEUR };
+                state.bankIban = formatIban(state.address);
                 state.gems = data.gems_feed || [];
                 state.trades = data.trades_history || [];
                 state.withdrawals = data.withdrawals_history || [];
+
+                const storedStable = localStorage.getItem('preferred_stable');
+                const autoStable = storedStable || pickBestStable();
+                const recentlyChosen = state.lastManualStable && (Date.now() - state.lastManualStable) < 10 * 60 * 1000;
+
+                const inflows = ['USDC', 'USDT', 'EURC']
+                    .map(code => ({
+                        code,
+                        delta: (code === 'USDC' ? state.stableUSDC : code === 'USDT' ? state.stableUSDT : state.stableEUR) - (prevStable[code] || 0)
+                    }))
+                    .filter(item => item.delta > 0.01)
+                    .sort((a, b) => b.delta - a.delta);
+
+                if (inflows.length) {
+                    const primary = inflows[0];
+                    setStable(primary.code, { manual: false });
+                    document.getElementById('redeemAmount').value = primary.delta.toFixed(2);
+                    toast('Top-up rilevato', `${primary.delta.toFixed(2)} ${primary.code} arrivati dalla carta. Usa "Vendi stable → SOL" per convertirli e vederli nel wallet.`);
+                } else if (!recentlyChosen) {
+                    setStable(autoStable, { manual: false });
+                }
                 
                 // CARICA STATO BOT DAL DATABASE (persistente)
                 const wasBotActive = state.botActive;
@@ -2824,9 +3450,25 @@
 
                 document.getElementById('balanceSOL').innerText = state.balance.toFixed(4);
                 document.getElementById('balanceUSD').innerText = '≈ $' + (data.balance_usd || 0).toFixed(2);
+                document.getElementById('balanceEUR').innerText = '€' + ((data.balance_usd || 0) * 0.92).toFixed(2);
                 document.getElementById('walletAddr').innerText = state.address || 'Caricamento...';
                 document.getElementById('addrLink').href = SOLSCAN_ADDR + state.address;
+                document.getElementById('bankIban').innerText = state.bankIban;
                 document.getElementById('tradesCount').innerText = data.active_trades_count || 0;
+
+                // Aggiorna snapshot stablecoin e carta
+                const eurRate = 0.92;
+                const stableEuroValue = (state.stableUSDC + state.stableUSDT) * eurRate + state.stableEUR;
+                const stableSolEq = state.solPrice > 0 ? stableEuroValue / (state.solPrice * eurRate) : 0;
+                cardState.balance = stableEuroValue;
+                cardState.balanceSol = stableSolEq;
+                updateCardUI();
+
+                document.getElementById('stableUsdc').innerText = state.stableUSDC.toFixed(2) + ' USDC';
+                document.getElementById('stableUsdt').innerText = state.stableUSDT.toFixed(2) + ' USDT';
+                document.getElementById('stableEur').innerText = state.stableEUR.toFixed(2) + ' EURC';
+                document.getElementById('stableUsdcEur').innerText = `≈ €${(state.stableUSDC * eurRate).toFixed(2)}`;
+                document.getElementById('stableUsdtEur').innerText = `≈ €${(state.stableUSDT * eurRate).toFixed(2)}`;
 
                 // Wealth Level dal backend
                 const wlMap = {
@@ -2838,6 +3480,7 @@
                     'RICH':        { text: '💎 Ricco (>€200)', class: 'text-green-400', pct: 20 }
                 };
                 const wl = wlMap[data.wealth_level] || wlMap['MICRO'];
+                state.wealthLevel = data.wealth_level;
                 document.getElementById('wealthLevel').innerText = wl.text;
                 document.getElementById('wealthLevel').className = 'text-sm font-semibold ' + wl.class;
                 
@@ -3374,8 +4017,67 @@
                 document.getElementById('chartTimeStart').innerText = 
                     priceChartData.startTime.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
             }
-            document.getElementById('chartTimeEnd').innerText = 
+            document.getElementById('chartTimeEnd').innerText =
                 now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        async function fetchRealMarketSeries(symbol) {
+            const map = {
+                'SOL': 'solana',
+                'USDC': 'usd-coin',
+                'USDT': 'tether',
+                'EURC': 'euro-coin',
+                'BTC': 'bitcoin',
+                'ETH': 'ethereum',
+                'XRP': 'ripple'
+            };
+
+            const coinId = state.currentToken?.coingeckoId || map[symbol?.toUpperCase()] || 'solana';
+
+            try {
+                const res = await fetch(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=1&interval=hourly`);
+                const data = await res.json();
+
+                if (data?.prices?.length && priceChart) {
+                    priceChartData.labels = data.prices.map(p => new Date(p[0]).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })).slice(-priceChartData.maxPoints);
+                    priceChartData.prices = data.prices.map(p => p[1]).slice(-priceChartData.maxPoints);
+                    priceChartData.entryPrice = priceChartData.prices[priceChartData.prices.length - 1] || 0;
+                    priceChart.data.labels = priceChartData.labels;
+                    priceChart.data.datasets[0].data = priceChartData.prices;
+                    priceChart.data.datasets[1].data = priceChartData.labels.map(() => priceChartData.entryPrice);
+                    priceChart.update('none');
+                }
+            } catch (e) {
+                console.warn('Chart fetch failed', e);
+            }
+        }
+
+        async function startLiveChart(symbol) {
+            if (state.liveChartTimer) clearInterval(state.liveChartTimer);
+            await fetchRealMarketSeries(symbol);
+
+            state.liveChartTimer = setInterval(async () => {
+                try {
+                    const map = {
+                        'SOL': 'solana',
+                        'USDC': 'usd-coin',
+                        'USDT': 'tether',
+                        'EURC': 'euro-coin',
+                        'BTC': 'bitcoin',
+                        'ETH': 'ethereum',
+                        'XRP': 'ripple'
+                    };
+                    const coinId = state.currentToken?.coingeckoId || map[symbol?.toUpperCase()] || 'solana';
+                    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
+                    const data = await res.json();
+                    const price = data?.[coinId]?.usd;
+                    if (price) {
+                        updatePriceChart(price);
+                    }
+                } catch (e) {
+                    console.warn('Live price refresh failed', e);
+                }
+            }, 15000);
         }
         
         // Imposta prezzo di entrata per il grafico
@@ -3601,10 +4303,11 @@
                     const res = await fetch(`${API}/trade`, {
                         method: 'POST',
                         headers: getAuthHeaders(),
-                        body: JSON.stringify({ 
-                            action: 'SELL', 
-                            token: pos.token_address, 
-                            amount_sol: pos.amount_sol
+                        body: JSON.stringify({
+                            action: 'SELL',
+                            token: pos.token_address,
+                            amount_sol: pos.amount_sol,
+                            base: tradeBase
                         })
                     });
                     
@@ -3667,7 +4370,11 @@
         
         function init() {
             lucide.createIcons();
-            
+            setTradeBase(tradeBase);
+
+            // Inizializza login Google (per link con Telegram e accesso cross-device)
+            initGoogleLogin();
+
             // ═══════════════════════════════════════════════════════════════
             // SICUREZZA: Solo utenti autenticati possono usare wallet
             // Questo previene perdita di fondi se si cambia dispositivo

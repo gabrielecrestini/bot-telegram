@@ -5,7 +5,6 @@ use tokio::time::{sleep, Duration};
 use std::env;
 use std::collections::{HashMap, HashSet};
 use sqlx::Row;
-use futures::StreamExt;
 // Network imports per QUIC/WS
 use solana_sdk::pubkey::Pubkey;
 use std::str::FromStr;
