@@ -434,15 +434,22 @@
                 <input type="number" id="hedgeAmount" placeholder="0.00 SOL" step="0.0001" class="mono flex-1">
                 <button onclick="setHedgeMax()" class="px-3 py-2 rounded-lg bg-indigo-500/20 text-indigo-300 text-xs">MAX</button>
             </div>
+            <div class="flex gap-2 mb-3">
+                <input type="number" id="redeemAmount" placeholder="0.00" step="0.01" class="mono flex-1" aria-label="Importo stable da vendere">
+                <button onclick="setRedeemMax()" class="px-3 py-2 rounded-lg bg-emerald-500/15 text-emerald-300 text-xs">MAX</button>
+            </div>
             <div class="flex flex-col md:flex-row gap-2">
                 <button onclick="convertToStable()" id="convertBtn" class="btn btn-primary flex-1 flex items-center justify-center gap-2">
                     <i data-lucide="shield" class="w-4 h-4"></i> Converti in <span id="stableLabel">USDC</span>
+                </button>
+                <button onclick="sellStableToSol()" id="redeemBtn" class="btn btn-secondary flex-1 flex items-center justify-center gap-2">
+                    <i data-lucide="refresh-cw" class="w-4 h-4"></i> Vendi <span class="hidden md:inline">stable → SOL</span>
                 </button>
                 <button onclick="openFiatExit()" class="btn bg-white/5 flex items-center justify-center gap-2">
                     <i data-lucide="banknote" class="w-4 h-4"></i> Exit su carta
                 </button>
             </div>
-            <p class="text-[11px] text-zinc-500 mt-2">Suggerimento: converti prima in stablecoin (USDC/EURC), poi usa l'exit fiat per ricevere Euro su carta.</p>
+            <p class="text-[11px] text-zinc-500 mt-2">Suggerimento: converti prima in stablecoin (USDC/EURC/USDT), poi usa l'exit fiat per ricevere Euro su carta o rientra in SOL con "Vendi stable".</p>
         </div>
 
         <!-- Stats -->
@@ -494,11 +501,26 @@
             <p class="text-xs text-zinc-500 mb-2 flex items-center gap-1">
                 <i data-lucide="star" class="w-3 h-3"></i> Top Coins
             </p>
-            <div class="grid grid-cols-3 gap-2" id="topCoinsGrid">
+            <div class="grid grid-cols-3 md:grid-cols-6 gap-2" id="topCoinsGrid">
                 <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('SOL')">
                     <img src="https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png" class="w-8 h-8 rounded-full mx-auto mb-1">
                     <p class="font-bold text-sm">SOL</p>
                     <p class="mono text-xs text-green-400" id="price_SOL">$--</p>
+                </div>
+                <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('BTC')">
+                    <img src="https://assets.coingecko.com/coins/images/1/large/bitcoin.png" class="w-8 h-8 rounded-full mx-auto mb-1">
+                    <p class="font-bold text-sm">BTC</p>
+                    <p class="mono text-xs text-green-400" id="price_BTC">$--</p>
+                </div>
+                <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('ETH')">
+                    <img src="https://assets.coingecko.com/coins/images/279/large/ethereum.png" class="w-8 h-8 rounded-full mx-auto mb-1">
+                    <p class="font-bold text-sm">ETH</p>
+                    <p class="mono text-xs text-green-400" id="price_ETH">$--</p>
+                </div>
+                <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('XRP')">
+                    <img src="https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png" class="w-8 h-8 rounded-full mx-auto mb-1">
+                    <p class="font-bold text-sm">XRP</p>
+                    <p class="mono text-xs text-green-400" id="price_XRP">$--</p>
                 </div>
                 <div class="card p-3 text-center cursor-pointer hover:border-indigo-500/50 transition-colors" onclick="openTopCoin('JUP')">
                     <img src="https://static.jup.ag/jup/icon.png" class="w-8 h-8 rounded-full mx-auto mb-1">
@@ -1251,6 +1273,15 @@
             <i data-lucide="alert-triangle" class="w-5 h-5 text-yellow-500 shrink-0"></i>
             <p class="text-xs text-yellow-200">Invia solo <strong>SOL</strong> su rete Solana</p>
         </div>
+
+        <div class="card p-4 mt-4 bg-emerald-500/5 border-emerald-400/20">
+            <div class="flex items-center gap-2 mb-2">
+                <i data-lucide="credit-card" class="w-4 h-4 text-emerald-300"></i>
+                <p class="font-semibold text-sm">Ricarica con carta</p>
+            </div>
+            <p class="text-xs text-zinc-400 mb-3">Usa FastRamp per acquistare USDC/USDT verso questo wallet, poi converti subito in SOL con "Vendi stable".</p>
+            <button class="btn btn-success w-full" onclick="openCardProvider()">Apri FastRamp</button>
+        </div>
     </div>
 
     <!-- Withdraw Sheet -->
@@ -1540,6 +1571,15 @@
             document.getElementById('depAddr').innerText = state.address || '...';
         }
 
+        function openCardProvider() {
+            if (!state.address) {
+                toast('Wallet non pronto', 'Attendi il sync del wallet');
+                return;
+            }
+            const url = `https://fastramp.example/pay?dest=${encodeURIComponent(state.address)}&asset=USDC`;
+            window.open(url, '_blank');
+        }
+
         function openConvertCard() {
             document.getElementById('hedgeAmount').focus();
             document.getElementById('hedgeAmount').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1585,6 +1625,12 @@
             document.getElementById('hedgeAmount').value = max.toFixed(4);
         }
 
+        function setRedeemMax() {
+            const key = state.selectedStable || 'USDC';
+            const bal = key === 'USDC' ? state.stableUSDC : key === 'USDT' ? state.stableUSDT : state.stableEUR;
+            document.getElementById('redeemAmount').value = (bal || 0).toFixed(2);
+        }
+
         async function convertToStable() {
             if (botState.active) {
                 toast('Bot Attivo', 'Ferma il bot prima di convertire i SOL in stablecoin.');
@@ -1615,6 +1661,41 @@
                 const data = await res.json();
                 if (data.success) {
                     toast('Convertito', data.message || 'Swap completato');
+                    if (data.solscan_url) {
+                        window.open(data.solscan_url, '_blank');
+                    }
+                    sync();
+                } else {
+                    toast('Errore', data.message || 'Conversione fallita');
+                }
+            } catch (e) {
+                console.error(e);
+                toast('Errore', 'Impossibile contattare il server');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        async function sellStableToSol() {
+            const amount = parseFloat(document.getElementById('redeemAmount').value || '0');
+            if (!amount || amount <= 0) {
+                toast('Importo non valido', 'Inserisci quanto stable vendere in SOL.');
+                return;
+            }
+
+            const btn = document.getElementById('redeemBtn');
+            if (btn) btn.disabled = true;
+
+            try {
+                const res = await fetch(`${API}/convert/stable`, {
+                    method: 'POST',
+                    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount, stable: state.selectedStable })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    toast('Stable venduta', data.message || 'Swap completato');
                     if (data.solscan_url) {
                         window.open(data.solscan_url, '_blank');
                     }
@@ -1768,10 +1849,11 @@
             document.getElementById('tsVol').innerText = formatMcap(token.volume_24h || 0);
             document.getElementById('tsScore').innerText = (token.safety_score || 0) + '/100';
             document.getElementById('tsAddr').innerText = token.token || '...';
-            
+
             // Usa activePosition già calcolato sopra
             const hasPosition = !!activePosition;
-            
+            const readOnly = token.trade_disabled || (token.token && token.token.startsWith('COINGECKO:'));
+
             const btnTrade = document.getElementById('btnTrade');
             const btnTradeText = document.getElementById('btnTradeText');
             const btnSellSheet = document.getElementById('btnSellSheet');
@@ -1795,6 +1877,12 @@
                 if (hasPosition) {
                     btnSellSheet.classList.remove('hidden');
                 }
+            } else if (readOnly) {
+                document.getElementById('tsMax').innerText = 'Solo visualizzazione multi-chain';
+                btnTrade.disabled = true;
+                btnTrade.className = 'btn bg-zinc-700 text-zinc-300 w-full flex items-center justify-center gap-2 cursor-not-allowed';
+                btnTradeText.innerText = 'Solo view';
+                btnSellSheet.classList.add('hidden');
             } else {
                 document.getElementById('tsMax').innerText = Math.max(0, state.balance - 0.005).toFixed(4);
                 btnTrade.disabled = false;
@@ -2291,85 +2379,131 @@
         // ═══════════════════════════════════════════════════════════════
         
         const TOP_COINS = {
-            'SOL': 'So11111111111111111111111111111111111111112',
-            'JUP': 'JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz',
-            'BONK': 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'
+            'SOL': { token: 'So11111111111111111111111111111111111111112', coingeckoId: 'solana' },
+            'BTC': { coingeckoId: 'bitcoin' },
+            'ETH': { coingeckoId: 'ethereum' },
+            'XRP': { coingeckoId: 'ripple' },
+            'JUP': { token: 'JUPyiwrYJFskUPiHa7hkeR8VUtKCw785HvjeyzmEgGz', coingeckoId: 'jupiter-exchange-solana' },
+            'BONK': { token: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', coingeckoId: 'bonk' }
         };
         
         async function updateTopCoins() {
-            // SOL usa il prezzo dal backend (già disponibile)
-            const solEl = document.getElementById('price_SOL');
-            if (solEl && state.solPrice > 0) {
-                solEl.innerText = '$' + state.solPrice.toFixed(2);
-                solEl.className = 'mono text-xs text-green-400';
-            }
-            
-            // Altre coin da DexScreener con retry
-            for (const [symbol, address] of Object.entries(TOP_COINS)) {
-                if (symbol === 'SOL') continue; // Già gestito sopra
-                
+            const coingeckoIds = Object.values(TOP_COINS)
+                .map(c => c.coingeckoId)
+                .filter(Boolean);
+
+            let cgData = {};
+            if (coingeckoIds.length) {
                 try {
-                    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, {
-                        signal: AbortSignal.timeout(5000) // 5s timeout
+                    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coingeckoIds.join(',')}&vs_currencies=usd&include_24hr_change=true`, {
+                        signal: AbortSignal.timeout(6000)
                     });
-                    const data = await res.json();
-                    if (data.pairs && data.pairs[0]) {
-                        const price = parseFloat(data.pairs[0].priceUsd || 0);
-                        const change = data.pairs[0].priceChange?.h24 || 0;
-                        const el = document.getElementById('price_' + symbol);
-                        if (el) {
-                            el.innerText = formatPrice(price);
-                            el.className = 'mono text-xs ' + (change >= 0 ? 'text-green-400' : 'text-red-400');
-                        }
-                    }
+                    cgData = await res.json();
                 } catch (e) {
-                    console.log('Error fetching ' + symbol + ':', e.message);
+                    console.warn('CG price fetch failed', e.message);
+                }
+            }
+
+            for (const [symbol, cfg] of Object.entries(TOP_COINS)) {
+                const el = document.getElementById('price_' + symbol);
+                if (!el) continue;
+
+                let price = 0;
+                let change = 0;
+
+                // Prefer DexScreener quando abbiamo l'indirizzo on-chain
+                if (cfg.token) {
+                    try {
+                        const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${cfg.token}`, {
+                            signal: AbortSignal.timeout(5000)
+                        });
+                        const data = await res.json();
+                        if (data.pairs && data.pairs[0]) {
+                            price = parseFloat(data.pairs[0].priceUsd || 0);
+                            change = data.pairs[0].priceChange?.h24 || 0;
+                        }
+                    } catch (e) {
+                        console.log('Error fetching ' + symbol + ':', e.message);
+                    }
+                }
+
+                // Fallback a CoinGecko se DexScreener non restituisce nulla
+                if ((!price || price === 0) && cfg.coingeckoId && cgData[cfg.coingeckoId]) {
+                    price = cgData[cfg.coingeckoId].usd || 0;
+                    change = cgData[cfg.coingeckoId].usd_24h_change || 0;
+                }
+
+                if (symbol === 'SOL' && state.solPrice > 0) {
+                    price = state.solPrice;
+                }
+
+                if (price) {
+                    el.innerText = formatPrice(price);
+                    el.className = 'mono text-xs ' + (change >= 0 ? 'text-green-400' : 'text-red-400');
                 }
             }
         }
         
         async function openTopCoin(symbol) {
-            const address = TOP_COINS[symbol];
+            const cfg = TOP_COINS[symbol];
             toast('Caricamento...', 'Recupero dati live per ' + symbol);
-            
+
             try {
-                // Carica dati REALI da DexScreener
-                const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, {
-                    signal: AbortSignal.timeout(8000)
-                });
-                const data = await res.json();
-                
-                if (data.pairs && data.pairs[0]) {
-                    const pair = data.pairs[0];
+                // Se abbiamo indirizzo on-chain, prova DexScreener
+                if (cfg?.token) {
+                    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${cfg.token}`, {
+                        signal: AbortSignal.timeout(8000)
+                    });
+                    const data = await res.json();
+
+                    if (data.pairs && data.pairs[0]) {
+                        const pair = data.pairs[0];
+                        const token = {
+                            token: cfg.token,
+                            symbol: symbol,
+                            name: pair.baseToken?.name || symbol,
+                            price: parseFloat(pair.priceUsd || 0),
+                            change_1h: pair.priceChange?.h1 || 0,
+                            change_24h: pair.priceChange?.h24 || 0,
+                            market_cap: pair.marketCap || pair.fdv || 0,
+                            liquidity_usd: pair.liquidity?.usd || 0,
+                            volume_24h: pair.volume?.h24 || 0,
+                            safety_score: 95,
+                            image_url: pair.info?.imageUrl || (symbol === 'SOL' ? 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' :
+                                       symbol === 'JUP' ? 'https://static.jup.ag/jup/icon.png' : '')
+                        };
+                        openToken(token);
+                        return;
+                    }
+                }
+
+                // Fallback multi-catena con CoinGecko: visualizza ma blocca il trade
+                if (cfg?.coingeckoId) {
+                    const res = await fetch(`https://api.coingecko.com/api/v3/coins/${cfg.coingeckoId}`, {
+                        signal: AbortSignal.timeout(8000)
+                    });
+                    const data = await res.json();
+
                     const token = {
-                        token: address,
+                        token: `COINGECKO:${cfg.coingeckoId}`,
+                        coingeckoId: cfg.coingeckoId,
                         symbol: symbol,
-                        name: pair.baseToken?.name || symbol,
-                        price: parseFloat(pair.priceUsd || 0),
-                        change_1h: pair.priceChange?.h1 || 0,
-                        change_24h: pair.priceChange?.h24 || 0,
-                        market_cap: pair.marketCap || pair.fdv || 0,
-                        liquidity_usd: pair.liquidity?.usd || 0,
-                        volume_24h: pair.volume?.h24 || 0,
-                        safety_score: 95,
-                        image_url: pair.info?.imageUrl || (symbol === 'SOL' ? 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' : 
-                                   symbol === 'JUP' ? 'https://static.jup.ag/jup/icon.png' : '')
+                        name: data?.name || symbol,
+                        price: data?.market_data?.current_price?.usd || 0,
+                        change_1h: data?.market_data?.price_change_percentage_1h_in_currency?.usd || 0,
+                        change_24h: data?.market_data?.price_change_percentage_24h || 0,
+                        market_cap: data?.market_data?.market_cap?.usd || 0,
+                        liquidity_usd: data?.market_data?.total_volume?.usd || 0,
+                        volume_24h: data?.market_data?.total_volume?.usd || 0,
+                        safety_score: 90,
+                        image_url: data?.image?.large || data?.image?.small,
+                        trade_disabled: true
                     };
                     openToken(token);
-                } else {
-                    // Fallback se DexScreener non ha dati
-                    openToken({
-                        token: address,
-                        symbol: symbol,
-                        name: symbol,
-                        price: symbol === 'SOL' ? state.solPrice : 0,
-                        change_24h: 0,
-                        market_cap: 0,
-                        liquidity_usd: 0,
-                        volume_24h: 0,
-                        safety_score: 95
-                    });
+                    return;
                 }
+
+                toast('Errore', 'Impossibile caricare dati per ' + symbol);
             } catch (e) {
                 console.error('Errore caricamento ' + symbol + ':', e);
                 toast('Errore', 'Impossibile caricare dati per ' + symbol);
@@ -3795,10 +3929,13 @@
                 'SOL': 'solana',
                 'USDC': 'usd-coin',
                 'USDT': 'tether',
-                'EURC': 'euro-coin'
+                'EURC': 'euro-coin',
+                'BTC': 'bitcoin',
+                'ETH': 'ethereum',
+                'XRP': 'ripple'
             };
 
-            const coinId = map[symbol?.toUpperCase()] || 'solana';
+            const coinId = state.currentToken?.coingeckoId || map[symbol?.toUpperCase()] || 'solana';
 
             try {
                 const res = await fetch(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=1&interval=hourly`);
@@ -3828,9 +3965,12 @@
                         'SOL': 'solana',
                         'USDC': 'usd-coin',
                         'USDT': 'tether',
-                        'EURC': 'euro-coin'
+                        'EURC': 'euro-coin',
+                        'BTC': 'bitcoin',
+                        'ETH': 'ethereum',
+                        'XRP': 'ripple'
                     };
-                    const coinId = map[symbol?.toUpperCase()] || 'solana';
+                    const coinId = state.currentToken?.coingeckoId || map[symbol?.toUpperCase()] || 'solana';
                     const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`);
                     const data = await res.json();
                     const price = data?.[coinId]?.usd;

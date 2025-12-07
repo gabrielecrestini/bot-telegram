@@ -17,6 +17,7 @@ use std::sync::Arc;
 use warp::Filter;
 
 const SOLSCAN_TX_URL: &str = "https://solscan.io/tx/";
+const OFFRAMP_PROVIDER: &str = "SwiftBridge";
 const SOL_MINT: &str = "So11111111111111111111111111111111111111112";
 const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const EURC_MINT: &str = "8V8ePA5shGtYZ8i9WGVrb8grh4ALpEDSz3i63MMYjVn2"; // Euro Coin (Circle) su Solana
@@ -73,6 +74,12 @@ struct WithdrawRequest {
 struct ConvertRequest {
     amount_sol: f64,
     stable: String, // "USDC", "EURC" o "USDT"
+}
+
+#[derive(Deserialize)]
+struct SellStableRequest {
+    amount: f64,
+    stable: String,
 }
 
 #[derive(Serialize)]
@@ -186,6 +193,39 @@ fn parse_google_id_token(token: &str) -> Option<(String, Option<String>)> {
     let sub = payload_json.get("sub")?.as_str()?.to_string();
     let email = payload_json.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
     Some((sub, email))
+}
+
+fn validate_iban(iban: &str) -> bool {
+    if iban.len() < 15 || iban.len() > 34 {
+        return false;
+    }
+
+    if !iban.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+
+    let rearranged = format!("{}{}", &iban[4..], &iban[..4]);
+    let mut expanded = String::with_capacity(rearranged.len() * 2);
+
+    for ch in rearranged.chars() {
+        if ch.is_ascii_digit() {
+            expanded.push(ch);
+        } else {
+            let val = (ch.to_ascii_uppercase() as u32) - 55; // A=10
+            expanded.push_str(&val.to_string());
+        }
+    }
+
+    let mut remainder: u128 = 0;
+    for chunk in expanded.as_bytes().chunks(7) {
+        let part = std::str::from_utf8(chunk).unwrap_or("0");
+        let num = format!("{}{}", remainder, part)
+            .parse::<u128>()
+            .unwrap_or(0);
+        remainder = num % 97;
+    }
+
+    remainder == 1
 }
 
 /// Estrae user_id da header - SOLO utenti autenticati
@@ -331,6 +371,17 @@ pub async fn start_server(
         .and(net_filter.clone())
         .and_then(handle_convert);
 
+    // Convert stablecoin -> SOL (per top-up carta che accredita USDC/USDT/EURC)
+    let sell_stable = warp::path!("convert" / "stable")
+        .and(warp::post())
+        .and(tg_id_filter.clone())
+        .and(session_filter.clone())
+        .and(tg_data_filter.clone())
+        .and(warp::body::json())
+        .and(pool_filter.clone())
+        .and(net_filter.clone())
+        .and_then(handle_sell_stable);
+
     // Withdraw endpoint
     let withdraw = warp::path("withdraw")
         .and(warp::post())
@@ -407,6 +458,7 @@ pub async fn start_server(
         .or(status)
         .or(trade)
         .or(convert)
+        .or(sell_stable)
         .or(withdraw)
         .or(auth)
         .or(google_auth)
@@ -1179,6 +1231,194 @@ async fn handle_convert(
     }
 }
 
+/// Converte stablecoin accreditate (USDC/USDT/EURC) in SOL per rientrare nel wallet
+async fn handle_sell_stable(
+    tg_id: Option<String>,
+    session: Option<String>,
+    tg_data: Option<String>,
+    req: SellStableRequest,
+    pool: sqlx::SqlitePool,
+    net: Arc<network::NetworkClient>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let user_id = match extract_user_id(tg_id, session, tg_data) {
+        Some(id) => id,
+        None => {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Non autenticato. Accedi con Telegram o Email.".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
+
+    let stable = req.stable.to_uppercase();
+    let input_mint = match stable.as_str() {
+        "USDC" => USDC_MINT,
+        "USDT" => USDT_MINT,
+        "EURC" => EURC_MINT,
+        _ => {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Stablecoin non supportata".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
+
+    if req.amount <= 0.0 {
+        return Ok(warp::reply::json(&ApiResponse {
+            success: false,
+            message: "Importo non valido".into(),
+            tx_signature: "".into(),
+            solscan_url: None,
+        }));
+    }
+
+    let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
+        Ok(k) => k,
+        Err(e) => {
+            error!("❌ Wallet error per {}: {}", user_id, e);
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Wallet non trovato. Ricarica la pagina.".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
+
+    let owner = payer.pubkey();
+    let mint_pubkey = Pubkey::from_str(input_mint).unwrap();
+    let ata = get_associated_token_address(&owner, &mint_pubkey);
+
+    let (available, decimals) = match net.rpc.get_token_account_balance(&ata).await {
+        Ok(res) => {
+            let ui_amount = res.ui_amount.unwrap_or(0.0);
+            (ui_amount, res.decimals as u8)
+        }
+        Err(_) => (0.0, 6u8),
+    };
+
+    if req.amount > available {
+        return Ok(warp::reply::json(&ApiResponse {
+            success: false,
+            message: format!("Saldo insufficiente: hai {:.2} {}", available, stable),
+            tx_signature: "".into(),
+            solscan_url: None,
+        }));
+    }
+
+    let unit_multiplier = 10u64.saturating_pow(decimals as u32) as f64;
+    let amount_base_units = (req.amount * unit_multiplier).round() as u64;
+
+    // Pre-quote per verificare output e slippage
+    let slippage_bps = 120;
+    let quote = match jupiter::get_jupiter_quote(input_mint, SOL_MINT, amount_base_units, slippage_bps).await {
+        Ok(q) => q,
+        Err(e) => {
+            error!("❌ Quote stable->SOL fallita: {}", e);
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: format!("Quote non disponibile: {}", e),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
+
+    if quote.out_amount == 0 {
+        return Ok(warp::reply::json(&ApiResponse {
+            success: false,
+            message: "Quote non valida, riprova con un importo maggiore".into(),
+            tx_signature: "".into(),
+            solscan_url: None,
+        }));
+    }
+
+    if quote.price_impact_pct > 0.02 {
+        return Ok(warp::reply::json(&ApiResponse {
+            success: false,
+            message: format!(
+                "Impatto prezzo troppo alto ({:.2}%). Riduci importo o attendi più liquidità",
+                quote.price_impact_pct * 100.0
+            ),
+            tx_signature: "".into(),
+            solscan_url: None,
+        }));
+    }
+
+    let tx = match jupiter::get_jupiter_swap_tx(
+        &payer.pubkey().to_string(),
+        input_mint,
+        SOL_MINT,
+        amount_base_units,
+        slippage_bps,
+    )
+    .await
+    {
+        Ok(tx) => tx,
+        Err(e) => {
+            error!("❌ Quote convert fallita: {}", e);
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: format!("Errore Jupiter: {}", e),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
+
+    let bh = match net.rpc.get_latest_blockhash().await {
+        Ok(hash) => hash,
+        Err(e) => {
+            error!("❌ Blockhash error: {}", e);
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Errore rete".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
+
+    match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+        Ok(signed_tx) => match net.send_versioned_transaction(&signed_tx).await {
+            Ok(sig) => {
+                info!(
+                    "✅ Convert {} -> SOL | TX {}",
+                    stable, sig
+                );
+                Ok(warp::reply::json(&ApiResponse {
+                    success: true,
+                    message: format!("Convertito {} in SOL", stable),
+                    tx_signature: sig.clone(),
+                    solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
+                }))
+            }
+            Err(e) => {
+                error!("❌ Invio convert fallito: {}", e);
+                Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: format!("Errore invio TX: {}", e),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }))
+            }
+        },
+        Err(e) => {
+            error!("❌ Firma TX convert fallita: {}", e);
+            Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Errore firma".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }))
+        }
+    }
+}
+
 async fn handle_withdraw(
     tg_id: Option<String>,
     session: Option<String>,
@@ -1233,10 +1473,10 @@ async fn handle_withdraw(
         let iban = req.destination_address.trim();
         let iban_clean = iban.replace(' ', "").to_uppercase();
 
-        if iban_clean.len() < 15 || iban_clean.len() > 34 {
+        if !validate_iban(&iban_clean) {
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: "IBAN non valido".into(),
+                message: "IBAN non valido (controlla il paese e le cifre)".into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
@@ -1301,8 +1541,8 @@ async fn handle_withdraw(
         return Ok(warp::reply::json(&ApiResponse {
             success: true,
             message: format!(
-                "Richiesta inviata: {} verso IBAN {} (provider bancario)",
-                token, iban_clean
+                "Richiesta inviata: {} verso IBAN {} ({})",
+                token, iban_clean, OFFRAMP_PROVIDER
             ),
             tx_signature: "offramp".to_string(),
             solscan_url: None,
