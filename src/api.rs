@@ -12,6 +12,7 @@ use solana_sdk::transaction::Transaction;
 use spl_associated_token_account;
 use spl_associated_token_account::get_associated_token_address;
 use sqlx::Row;
+use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
 use warp::Filter;
@@ -22,6 +23,25 @@ const SOL_MINT: &str = "So11111111111111111111111111111111111111112";
 const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const EURC_MINT: &str = "8V8ePA5shGtYZ8i9WGVrb8grh4ALpEDSz3i63MMYjVn2"; // Euro Coin (Circle) su Solana
 const USDT_MINT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+
+fn resolve_offramp_vault(token: &str) -> Option<Pubkey> {
+    // Prefer a mint-specific vault if provided (OFFRAMP_USDC_VAULT, OFFRAMP_USDT_VAULT, OFFRAMP_EURC_VAULT)
+    let env_key = format!("OFFRAMP_{}_VAULT", token);
+    if let Ok(val) = env::var(&env_key) {
+        if let Ok(pk) = Pubkey::from_str(&val) {
+            return Some(pk);
+        }
+    }
+
+    // Fallback to a generic stablecoin vault
+    if let Ok(val) = env::var("OFFRAMP_STABLE_VAULT") {
+        if let Ok(pk) = Pubkey::from_str(&val) {
+            return Some(pk);
+        }
+    }
+
+    None
+}
 
 // --- DATI ---
 #[derive(Serialize, Clone)]
@@ -101,20 +121,14 @@ struct AuthResponse {
     email: Option<String>,
 }
 
-async fn get_stable_balance(
-    net: &network::NetworkClient,
-    owner: &Pubkey,
-    mint: &Pubkey,
-) -> f64 {
+async fn get_stable_balance(net: &network::NetworkClient, owner: &Pubkey, mint: &Pubkey) -> f64 {
     let ata = get_associated_token_address(owner, mint);
     match net.rpc.get_token_account_balance(&ata).await {
-        Ok(res) => res
-            .ui_amount
-            .unwrap_or_else(|| {
-                let amount: f64 = res.amount.parse().unwrap_or(0.0);
-                let factor = 10u64.saturating_pow(res.decimals as u32) as f64;
-                amount / factor
-            }),
+        Ok(res) => res.ui_amount.unwrap_or_else(|| {
+            let amount: f64 = res.amount.parse().unwrap_or(0.0);
+            let factor = 10u64.saturating_pow(res.decimals as u32) as f64;
+            amount / factor
+        }),
         Err(_) => 0.0,
     }
 }
@@ -191,7 +205,10 @@ fn parse_google_id_token(token: &str) -> Option<(String, Option<String>)> {
     }
 
     let sub = payload_json.get("sub")?.as_str()?.to_string();
-    let email = payload_json.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let email = payload_json
+        .get("email")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     Some((sub, email))
 }
 
@@ -512,12 +529,9 @@ async fn handle_status(
     let mut eurc_balance = 0.0;
     if let Ok(pk) = Pubkey::from_str(&pubkey_str) {
         balance = net.get_balance_fast(&pk).await as f64 / LAMPORTS_PER_SOL as f64;
-        usdc_balance = get_stable_balance(&net, &pk, &Pubkey::from_str(USDC_MINT).unwrap())
-            .await;
-        usdt_balance = get_stable_balance(&net, &pk, &Pubkey::from_str(USDT_MINT).unwrap())
-            .await;
-        eurc_balance = get_stable_balance(&net, &pk, &Pubkey::from_str(EURC_MINT).unwrap())
-            .await;
+        usdc_balance = get_stable_balance(&net, &pk, &Pubkey::from_str(USDC_MINT).unwrap()).await;
+        usdt_balance = get_stable_balance(&net, &pk, &Pubkey::from_str(USDT_MINT).unwrap()).await;
+        eurc_balance = get_stable_balance(&net, &pk, &Pubkey::from_str(EURC_MINT).unwrap()).await;
     }
 
     let sol_price = get_sol_price().await;
@@ -1315,18 +1329,21 @@ async fn handle_sell_stable(
 
     // Pre-quote per verificare output e slippage
     let slippage_bps = 120;
-    let quote = match jupiter::get_jupiter_quote(input_mint, SOL_MINT, amount_base_units, slippage_bps).await {
-        Ok(q) => q,
-        Err(e) => {
-            error!("❌ Quote stable->SOL fallita: {}", e);
-            return Ok(warp::reply::json(&ApiResponse {
-                success: false,
-                message: format!("Quote non disponibile: {}", e),
-                tx_signature: "".into(),
-                solscan_url: None,
-            }));
-        }
-    };
+    let quote =
+        match jupiter::get_jupiter_quote(input_mint, SOL_MINT, amount_base_units, slippage_bps)
+            .await
+        {
+            Ok(q) => q,
+            Err(e) => {
+                error!("❌ Quote stable->SOL fallita: {}", e);
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: format!("Quote non disponibile: {}", e),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
 
     if quote.out_amount == 0 {
         return Ok(warp::reply::json(&ApiResponse {
@@ -1386,10 +1403,7 @@ async fn handle_sell_stable(
     match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
         Ok(signed_tx) => match net.send_versioned_transaction(&signed_tx).await {
             Ok(sig) => {
-                info!(
-                    "✅ Convert {} -> SOL | TX {}",
-                    stable, sig
-                );
+                info!("✅ Convert {} -> SOL | TX {}", stable, sig);
                 Ok(warp::reply::json(&ApiResponse {
                     success: true,
                     message: format!("Convertito {} in SOL", stable),
@@ -1489,23 +1503,22 @@ async fn handle_withdraw(
             _ => EURC_MINT,
         };
 
-        let wallet_address = wallet_manager::create_user_wallet(&pool, &user_id)
-            .await
-            .unwrap_or_default();
-
-        let owner = match Pubkey::from_str(&wallet_address) {
-            Ok(pk) => pk,
+        let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
+            Ok(kp) => kp,
             Err(_) => {
                 return Ok(warp::reply::json(&ApiResponse {
                     success: false,
-                    message: "Wallet non valido".into(),
+                    message: "Wallet non trovato".into(),
                     tx_signature: "".into(),
                     solscan_url: None,
                 }));
             }
         };
 
-        let ata = get_associated_token_address(&owner, &Pubkey::from_str(mint).unwrap());
+        let owner = payer.pubkey();
+
+        let mint_pk = Pubkey::from_str(mint).unwrap();
+        let ata = get_associated_token_address(&owner, &mint_pk);
         let (available, decimals) = match net.rpc.get_token_account_balance(&ata).await {
             Ok(res) => {
                 let ui_amount = res.ui_amount.unwrap_or(0.0);
@@ -1529,24 +1542,100 @@ async fn handle_withdraw(
         let unit_multiplier = 10u64.saturating_pow(decimals as u32) as f64;
         let amount_base_units = (req.amount * unit_multiplier).round() as u64;
 
-        // Simula l'invio al provider bancario configurato (processo off-chain)
-        let _ = db::record_withdrawal_request(
-            &pool,
-            &user_id,
-            amount_base_units,
-            &iban_clean,
-        )
-        .await;
+        let dest_vault = match resolve_offramp_vault(&token) {
+            Some(v) => v,
+            None => {
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: "Configura OFFRAMP_STABLE_VAULT o OFFRAMP_<TOKEN>_VAULT".into(),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
 
-        return Ok(warp::reply::json(&ApiResponse {
-            success: true,
-            message: format!(
-                "Richiesta inviata: {} verso IBAN {} (provider: {}, supporta IT/LT/LU e SEPA gratuiti)",
-                token, iban_clean, OFFRAMP_PROVIDER
-            ),
-            tx_signature: "offramp".to_string(),
-            solscan_url: None,
-        }));
+        let dest_ata = get_associated_token_address(&dest_vault, &mint_pk);
+        let withdrawal_id =
+            db::record_withdrawal_request(&pool, &user_id, amount_base_units, &iban_clean)
+                .await
+                .unwrap_or_default();
+
+        let mut instructions = Vec::new();
+
+        if net.rpc.get_account(&dest_ata).await.is_err() {
+            if let Ok(ix) =
+                spl_associated_token_account::instruction::create_associated_token_account(
+                    &owner,
+                    &dest_vault,
+                    &mint_pk,
+                    &spl_token::id(),
+                )
+            {
+                instructions.push(ix);
+            }
+        }
+
+        if let Ok(ix) = spl_token::instruction::transfer_checked(
+            &spl_token::id(),
+            &ata,
+            &mint_pk,
+            &dest_ata,
+            &owner,
+            &[],
+            amount_base_units,
+            decimals,
+        ) {
+            instructions.push(ComputeBudgetInstruction::set_compute_unit_price(50_000));
+            instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(15_000));
+            instructions.push(ix);
+        } else {
+            let _ = db::mark_withdrawal_failed(&pool, withdrawal_id).await;
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Errore creazione transfer".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+
+        let bh = match net.rpc.get_latest_blockhash().await {
+            Ok(hash) => hash,
+            Err(_) => {
+                let _ = db::mark_withdrawal_failed(&pool, withdrawal_id).await;
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: "Errore rete".into(),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
+
+        let tx = Transaction::new_signed_with_payer(&instructions, Some(&owner), &[&payer], bh);
+
+        match net.send_transaction_fast(&tx).await {
+            Ok(sig) => {
+                let _ = db::confirm_withdrawal(&pool, withdrawal_id, &sig).await;
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: true,
+                    message: format!(
+                        "Prelievo inviato: {} verso IBAN {} (provider: {}, supporta IT/LT/LU e SEPA gratuiti)",
+                        token, iban_clean, OFFRAMP_PROVIDER
+                    ),
+                    tx_signature: sig.clone(),
+                    solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
+                }));
+            }
+            Err(e) => {
+                let _ = db::mark_withdrawal_failed(&pool, withdrawal_id).await;
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: format!("Errore invio: {}", e),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        }
     }
 
     let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
@@ -1863,8 +1952,9 @@ async fn handle_google_auth(
         .unwrap_or(None);
 
     let mut settings_json = match row_opt.and_then(|r| r.try_get::<String, _>("settings").ok()) {
-        Some(s) => serde_json::from_str::<serde_json::Value>(&s)
-            .unwrap_or_else(|_| serde_json::json!({})),
+        Some(s) => {
+            serde_json::from_str::<serde_json::Value>(&s).unwrap_or_else(|_| serde_json::json!({}))
+        }
         None => serde_json::json!({}),
     };
 
@@ -1884,7 +1974,10 @@ async fn handle_google_auth(
         .await;
 
     let session_token = generate_session_token(&user_id);
-    info!("✅ Login/Link Google per {} (email: {:?})", user_id, google_email);
+    info!(
+        "✅ Login/Link Google per {} (email: {:?})",
+        user_id, google_email
+    );
 
     Ok(warp::reply::json(&AuthResponse {
         success: true,
