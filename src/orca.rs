@@ -303,30 +303,17 @@ pub async fn compare_quotes(
     amount: u64,
     slippage_bps: u16,
 ) -> SwapComparison {
-    // Ottieni quote in parallelo
-    let (jupiter_result, orca_result) = tokio::join!(
-        crate::jupiter::get_jupiter_quote(input_mint, output_mint, amount, slippage_bps),
-        get_quote(input_mint, output_mint, amount, slippage_bps)
-    );
+    // Usiamo direttamente Orca (FastSwap) per evitare dipendenze Jupiter lato backend
+    let orca_result = get_quote(input_mint, output_mint, amount, slippage_bps).await;
 
-    let jupiter_out = jupiter_result.as_ref().ok().map(|q| q.out_amount);
+    let jupiter_out: Option<u64> = None;
+    let jupiter_impact: Option<f64> = None;
     let orca_out = orca_result.as_ref().ok().map(|q| q.out_amount);
-    let jupiter_impact = jupiter_result.as_ref().ok().map(|q| q.price_impact_pct);
     let orca_impact = orca_result.as_ref().ok().map(|q| q.price_impact_pct);
 
-    let (best_dex, savings_pct) = match (jupiter_out, orca_out) {
-        (Some(j), Some(o)) => {
-            if j >= o {
-                let savings = if o > 0 { ((j as f64 - o as f64) / o as f64) * 100.0 } else { 0.0 };
-                ("Jupiter".to_string(), savings)
-            } else {
-                let savings = if j > 0 { ((o as f64 - j as f64) / j as f64) * 100.0 } else { 0.0 };
-                ("Orca".to_string(), savings)
-            }
-        }
-        (Some(_), None) => ("Jupiter".to_string(), 0.0),
-        (None, Some(_)) => ("Orca".to_string(), 0.0),
-        (None, None) => ("None".to_string(), 0.0),
+    let (best_dex, savings_pct) = match orca_out {
+        Some(_) => ("Orca".to_string(), 0.0),
+        None => ("None".to_string(), 0.0),
     };
 
     SwapComparison {

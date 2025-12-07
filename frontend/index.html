@@ -231,6 +231,25 @@
         const GOOGLE_CLIENT_ID = document.body.dataset.googleClientId || window.GOOGLE_CLIENT_ID || 'YOUR_GOOGLE_CLIENT_ID';
         const SOLSCAN = "https://solscan.io/tx/";
         const SOLSCAN_ADDR = "https://solscan.io/account/";
+        let tradeBase = 'SOL';
+
+        function setTradeBase(base) {
+            tradeBase = base;
+            const solBtn = document.getElementById('tradeBaseSol');
+            const usdtBtn = document.getElementById('tradeBaseUsdt');
+
+            if (solBtn && usdtBtn) {
+                solBtn.classList.toggle('btn-green', base === 'SOL');
+                usdtBtn.classList.toggle('btn-green', base !== 'SOL');
+            }
+
+            const hint = document.getElementById('tradeBaseHint');
+            if (hint) {
+                hint.innerText = base === 'SOL'
+                    ? 'Routing rapido su Solana (FastSwap)'
+                    : 'Desk USDT/EUR per coppie stabili e fiat-ready';
+            }
+        }
         
         // ═══════════════════════════════════════════════════════════════
         // AUTENTICAZIONE
@@ -539,6 +558,21 @@
         </div>
 
         <!-- SALDO DISPONIBILE PER TRADING -->
+        <div class="card p-4 mb-4 border-emerald-500/30 bg-emerald-500/5">
+            <p class="text-xs text-zinc-400 mb-2">Scegli il desk di trading</p>
+            <div class="grid grid-cols-2 gap-3">
+                <button id="tradeBaseSol" onclick="setTradeBase('SOL')" class="btn btn-green w-full text-sm flex items-center justify-center gap-2">
+                    <i data-lucide="zap" class="w-4 h-4"></i>
+                    Solana FastSwap
+                </button>
+                <button id="tradeBaseUsdt" onclick="setTradeBase('USDT')" class="btn w-full text-sm flex items-center justify-center gap-2">
+                    <i data-lucide="coins" class="w-4 h-4"></i>
+                    Desk USDT / EUR
+                </button>
+            </div>
+            <p id="tradeBaseHint" class="text-[11px] text-zinc-500 mt-3">Routing rapido su Solana (FastSwap)</p>
+        </div>
+
         <div class="card p-4 mb-4 border-green-500/30 bg-gradient-to-r from-green-900/10 to-transparent">
             <div class="flex items-center justify-between">
                 <div>
@@ -594,7 +628,7 @@
                     <span class="live-dot"></span>
                 </h4>
                 <div class="flex items-center gap-2">
-                    <span class="text-[9px] px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-400">Jupiter</span>
+                    <span class="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">FastSwap</span>
                     <span class="text-[9px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400">Orca</span>
                     <span class="text-[9px] px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400">Meteora</span>
                 </div>
@@ -2011,10 +2045,11 @@
                 const res = await fetch(`${API}/trade`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ 
-                        action: 'BUY', 
-                        token: state.currentToken.token, 
-                        amount_sol: amt 
+                    body: JSON.stringify({
+                        action: 'BUY',
+                        token: state.currentToken.token,
+                        amount_sol: amt,
+                        base: tradeBase
                     })
                 });
                 const d = await res.json();
@@ -2652,10 +2687,11 @@
                 const res = await fetch(`${API}/trade`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ 
-                        action: 'SELL', 
-                        token: state.currentToken.token, 
-                        amount_sol: investedSol
+                    body: JSON.stringify({
+                        action: 'SELL',
+                        token: state.currentToken.token,
+                        amount_sol: investedSol,
+                        base: tradeBase
                     })
                 });
                 const d = await res.json();
@@ -2724,10 +2760,11 @@
                 const res = await fetch(`${API}/trade`, {
                     method: 'POST',
                     headers: getAuthHeaders(),
-                    body: JSON.stringify({ 
-                        action: 'SELL', 
-                        token: state.currentToken.token, 
-                        amount_sol: state.currentToken.invested_sol || state.currentToken.amount || 0
+                    body: JSON.stringify({
+                        action: 'SELL',
+                        token: state.currentToken.token,
+                        amount_sol: state.currentToken.invested_sol || state.currentToken.amount || 0,
+                        base: tradeBase
                     })
                 });
                 const d = await res.json();
@@ -4266,10 +4303,11 @@
                     const res = await fetch(`${API}/trade`, {
                         method: 'POST',
                         headers: getAuthHeaders(),
-                        body: JSON.stringify({ 
-                            action: 'SELL', 
-                            token: pos.token_address, 
-                            amount_sol: pos.amount_sol
+                        body: JSON.stringify({
+                            action: 'SELL',
+                            token: pos.token_address,
+                            amount_sol: pos.amount_sol,
+                            base: tradeBase
                         })
                     });
                     
@@ -4332,6 +4370,7 @@
         
         function init() {
             lucide.createIcons();
+            setTradeBase(tradeBase);
 
             // Inizializza login Google (per link con Telegram e accesso cross-device)
             initGoogleLogin();

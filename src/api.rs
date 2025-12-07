@@ -81,6 +81,8 @@ struct TradeRequest {
     action: String,
     token: String,
     amount_sol: f64,
+    #[serde(default)]
+    base: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -642,9 +644,11 @@ async fn handle_trade(
             }));
         }
     };
+    let pair_base = req.base.as_deref().unwrap_or("SOL");
+
     info!(
-        "📨 Trade [{}]: {} {} SOL -> {}",
-        user_id, req.action, req.amount_sol, req.token
+        "📨 Trade [{} @ {}]: {} {} SOL -> {}",
+        user_id, pair_base, req.action, req.amount_sol, req.token
     );
 
     // ═══════════════════════════════════════════════════════════════
