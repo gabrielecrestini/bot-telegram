@@ -17,7 +17,7 @@ use std::sync::Arc;
 use warp::Filter;
 
 const SOLSCAN_TX_URL: &str = "https://solscan.io/tx/";
-const OFFRAMP_PROVIDER: &str = "SwiftBridge";
+const OFFRAMP_PROVIDER: &str = "FastRamp SEPA (zero fee, SwiftBridge-ready)";
 const SOL_MINT: &str = "So11111111111111111111111111111111111111112";
 const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const EURC_MINT: &str = "8V8ePA5shGtYZ8i9WGVrb8grh4ALpEDSz3i63MMYjVn2"; // Euro Coin (Circle) su Solana
@@ -1541,7 +1541,7 @@ async fn handle_withdraw(
         return Ok(warp::reply::json(&ApiResponse {
             success: true,
             message: format!(
-                "Richiesta inviata: {} verso IBAN {} ({})",
+                "Richiesta inviata: {} verso IBAN {} (provider: {}, supporta IT/LT/LU e SEPA gratuiti)",
                 token, iban_clean, OFFRAMP_PROVIDER
             ),
             tx_signature: "offramp".to_string(),

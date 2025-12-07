@@ -1219,9 +1219,13 @@
                         <span class="flex-1 h-px bg-zinc-800"></span>
                     </div>
 
-                    <div id="googleBtnWrap" class="space-y-2">
+                    <div id="googleBtnWrap" class="space-y-3">
                         <div id="googleBtn" class="flex justify-center"></div>
-                        <p class="text-[11px] text-zinc-500 text-center">Accedi con Google e ritrova il wallet collegato al bot Telegram su ogni dispositivo.</p>
+                        <button onclick="openTelegramLogin()" class="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-zinc-800/70 border border-zinc-700 text-sm font-semibold hover:border-purple-400/50 transition-all">
+                            <img src="https://core.telegram.org/img/website_icon.svg" class="w-5 h-5" alt="Telegram" />
+                            Accedi con Telegram (web)
+                        </button>
+                        <p class="text-[11px] text-zinc-500 text-center">Accedi con Google e ritrova il wallet collegato al bot Telegram su ogni dispositivo oppure apri direttamente il bot con il login Telegram.</p>
                         <p id="googleSpinner" class="hidden text-[11px] text-indigo-300 text-center">Collego Google in modo sicuro...</p>
                         <p id="googleUnavailable" class="hidden text-[11px] text-red-300 text-center">Configura il CLIENT_ID Google per abilitare il login rapido.</p>
                     </div>
@@ -1308,7 +1312,7 @@
         <div class="mb-4">
             <label class="text-xs text-zinc-500 mb-2 block">Destinazione</label>
             <input type="text" id="wAddr" placeholder="Wallet Solana o IBAN europeo" class="mono">
-            <p class="text-[11px] text-zinc-500 mt-1">Per USDC/USDT/EURC puoi inserire direttamente l'IBAN: useremo il provider bancario collegato.</p>
+            <p class="text-[11px] text-zinc-500 mt-1">Per USDC/USDT/EURC puoi inserire direttamente l'IBAN (IT, LT, LU e tutti gli altri). Useremo il provider FastRamp/SwiftBridge senza costi extra.</p>
         </div>
 
         <div class="mb-6">
@@ -1516,6 +1520,8 @@
         
         lucide.createIcons();
 
+        const TELEGRAM_BOT_USERNAME = 'GodSniperProBot';
+
         // State
         let state = {
             balance: 0,
@@ -1536,9 +1542,11 @@
             stableUSDT: 0,
             stableEUR: 0,
             selectedStable: 'USDC',
+            lastManualStable: 0,
             withdrawToken: 'SOL',
             liveChartTimer: null,
             bankIban: '',
+            prevStableSnapshot: { USDC: 0, USDT: 0, EURC: 0 },
         };
 
         // Navigation
@@ -1598,8 +1606,12 @@
             document.getElementById('btnWithdraw').disabled = false;
         }
 
-        function setStable(code) {
+        function setStable(code, opts = { manual: true }) {
             state.selectedStable = code;
+            if (opts.manual) {
+                state.lastManualStable = Date.now();
+                localStorage.setItem('preferred_stable', code);
+            }
             document.querySelectorAll('#stableSelector .stable-toggle').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.stable === code);
             });
@@ -3056,6 +3068,12 @@
         let googleInitialized = false;
         let lastAuthMethod = localStorage.getItem('auth_method') || '';
 
+        function openTelegramLogin() {
+            const botLink = `https://t.me/${TELEGRAM_BOT_USERNAME}?start=webapp_login`;
+            window.open(botLink, '_blank', 'noopener');
+            toast('Telegram', 'Apri il bot e conferma per collegare il wallet su questo browser.');
+        }
+
         function initGoogleLogin() {
             const wrap = document.getElementById('googleBtnWrap');
             const btn = document.getElementById('googleBtn');
@@ -3318,20 +3336,40 @@
                     localStorage.setItem('user_id', userId);
                 }
 
+                const prevStable = { ...state.prevStableSnapshot };
+
                 state.balance = data.balance_sol || 0;
                 state.address = data.wallet_address || '';
                 state.solPrice = data.sol_price_usd || 180;
                 state.stableUSDC = data.stable_usdc || 0;
                 state.stableUSDT = data.stable_usdt || 0;
                 state.stableEUR = data.stable_eur || 0;
+                state.prevStableSnapshot = { USDC: state.stableUSDC, USDT: state.stableUSDT, EURC: state.stableEUR };
                 state.bankIban = formatIban(state.address);
                 state.gems = data.gems_feed || [];
                 state.trades = data.trades_history || [];
                 state.withdrawals = data.withdrawals_history || [];
 
-                // Se l'utente aveva USDT/EURC prima dell'aggiornamento, seleziona automaticamente quella stable
-                const autoStable = pickBestStable();
-                setStable(autoStable);
+                const storedStable = localStorage.getItem('preferred_stable');
+                const autoStable = storedStable || pickBestStable();
+                const recentlyChosen = state.lastManualStable && (Date.now() - state.lastManualStable) < 10 * 60 * 1000;
+
+                const inflows = ['USDC', 'USDT', 'EURC']
+                    .map(code => ({
+                        code,
+                        delta: (code === 'USDC' ? state.stableUSDC : code === 'USDT' ? state.stableUSDT : state.stableEUR) - (prevStable[code] || 0)
+                    }))
+                    .filter(item => item.delta > 0.01)
+                    .sort((a, b) => b.delta - a.delta);
+
+                if (inflows.length) {
+                    const primary = inflows[0];
+                    setStable(primary.code, { manual: false });
+                    document.getElementById('redeemAmount').value = primary.delta.toFixed(2);
+                    toast('Top-up rilevato', `${primary.delta.toFixed(2)} ${primary.code} arrivati dalla carta. Usa "Vendi stable → SOL" per convertirli e vederli nel wallet.`);
+                } else if (!recentlyChosen) {
+                    setStable(autoStable, { manual: false });
+                }
                 
                 // CARICA STATO BOT DAL DATABASE (persistente)
                 const wasBotActive = state.botActive;
