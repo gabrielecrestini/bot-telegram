@@ -1746,16 +1746,13 @@ async fn handle_withdraw(
 
         let mut instructions = Vec::new();
         if net.rpc.get_account(&dest_ata).await.is_err() {
-            if let Ok(ix) =
-                spl_associated_token_account::instruction::create_associated_token_account(
-                    &owner,
-                    &dest_pk,
-                    &mint_pk,
-                    &spl_token::id(),
-                )
-            {
-                instructions.push(ix);
-            }
+            let ix = spl_associated_token_account::instruction::create_associated_token_account(
+                &owner,
+                &dest_pk,
+                &mint_pk,
+                &spl_token::id(),
+            );
+            instructions.push(ix);
         }
 
         if let Ok(ix) = spl_token::instruction::transfer_checked(
