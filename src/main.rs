@@ -24,6 +24,7 @@ pub mod api;
 pub mod jupiter;   // DEX Aggregator principale (V6 API)
 pub mod orca;      // DEX Aggregator alternativo (Whirlpools)
 pub mod meteora;   // DEX Aggregator #3 (DLMM)
+pub mod raydium;   // DEX USDT-first per pool ad alta liquidità
 pub mod engine;
 pub mod jito;      // Velocità QUIC + MEV protection + Bundle TX
 pub mod birdeye;   // Dati mercato professionali + Portfolio
