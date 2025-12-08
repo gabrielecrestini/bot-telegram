@@ -4,15 +4,17 @@ use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use solana_sdk::compute_budget::ComputeBudgetInstruction;
+use solana_sdk::hash::Hash;
 use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
 use solana_sdk::system_instruction;
-use solana_sdk::transaction::Transaction;
+use solana_sdk::transaction::{Transaction, VersionedTransaction};
 use spl_associated_token_account;
 use spl_associated_token_account::get_associated_token_address;
 use sqlx::Row;
 use std::env;
+use std::error::Error;
 use std::str::FromStr;
 use std::sync::Arc;
 use warp::Filter;
@@ -647,7 +649,7 @@ async fn handle_trade(
     let pair_base = req.base.as_deref().unwrap_or("SOL");
 
     info!(
-        "📨 Trade [{} @ {}]: {} {} SOL -> {}",
+        "📨 Trade [{} @ {}]: {} {} -> {}",
         user_id, pair_base, req.action, req.amount_sol, req.token
     );
 
@@ -681,17 +683,58 @@ async fn handle_trade(
     };
 
     let bal = net.get_balance_fast(&payer.pubkey()).await;
-    let amount_lamports = (req.amount_sol * LAMPORTS_PER_SOL as f64) as u64;
+    let base = pair_base.to_uppercase();
+    let (input_mint, amount_lamports, base_label) = if base == "USDT" || base == "USDC" {
+        let (mint, decimals) = if base == "USDT" {
+            (USDT_MINT, 6u8)
+        } else {
+            (USDC_MINT, 6u8)
+        };
+
+        let mint_pk = Pubkey::from_str(mint).unwrap();
+        let ata = get_associated_token_address(&payer.pubkey(), &mint_pk);
+        let (available, decs) = match net.rpc.get_token_account_balance(&ata).await {
+            Ok(res) => (res.ui_amount.unwrap_or(0.0), res.decimals as u8),
+            Err(_) => (0.0, decimals),
+        };
+
+        if req.amount_sol <= 0.0 || req.amount_sol > available {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: format!("Saldo insufficiente: hai {:.2} {}", available, base),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+
+        let multiplier = 10u64.saturating_pow(decs as u32) as f64;
+        let amount_units = (req.amount_sol * multiplier).round() as u64;
+        (mint, amount_units, base)
+    } else {
+        let amount_units = (req.amount_sol * LAMPORTS_PER_SOL as f64) as u64;
+        (
+            "So11111111111111111111111111111111111111112",
+            amount_units,
+            "SOL".into(),
+        )
+    };
 
     if req.action == "BUY" {
         let min_required = amount_lamports + 10_000;
-        if bal < min_required {
+        if base_label == "SOL" && bal < min_required {
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
                 message: format!(
                     "Fondi Insufficienti. Hai {:.4} SOL",
                     bal as f64 / LAMPORTS_PER_SOL as f64
                 ),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        } else if base_label != "SOL" && bal < 200_000 {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Servono almeno 0.0002 SOL per le fee di rete".into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
@@ -726,8 +769,6 @@ async fn handle_trade(
             .filter(|u| u.len() > 10 && !u.contains("undefined"))
             .unwrap_or_else(|| format!("https://img.jup.ag/v6/{}/logo", req.token));
 
-        let input = "So11111111111111111111111111111111111111112";
-
         // SMART SWAP: Confronta Jupiter vs Orca per miglior prezzo
         let bh = match net.rpc.get_latest_blockhash().await {
             Ok(bh) => bh,
@@ -742,19 +783,8 @@ async fn handle_trade(
         };
 
         // Prova Smart Swap (Jupiter + Orca confronto)
-        match orca::smart_swap(
-            &payer.pubkey().to_string(),
-            &payer,
-            input,
-            &req.token,
-            amount_lamports,
-            150, // 1.5% slippage
-            bh,
-        )
-        .await
-        {
+        match prepare_best_route(&payer, input_mint, &req.token, amount_lamports, 200, bh).await {
             Ok((signed_tx, dex_used)) => {
-                // Invia via Jito per velocità massima (MEV protection)
                 match jito::send_transaction_jito(&signed_tx, Some(50_000)).await {
                     Ok(bundle_id) => {
                         let _ = db::record_buy_complete(
@@ -770,94 +800,62 @@ async fn handle_trade(
                         )
                         .await;
                         info!(
-                            "✅ BUY {} @ ${:.8} | {} SOL | {} | Jito: {}",
-                            token_symbol, entry_price, req.amount_sol, dex_used, bundle_id
+                            "✅ BUY {} @ ${:.8} | {} {} | {} | Jito: {}",
+                            token_symbol,
+                            entry_price,
+                            req.amount_sol,
+                            base_label,
+                            dex_used,
+                            bundle_id
                         );
                         return Ok(warp::reply::json(&ApiResponse {
                             success: true,
-                            message: format!("Buy {} via {} ⚡", token_symbol, dex_used),
+                            message: format!(
+                                "Buy {} via {} ({}) ⚡",
+                                token_symbol, dex_used, base_label
+                            ),
                             tx_signature: bundle_id.clone(),
                             solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, bundle_id)),
                         }));
                     }
-                    Err(_) => {
-                        // Fallback: invia via RPC normale
-                        match net.send_versioned_transaction(&signed_tx).await {
-                            Ok(sig) => {
-                                let _ = db::record_buy_complete(
-                                    &pool,
-                                    &user_id,
-                                    &req.token,
-                                    &sig,
-                                    amount_lamports,
-                                    "MANUAL",
-                                    entry_price,
-                                    &token_symbol,
-                                    &token_image,
-                                )
-                                .await;
-                                info!(
-                                    "✅ BUY {} @ ${:.8} | {} SOL | {} | TX: {}",
-                                    token_symbol, entry_price, req.amount_sol, dex_used, sig
-                                );
-                                return Ok(warp::reply::json(&ApiResponse {
-                                    success: true,
-                                    message: format!("Buy {} via {}", token_symbol, dex_used),
-                                    tx_signature: sig.clone(),
-                                    solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
-                                }));
-                            }
-                            Err(e) => warn!("⚠️ {} TX fallita: {}", dex_used, e),
+                    Err(_) => match net.send_versioned_transaction(&signed_tx).await {
+                        Ok(sig) => {
+                            let _ = db::record_buy_complete(
+                                &pool,
+                                &user_id,
+                                &req.token,
+                                &sig,
+                                amount_lamports,
+                                "MANUAL",
+                                entry_price,
+                                &token_symbol,
+                                &token_image,
+                            )
+                            .await;
+                            info!(
+                                "✅ BUY {} @ ${:.8} | {} {} | {} | TX: {}",
+                                token_symbol,
+                                entry_price,
+                                req.amount_sol,
+                                base_label,
+                                dex_used,
+                                sig
+                            );
+                            return Ok(warp::reply::json(&ApiResponse {
+                                success: true,
+                                message: format!(
+                                    "Buy {} via {} ({})",
+                                    token_symbol, dex_used, base_label
+                                ),
+                                tx_signature: sig.clone(),
+                                solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
+                            }));
                         }
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("⚠️ Smart swap fallito: {}, provo Jupiter diretto", e);
-
-                // Fallback Jupiter diretto
-                match jupiter::get_jupiter_swap_tx(
-                    &payer.pubkey().to_string(),
-                    input,
-                    &req.token,
-                    amount_lamports,
-                    200,
-                )
-                .await
-                {
-                    Ok(tx) => match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
-                        Ok(signed_tx) => match net.send_versioned_transaction(&signed_tx).await {
-                            Ok(sig) => {
-                                let _ = db::record_buy_complete(
-                                    &pool,
-                                    &user_id,
-                                    &req.token,
-                                    &sig,
-                                    amount_lamports,
-                                    "MANUAL",
-                                    entry_price,
-                                    &token_symbol,
-                                    &token_image,
-                                )
-                                .await;
-                                info!(
-                                    "✅ BUY {} @ ${:.8} | {} SOL | Jupiter | TX: {}",
-                                    token_symbol, entry_price, req.amount_sol, sig
-                                );
-                                return Ok(warp::reply::json(&ApiResponse {
-                                    success: true,
-                                    message: format!("Buy {} Eseguito", token_symbol),
-                                    tx_signature: sig.clone(),
-                                    solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
-                                }));
-                            }
-                            Err(e) => warn!("⚠️ Jupiter TX fallita: {}", e),
-                        },
-                        Err(e) => warn!("⚠️ Firma TX fallita: {}", e),
+                        Err(e) => warn!("⚠️ {} TX fallita: {}", dex_used, e),
                     },
-                    Err(e) => warn!("⚠️ Jupiter quote: {}", e),
                 }
             }
+            Err(e) => warn!("⚠️ Smart swap fallito: {}", e),
         }
 
         // Trade fallito
@@ -1052,7 +1050,96 @@ async fn handle_trade(
     }))
 }
 
-/// Converte SOL in stablecoin (USDC/EURC) via Jupiter
+async fn get_stable_quote_with_fallback(
+    input_mint: &str,
+    output_mint: &str,
+    amount: u64,
+    slippage_bps: u16,
+) -> Result<(u64, f64, String), Box<dyn Error + Send + Sync>> {
+    if let Ok(q) = orca::get_quote(input_mint, output_mint, amount, slippage_bps).await {
+        if q.out_amount > 0 {
+            return Ok((q.out_amount, q.price_impact_pct, "Orca".into()));
+        }
+    }
+
+    let q = jupiter::get_jupiter_quote(input_mint, output_mint, amount, slippage_bps).await?;
+    Ok((q.out_amount, q.price_impact_pct, "Jupiter".into()))
+}
+
+async fn prepare_best_stable_swap(
+    payer: &solana_sdk::signature::Keypair,
+    input_mint: &str,
+    output_mint: &str,
+    amount: u64,
+    slippage_bps: u16,
+    blockhash: Hash,
+) -> Result<(VersionedTransaction, String), Box<dyn Error + Send + Sync>> {
+    if let Ok(q) = orca::get_quote(input_mint, output_mint, amount, slippage_bps).await {
+        if q.out_amount > 0 {
+            let tx = orca::get_swap_transaction(
+                &payer.pubkey().to_string(),
+                input_mint,
+                output_mint,
+                amount,
+                slippage_bps,
+            )
+            .await?;
+            let signed = orca::sign_transaction(&tx, payer, blockhash)?;
+            return Ok((signed, "Orca".into()));
+        }
+    }
+
+    let tx = jupiter::get_jupiter_swap_tx(
+        &payer.pubkey().to_string(),
+        input_mint,
+        output_mint,
+        amount,
+        slippage_bps,
+    )
+    .await?;
+    let signed = jupiter::sign_versioned_transaction(&tx, payer, blockhash)?;
+    Ok((signed, "Jupiter".into()))
+}
+
+/// Usa un routing Orca->Jupiter generico per token non stable (es. coppie USDT/XRP)
+async fn prepare_best_route(
+    payer: &solana_sdk::signature::Keypair,
+    input_mint: &str,
+    output_mint: &str,
+    amount: u64,
+    slippage_bps: u16,
+    blockhash: Hash,
+) -> Result<(VersionedTransaction, String), Box<dyn Error + Send + Sync>> {
+    if let Ok(q) = orca::get_quote(input_mint, output_mint, amount, slippage_bps).await {
+        if q.out_amount > 0 {
+            if let Ok(tx) = orca::get_swap_transaction(
+                &payer.pubkey().to_string(),
+                input_mint,
+                output_mint,
+                amount,
+                slippage_bps,
+            )
+            .await
+            {
+                let signed = orca::sign_transaction(&tx, payer, blockhash)?;
+                return Ok((signed, "Orca".into()));
+            }
+        }
+    }
+
+    let tx = jupiter::get_jupiter_swap_tx(
+        &payer.pubkey().to_string(),
+        input_mint,
+        output_mint,
+        amount,
+        slippage_bps,
+    )
+    .await?;
+    let signed = jupiter::sign_versioned_transaction(&tx, payer, blockhash)?;
+    Ok((signed, "Jupiter".into()))
+}
+
+/// Converte SOL in stablecoin (USDC/EURC) privilegiando Orca (fallback Jupiter)
 async fn handle_convert(
     tg_id: Option<String>,
     session: Option<String>,
@@ -1138,27 +1225,23 @@ async fn handle_convert(
 
     // Pre-quote per validare l'output atteso e l'impatto prezzo
     let slippage_bps = 120; // 1.2% per conversioni fiat-safe
-    let quote = match jupiter::get_jupiter_quote(
-        SOL_MINT,
-        output_mint,
-        amount_lamports,
-        slippage_bps,
-    )
-    .await
-    {
-        Ok(q) => q,
-        Err(e) => {
-            error!("❌ Quote convert fallita: {}", e);
-            return Ok(warp::reply::json(&ApiResponse {
-                success: false,
-                message: format!("Quote non disponibile: {}", e),
-                tx_signature: "".into(),
-                solscan_url: None,
-            }));
-        }
-    };
+    let (out_amount, price_impact, _route_used) =
+        match get_stable_quote_with_fallback(SOL_MINT, output_mint, amount_lamports, slippage_bps)
+            .await
+        {
+            Ok(q) => q,
+            Err(e) => {
+                error!("❌ Quote convert fallita: {}", e);
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: format!("Quote non disponibile: {}", e),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
 
-    if quote.out_amount == 0 {
+    if out_amount == 0 {
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
             message: "Quote non valida, riprova con un importo maggiore".into(),
@@ -1167,38 +1250,17 @@ async fn handle_convert(
         }));
     }
 
-    if quote.price_impact_pct > 0.015 {
+    if price_impact > 0.015 {
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
             message: format!(
                 "Impatto prezzo troppo alto ({:.2}%). Riduci importo o riprova",
-                quote.price_impact_pct * 100.0
+                price_impact * 100.0
             ),
             tx_signature: "".into(),
             solscan_url: None,
         }));
     }
-
-    let tx = match jupiter::get_jupiter_swap_tx(
-        &payer.pubkey().to_string(),
-        SOL_MINT,
-        output_mint,
-        amount_lamports,
-        slippage_bps,
-    )
-    .await
-    {
-        Ok(tx) => tx,
-        Err(e) => {
-            error!("❌ Quote convert fallita: {}", e);
-            return Ok(warp::reply::json(&ApiResponse {
-                success: false,
-                message: format!("Errore Jupiter: {}", e),
-                tx_signature: "".into(),
-                solscan_url: None,
-            }));
-        }
-    };
 
     let bh = match net.rpc.get_latest_blockhash().await {
         Ok(hash) => hash,
@@ -1213,35 +1275,46 @@ async fn handle_convert(
         }
     };
 
-    match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
-        Ok(signed_tx) => match net.send_versioned_transaction(&signed_tx).await {
-            Ok(sig) => {
-                info!(
-                    "✅ Convert {} SOL -> {} | TX {}",
-                    req.amount_sol, stable, sig
-                );
-                Ok(warp::reply::json(&ApiResponse {
-                    success: true,
-                    message: format!("Convertito in {}", stable),
-                    tx_signature: sig.clone(),
-                    solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
-                }))
-            }
-            Err(e) => {
-                error!("❌ Invio convert fallito: {}", e);
-                Ok(warp::reply::json(&ApiResponse {
-                    success: false,
-                    message: format!("Errore invio: {}", e),
-                    tx_signature: "".into(),
-                    solscan_url: None,
-                }))
-            }
-        },
+    let (signed_tx, route_label) = match prepare_best_stable_swap(
+        &payer,
+        SOL_MINT,
+        output_mint,
+        amount_lamports,
+        slippage_bps,
+        bh,
+    )
+    .await
+    {
+        Ok(tx) => tx,
         Err(e) => {
-            error!("❌ Firma TX convert fallita: {}", e);
+            error!("❌ Routing convert fallito: {}", e);
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: format!("Errore routing: {}", e),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
+
+    match net.send_versioned_transaction(&signed_tx).await {
+        Ok(sig) => {
+            info!(
+                "✅ Convert {} SOL -> {} via {} | TX {}",
+                req.amount_sol, stable, route_label, sig
+            );
+            Ok(warp::reply::json(&ApiResponse {
+                success: true,
+                message: format!("Convertito in {} ({})", stable, route_label),
+                tx_signature: sig.clone(),
+                solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
+            }))
+        }
+        Err(e) => {
+            error!("❌ Invio convert fallito: {}", e);
             Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: format!("Errore firma: {}", e),
+                message: format!("Errore invio: {}", e),
                 tx_signature: "".into(),
                 solscan_url: None,
             }))
@@ -1333,8 +1406,8 @@ async fn handle_sell_stable(
 
     // Pre-quote per verificare output e slippage
     let slippage_bps = 120;
-    let quote =
-        match jupiter::get_jupiter_quote(input_mint, SOL_MINT, amount_base_units, slippage_bps)
+    let (out_amount, price_impact, _route_used) =
+        match get_stable_quote_with_fallback(input_mint, SOL_MINT, amount_base_units, slippage_bps)
             .await
         {
             Ok(q) => q,
@@ -1349,7 +1422,7 @@ async fn handle_sell_stable(
             }
         };
 
-    if quote.out_amount == 0 {
+    if out_amount == 0 {
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
             message: "Quote non valida, riprova con un importo maggiore".into(),
@@ -1358,38 +1431,17 @@ async fn handle_sell_stable(
         }));
     }
 
-    if quote.price_impact_pct > 0.02 {
+    if price_impact > 0.02 {
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
             message: format!(
                 "Impatto prezzo troppo alto ({:.2}%). Riduci importo o attendi più liquidità",
-                quote.price_impact_pct * 100.0
+                price_impact * 100.0
             ),
             tx_signature: "".into(),
             solscan_url: None,
         }));
     }
-
-    let tx = match jupiter::get_jupiter_swap_tx(
-        &payer.pubkey().to_string(),
-        input_mint,
-        SOL_MINT,
-        amount_base_units,
-        slippage_bps,
-    )
-    .await
-    {
-        Ok(tx) => tx,
-        Err(e) => {
-            error!("❌ Quote convert fallita: {}", e);
-            return Ok(warp::reply::json(&ApiResponse {
-                success: false,
-                message: format!("Errore Jupiter: {}", e),
-                tx_signature: "".into(),
-                solscan_url: None,
-            }));
-        }
-    };
 
     let bh = match net.rpc.get_latest_blockhash().await {
         Ok(hash) => hash,
@@ -1404,32 +1456,46 @@ async fn handle_sell_stable(
         }
     };
 
-    match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
-        Ok(signed_tx) => match net.send_versioned_transaction(&signed_tx).await {
-            Ok(sig) => {
-                info!("✅ Convert {} -> SOL | TX {}", stable, sig);
-                Ok(warp::reply::json(&ApiResponse {
-                    success: true,
-                    message: format!("Convertito {} in SOL", stable),
-                    tx_signature: sig.clone(),
-                    solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
-                }))
-            }
-            Err(e) => {
-                error!("❌ Invio convert fallito: {}", e);
-                Ok(warp::reply::json(&ApiResponse {
-                    success: false,
-                    message: format!("Errore invio TX: {}", e),
-                    tx_signature: "".into(),
-                    solscan_url: None,
-                }))
-            }
-        },
+    let (signed_tx, route_label) = match prepare_best_stable_swap(
+        &payer,
+        input_mint,
+        SOL_MINT,
+        amount_base_units,
+        slippage_bps,
+        bh,
+    )
+    .await
+    {
+        Ok(tx) => tx,
         Err(e) => {
-            error!("❌ Firma TX convert fallita: {}", e);
+            error!("❌ Routing convert fallito: {}", e);
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: format!("Errore routing: {}", e),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
+
+    match net.send_versioned_transaction(&signed_tx).await {
+        Ok(sig) => {
+            info!(
+                "✅ Convert {} -> SOL via {} | TX {}",
+                stable, route_label, sig
+            );
+            Ok(warp::reply::json(&ApiResponse {
+                success: true,
+                message: format!("Convertito {} in SOL ({})", stable, route_label),
+                tx_signature: sig.clone(),
+                solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
+            }))
+        }
+        Err(e) => {
+            error!("❌ Invio convert fallito: {}", e);
             Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: "Errore firma".into(),
+                message: format!("Errore invio TX: {}", e),
                 tx_signature: "".into(),
                 solscan_url: None,
             }))
@@ -1486,25 +1552,24 @@ async fn handle_withdraw(
         }
     }
 
-    // Percorso fiat/IBAN per stablecoin: delega a provider integrato
+    // Prelievi stablecoin: supporto solo indirizzi Solana, con auto-conversione da SOL se mancano fondi
     if ["USDC", "USDT", "EURC"].contains(&token.as_str()) {
-        let iban = req.destination_address.trim();
-        let iban_clean = iban.replace(' ', "").to_uppercase();
-
-        if !validate_iban(&iban_clean) {
-            return Ok(warp::reply::json(&ApiResponse {
-                success: false,
-                message: "IBAN non valido (controlla il paese e le cifre)".into(),
-                tx_signature: "".into(),
-                solscan_url: None,
-            }));
-        }
-
-        // Convalida saldo stable effettivo prima di inviare la richiesta
         let mint = match token.as_str() {
             "USDC" => USDC_MINT,
             "USDT" => USDT_MINT,
             _ => EURC_MINT,
+        };
+
+        let dest_pk = match Pubkey::from_str(req.destination_address.trim()) {
+            Ok(pk) => pk,
+            Err(_) => {
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: "Destinazione non valida: inserisci un indirizzo Solana".into(),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
         };
 
         let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
@@ -1520,9 +1585,9 @@ async fn handle_withdraw(
         };
 
         let owner = payer.pubkey();
-
         let mint_pk = Pubkey::from_str(mint).unwrap();
         let ata = get_associated_token_address(&owner, &mint_pk);
+
         let (available, decimals) = match net.rpc.get_token_account_balance(&ata).await {
             Ok(res) => {
                 let ui_amount = res.ui_amount.unwrap_or(0.0);
@@ -1531,13 +1596,10 @@ async fn handle_withdraw(
             Err(_) => (0.0, 6u8),
         };
 
-        if req.amount <= 0.0 || req.amount > available {
+        if req.amount <= 0.0 {
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: format!(
-                    "Saldo insufficiente: hai {:.2} {} disponibili",
-                    available, token
-                ),
+                message: "Importo non valido".into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
@@ -1545,32 +1607,149 @@ async fn handle_withdraw(
 
         let unit_multiplier = 10u64.saturating_pow(decimals as u32) as f64;
         let amount_base_units = (req.amount * unit_multiplier).round() as u64;
+        let available_base_units = (available * unit_multiplier).round() as u64;
 
-        let dest_vault = match resolve_offramp_vault(&token) {
-            Some(v) => v,
-            None => {
+        // Se non abbiamo abbastanza stable, proviamo a colmare la differenza convertendo SOL -> stable
+        if available_base_units < amount_base_units {
+            let missing = amount_base_units.saturating_sub(available_base_units);
+            let sol_balance = net.get_balance_fast(&owner).await;
+            let max_spendable = sol_balance.saturating_sub(100_000); // buffer per fee
+            if max_spendable == 0 {
                 return Ok(warp::reply::json(&ApiResponse {
                     success: false,
-                    message: "Configura OFFRAMP_STABLE_VAULT o OFFRAMP_<TOKEN>_VAULT".into(),
+                    message: "Saldo SOL insufficiente per coprire il prelievo".into(),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+
+            let slippage_bps = 120u16;
+            let mut lamports_in = missing.max(50_000); // partiamo con ~0.00005 SOL
+            let mut selected: Option<(u64, f64, String)> = None;
+
+            while lamports_in <= max_spendable {
+                match get_stable_quote_with_fallback(SOL_MINT, mint, lamports_in, slippage_bps)
+                    .await
+                {
+                    Ok((out_amount, price_impact, route)) => {
+                        if out_amount >= missing {
+                            if price_impact > 0.03 {
+                                return Ok(warp::reply::json(&ApiResponse {
+                                    success: false,
+                                    message: format!(
+                                        "Impatto prezzo troppo alto ({:.2}%). Riduci importo o riprova",                                        price_impact * 100.0
+                                    ),
+                                    tx_signature: "".into(),
+                                    solscan_url: None,
+                                }));
+                            }
+                            selected = Some((lamports_in, price_impact, route));
+                            break;
+                        }
+                    }
+                    Err(e) => warn!("Quote SOL->{} mancante: {}", token, e),
+                }
+
+                lamports_in = lamports_in.saturating_mul(2);
+                if lamports_in > max_spendable {
+                    break;
+                }
+            }
+
+            let (lamports_in, _, route_label) = match selected {
+                Some(v) => v,
+                None => {
+                    return Ok(warp::reply::json(&ApiResponse {
+                        success: false,
+                        message: "Impossibile calcolare una conversione SOL -> stable sufficiente"
+                            .into(),
+                        tx_signature: "".into(),
+                        solscan_url: None,
+                    }));
+                }
+            };
+
+            let bh = match net.rpc.get_latest_blockhash().await {
+                Ok(hash) => hash,
+                Err(e) => {
+                    error!("❌ Blockhash error: {}", e);
+                    return Ok(warp::reply::json(&ApiResponse {
+                        success: false,
+                        message: "Errore rete".into(),
+                        tx_signature: "".into(),
+                        solscan_url: None,
+                    }));
+                }
+            };
+
+            let (signed_tx, _) = match prepare_best_stable_swap(
+                &payer,
+                SOL_MINT,
+                mint,
+                lamports_in,
+                slippage_bps,
+                bh,
+            )
+            .await
+            {
+                Ok(tx) => tx,
+                Err(e) => {
+                    error!("❌ Routing SOL->{} fallito: {}", token, e);
+                    return Ok(warp::reply::json(&ApiResponse {
+                        success: false,
+                        message: format!("Errore routing: {}", e),
+                        tx_signature: "".into(),
+                        solscan_url: None,
+                    }));
+                }
+            };
+
+            match net.send_versioned_transaction(&signed_tx).await {
+                Ok(sig) => {
+                    info!(
+                        "✅ Top-up SOL -> {} per prelievo ({}), TX {} via {}",
+                        token, req.amount, sig, route_label
+                    );
+                }
+                Err(e) => {
+                    error!("❌ Invio convert top-up fallito: {}", e);
+                    return Ok(warp::reply::json(&ApiResponse {
+                        success: false,
+                        message: format!("Errore invio convert: {}", e),
+                        tx_signature: "".into(),
+                        solscan_url: None,
+                    }));
+                }
+            }
+        }
+
+        // Invio stable on-chain
+        let dest_ata = get_associated_token_address(&dest_pk, &mint_pk);
+        let withdrawal_id = match db::record_withdrawal_request(
+            &pool,
+            &user_id,
+            amount_base_units,
+            &req.destination_address,
+        )
+        .await
+        {
+            Ok(id) => id,
+            Err(_) => {
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: "Errore DB".into(),
                     tx_signature: "".into(),
                     solscan_url: None,
                 }));
             }
         };
 
-        let dest_ata = get_associated_token_address(&dest_vault, &mint_pk);
-        let withdrawal_id =
-            db::record_withdrawal_request(&pool, &user_id, amount_base_units, &iban_clean)
-                .await
-                .unwrap_or_default();
-
         let mut instructions = Vec::new();
-
         if net.rpc.get_account(&dest_ata).await.is_err() {
             if let Ok(ix) =
                 spl_associated_token_account::instruction::create_associated_token_account(
                     &owner,
-                    &dest_vault,
+                    &dest_pk,
                     &mint_pk,
                     &spl_token::id(),
                 )
@@ -1590,7 +1769,7 @@ async fn handle_withdraw(
             decimals,
         ) {
             instructions.push(ComputeBudgetInstruction::set_compute_unit_price(50_000));
-            instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(15_000));
+            instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(20_000));
             instructions.push(ix);
         } else {
             let _ = db::mark_withdrawal_failed(&pool, withdrawal_id).await;
@@ -1623,8 +1802,8 @@ async fn handle_withdraw(
                 return Ok(warp::reply::json(&ApiResponse {
                     success: true,
                     message: format!(
-                        "Prelievo inviato: {} verso IBAN {} (provider: {}, supporta IT/LT/LU e SEPA gratuiti)",
-                        token, iban_clean, OFFRAMP_PROVIDER
+                        "Prelievo inviato: {} on-chain (solo indirizzi Solana)",
+                        token
                     ),
                     tx_signature: sig.clone(),
                     solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
@@ -1641,7 +1820,6 @@ async fn handle_withdraw(
             }
         }
     }
-
     let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
         Ok(k) => k,
         Err(_) => {
