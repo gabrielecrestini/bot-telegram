@@ -1,4 +1,4 @@
-use crate::{db, jito, jupiter, network, orca, wallet_manager, AppState, GemData};
+use crate::{db, jito, jupiter, network, orca, raydium, wallet_manager, AppState, GemData};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -8,7 +8,7 @@ use solana_sdk::native_token::LAMPORTS_PER_SOL;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signer::Signer;
 use solana_sdk::system_instruction;
-use solana_sdk::transaction::Transaction;
+use solana_sdk::transaction::{Transaction, VersionedTransaction};
 use spl_associated_token_account;
 use spl_associated_token_account::get_associated_token_address;
 use sqlx::Row;
@@ -1052,7 +1052,69 @@ async fn handle_trade(
     }))
 }
 
-/// Converte SOL in stablecoin (USDC/EURC) via Jupiter
+#[derive(Debug, Clone)]
+struct StableQuoteResult {
+    out_amount: u64,
+    min_out_amount: u64,
+    price_impact_pct: f64,
+    dex: String,
+}
+
+async fn get_stable_quote_with_fallback(
+    input_mint: &str,
+    output_mint: &str,
+    amount: u64,
+    slippage_bps: u16,
+) -> Result<StableQuoteResult, String> {
+    // Prova Raydium (più profondo su USDT)
+    if let Ok(quote) = raydium::get_quote(input_mint, output_mint, amount, slippage_bps).await {
+        if quote.out_amount > 0 {
+            return Ok(StableQuoteResult {
+                out_amount: quote.out_amount,
+                min_out_amount: quote.min_out_amount,
+                price_impact_pct: quote.price_impact_pct,
+                dex: "Raydium".into(),
+            });
+        }
+    }
+
+    // Fallback Jupiter
+    match jupiter::get_jupiter_quote(input_mint, output_mint, amount, slippage_bps).await {
+        Ok(quote) => Ok(StableQuoteResult {
+            min_out_amount: quote
+                .out_amount
+                .saturating_sub(((slippage_bps as u64) * quote.out_amount) / 10_000),
+            out_amount: quote.out_amount,
+            price_impact_pct: quote.price_impact_pct,
+            dex: "Jupiter".into(),
+        }),
+        Err(e) => Err(format!("Quote non disponibile: {}", e)),
+    }
+}
+
+async fn prepare_best_route(
+    user_pubkey: &str,
+    input_mint: &str,
+    output_mint: &str,
+    amount: u64,
+    slippage_bps: u16,
+) -> Result<(VersionedTransaction, String), String> {
+    if let Ok(tx) =
+        raydium::get_swap_transaction(user_pubkey, input_mint, output_mint, amount, slippage_bps)
+            .await
+    {
+        return Ok((tx, "Raydium".into()));
+    }
+
+    match jupiter::get_jupiter_swap_tx(user_pubkey, input_mint, output_mint, amount, slippage_bps)
+        .await
+    {
+        Ok(tx) => Ok((tx, "Jupiter".into())),
+        Err(e) => Err(format!("Swap non costruito: {}", e)),
+    }
+}
+
+/// Converte SOL in stablecoin (USDC/EURC/USDT) privilegiando pool USDT via Raydium
 async fn handle_convert(
     tg_id: Option<String>,
     session: Option<String>,
@@ -1081,7 +1143,8 @@ async fn handle_convert(
         _ => {
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: "Stablecoin non supportata (USDC/EURC/USDT)".into(),
+                message: "Stablecoin non supportata (USDC/EURC/USDT con percorso USDT su Raydium)"
+                    .into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
@@ -1137,26 +1200,22 @@ async fn handle_convert(
     }
 
     // Pre-quote per validare l'output atteso e l'impatto prezzo
-    let slippage_bps = 120; // 1.2% per conversioni fiat-safe
-    let quote = match jupiter::get_jupiter_quote(
-        SOL_MINT,
-        output_mint,
-        amount_lamports,
-        slippage_bps,
-    )
-    .await
-    {
-        Ok(q) => q,
-        Err(e) => {
-            error!("❌ Quote convert fallita: {}", e);
-            return Ok(warp::reply::json(&ApiResponse {
-                success: false,
-                message: format!("Quote non disponibile: {}", e),
-                tx_signature: "".into(),
-                solscan_url: None,
-            }));
-        }
-    };
+    let slippage_bps = if stable == "USDT" { 90 } else { 120 }; // USDT route più stretto
+    let quote =
+        match get_stable_quote_with_fallback(SOL_MINT, output_mint, amount_lamports, slippage_bps)
+            .await
+        {
+            Ok(q) => q,
+            Err(e) => {
+                error!("❌ Quote convert fallita: {}", e);
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: e,
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
 
     if quote.out_amount == 0 {
         return Ok(warp::reply::json(&ApiResponse {
@@ -1171,15 +1230,16 @@ async fn handle_convert(
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
             message: format!(
-                "Impatto prezzo troppo alto ({:.2}%). Riduci importo o riprova",
-                quote.price_impact_pct * 100.0
+                "Impatto prezzo troppo alto ({:.2}%) su {}. Riduci importo o riprova",
+                quote.price_impact_pct * 100.0,
+                quote.dex
             ),
             tx_signature: "".into(),
             solscan_url: None,
         }));
     }
 
-    let tx = match jupiter::get_jupiter_swap_tx(
+    let (tx, dex_used) = match prepare_best_route(
         &payer.pubkey().to_string(),
         SOL_MINT,
         output_mint,
@@ -1188,12 +1248,12 @@ async fn handle_convert(
     )
     .await
     {
-        Ok(tx) => tx,
+        Ok(res) => res,
         Err(e) => {
             error!("❌ Quote convert fallita: {}", e);
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: format!("Errore Jupiter: {}", e),
+                message: e,
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
@@ -1213,16 +1273,26 @@ async fn handle_convert(
         }
     };
 
-    match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+    let signed_tx = match dex_used.as_str() {
+        "Raydium" => raydium::sign_transaction(&tx, &payer, bh),
+        _ => jupiter::sign_versioned_transaction(&tx, &payer, bh),
+    };
+
+    match signed_tx {
         Ok(signed_tx) => match net.send_versioned_transaction(&signed_tx).await {
             Ok(sig) => {
                 info!(
-                    "✅ Convert {} SOL -> {} | TX {}",
-                    req.amount_sol, stable, sig
+                    "✅ Convert {} SOL -> {} via {} | TX {}",
+                    req.amount_sol, stable, dex_used, sig
                 );
                 Ok(warp::reply::json(&ApiResponse {
                     success: true,
-                    message: format!("Convertito in {}", stable),
+                    message: format!(
+                        "Convertito in {} via {} (slippage {:.2}%)",
+                        stable,
+                        dex_used,
+                        slippage_bps as f64 / 100.0
+                    ),
                     tx_signature: sig.clone(),
                     solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
                 }))
@@ -1278,7 +1348,8 @@ async fn handle_sell_stable(
         _ => {
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: "Stablecoin non supportata".into(),
+                message: "Stablecoin non supportata (USDC/EURC/USDT con percorso USDT su Raydium)"
+                    .into(),
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
@@ -1332,9 +1403,9 @@ async fn handle_sell_stable(
     let amount_base_units = (req.amount * unit_multiplier).round() as u64;
 
     // Pre-quote per verificare output e slippage
-    let slippage_bps = 120;
+    let slippage_bps = if stable == "USDT" { 90 } else { 120 };
     let quote =
-        match jupiter::get_jupiter_quote(input_mint, SOL_MINT, amount_base_units, slippage_bps)
+        match get_stable_quote_with_fallback(input_mint, SOL_MINT, amount_base_units, slippage_bps)
             .await
         {
             Ok(q) => q,
@@ -1342,7 +1413,7 @@ async fn handle_sell_stable(
                 error!("❌ Quote stable->SOL fallita: {}", e);
                 return Ok(warp::reply::json(&ApiResponse {
                     success: false,
-                    message: format!("Quote non disponibile: {}", e),
+                    message: e,
                     tx_signature: "".into(),
                     solscan_url: None,
                 }));
@@ -1362,15 +1433,16 @@ async fn handle_sell_stable(
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
             message: format!(
-                "Impatto prezzo troppo alto ({:.2}%). Riduci importo o attendi più liquidità",
-                quote.price_impact_pct * 100.0
+                "Impatto prezzo troppo alto ({:.2}%) su {}. Riduci importo o attendi più liquidità",
+                quote.price_impact_pct * 100.0,
+                quote.dex
             ),
             tx_signature: "".into(),
             solscan_url: None,
         }));
     }
 
-    let tx = match jupiter::get_jupiter_swap_tx(
+    let (tx, dex_used) = match prepare_best_route(
         &payer.pubkey().to_string(),
         input_mint,
         SOL_MINT,
@@ -1379,12 +1451,12 @@ async fn handle_sell_stable(
     )
     .await
     {
-        Ok(tx) => tx,
+        Ok(res) => res,
         Err(e) => {
             error!("❌ Quote convert fallita: {}", e);
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
-                message: format!("Errore Jupiter: {}", e),
+                message: e,
                 tx_signature: "".into(),
                 solscan_url: None,
             }));
@@ -1404,13 +1476,23 @@ async fn handle_sell_stable(
         }
     };
 
-    match jupiter::sign_versioned_transaction(&tx, &payer, bh) {
+    let signed_tx = match dex_used.as_str() {
+        "Raydium" => raydium::sign_transaction(&tx, &payer, bh),
+        _ => jupiter::sign_versioned_transaction(&tx, &payer, bh),
+    };
+
+    match signed_tx {
         Ok(signed_tx) => match net.send_versioned_transaction(&signed_tx).await {
             Ok(sig) => {
-                info!("✅ Convert {} -> SOL | TX {}", stable, sig);
+                info!("✅ Convert {} -> SOL via {} | TX {}", stable, dex_used, sig);
                 Ok(warp::reply::json(&ApiResponse {
                     success: true,
-                    message: format!("Convertito {} in SOL", stable),
+                    message: format!(
+                        "Convertito {} in SOL via {} (slippage {:.2}%)",
+                        stable,
+                        dex_used,
+                        slippage_bps as f64 / 100.0
+                    ),
                     tx_signature: sig.clone(),
                     solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
                 }))
