@@ -684,40 +684,43 @@ async fn handle_trade(
 
     let bal = net.get_balance_fast(&payer.pubkey()).await;
     let base = pair_base.to_uppercase();
-    let (input_mint, amount_lamports, base_label) = if base == "USDT" || base == "USDC" {
-        let (mint, decimals) = if base == "USDT" {
-            (USDT_MINT, 6u8)
+    let (input_mint, amount_lamports, base_label) =
+        if ["USDT", "USDC", "EURC"].contains(&base.as_str()) {
+            let (mint, decimals) = if base == "USDT" {
+                (USDT_MINT, 6u8)
+            } else if base == "USDC" {
+                (USDC_MINT, 6u8)
+            } else {
+                (EURC_MINT, 6u8)
+            };
+
+            let mint_pk = Pubkey::from_str(mint).unwrap();
+            let ata = get_associated_token_address(&payer.pubkey(), &mint_pk);
+            let (available, decs) = match net.rpc.get_token_account_balance(&ata).await {
+                Ok(res) => (res.ui_amount.unwrap_or(0.0), res.decimals as u8),
+                Err(_) => (0.0, decimals),
+            };
+
+            if req.amount_sol <= 0.0 || req.amount_sol > available {
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: format!("Saldo insufficiente: hai {:.2} {}", available, base),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+
+            let multiplier = 10u64.saturating_pow(decs as u32) as f64;
+            let amount_units = (req.amount_sol * multiplier).round() as u64;
+            (mint, amount_units, base)
         } else {
-            (USDC_MINT, 6u8)
+            let amount_units = (req.amount_sol * LAMPORTS_PER_SOL as f64) as u64;
+            (
+                "So11111111111111111111111111111111111111112",
+                amount_units,
+                "SOL".into(),
+            )
         };
-
-        let mint_pk = Pubkey::from_str(mint).unwrap();
-        let ata = get_associated_token_address(&payer.pubkey(), &mint_pk);
-        let (available, decs) = match net.rpc.get_token_account_balance(&ata).await {
-            Ok(res) => (res.ui_amount.unwrap_or(0.0), res.decimals as u8),
-            Err(_) => (0.0, decimals),
-        };
-
-        if req.amount_sol <= 0.0 || req.amount_sol > available {
-            return Ok(warp::reply::json(&ApiResponse {
-                success: false,
-                message: format!("Saldo insufficiente: hai {:.2} {}", available, base),
-                tx_signature: "".into(),
-                solscan_url: None,
-            }));
-        }
-
-        let multiplier = 10u64.saturating_pow(decs as u32) as f64;
-        let amount_units = (req.amount_sol * multiplier).round() as u64;
-        (mint, amount_units, base)
-    } else {
-        let amount_units = (req.amount_sol * LAMPORTS_PER_SOL as f64) as u64;
-        (
-            "So11111111111111111111111111111111111111112",
-            amount_units,
-            "SOL".into(),
-        )
-    };
 
     if req.action == "BUY" {
         let min_required = amount_lamports + 10_000;
@@ -1552,273 +1555,17 @@ async fn handle_withdraw(
         }
     }
 
-    // Prelievi stablecoin: supporto solo indirizzi Solana, con auto-conversione da SOL se mancano fondi
-    if ["USDC", "USDT", "EURC"].contains(&token.as_str()) {
-        let mint = match token.as_str() {
-            "USDC" => USDC_MINT,
-            "USDT" => USDT_MINT,
-            _ => EURC_MINT,
-        };
-
-        let dest_pk = match Pubkey::from_str(req.destination_address.trim()) {
-            Ok(pk) => pk,
-            Err(_) => {
-                return Ok(warp::reply::json(&ApiResponse {
-                    success: false,
-                    message: "Destinazione non valida: inserisci un indirizzo Solana".into(),
-                    tx_signature: "".into(),
-                    solscan_url: None,
-                }));
-            }
-        };
-
-        let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
-            Ok(kp) => kp,
-            Err(_) => {
-                return Ok(warp::reply::json(&ApiResponse {
-                    success: false,
-                    message: "Wallet non trovato".into(),
-                    tx_signature: "".into(),
-                    solscan_url: None,
-                }));
-            }
-        };
-
-        let owner = payer.pubkey();
-        let mint_pk = Pubkey::from_str(mint).unwrap();
-        let ata = get_associated_token_address(&owner, &mint_pk);
-
-        let (available, decimals) = match net.rpc.get_token_account_balance(&ata).await {
-            Ok(res) => {
-                let ui_amount = res.ui_amount.unwrap_or(0.0);
-                (ui_amount, res.decimals as u8)
-            }
-            Err(_) => (0.0, 6u8),
-        };
-
-        if req.amount <= 0.0 {
-            return Ok(warp::reply::json(&ApiResponse {
-                success: false,
-                message: "Importo non valido".into(),
-                tx_signature: "".into(),
-                solscan_url: None,
-            }));
-        }
-
-        let unit_multiplier = 10u64.saturating_pow(decimals as u32) as f64;
-        let amount_base_units = (req.amount * unit_multiplier).round() as u64;
-        let available_base_units = (available * unit_multiplier).round() as u64;
-
-        // Se non abbiamo abbastanza stable, proviamo a colmare la differenza convertendo SOL -> stable
-        if available_base_units < amount_base_units {
-            let missing = amount_base_units.saturating_sub(available_base_units);
-            let sol_balance = net.get_balance_fast(&owner).await;
-            let max_spendable = sol_balance.saturating_sub(100_000); // buffer per fee
-            if max_spendable == 0 {
-                return Ok(warp::reply::json(&ApiResponse {
-                    success: false,
-                    message: "Saldo SOL insufficiente per coprire il prelievo".into(),
-                    tx_signature: "".into(),
-                    solscan_url: None,
-                }));
-            }
-
-            let slippage_bps = 120u16;
-            let mut lamports_in = missing.max(50_000); // partiamo con ~0.00005 SOL
-            let mut selected: Option<(u64, f64, String)> = None;
-
-            while lamports_in <= max_spendable {
-                match get_stable_quote_with_fallback(SOL_MINT, mint, lamports_in, slippage_bps)
-                    .await
-                {
-                    Ok((out_amount, price_impact, route)) => {
-                        if out_amount >= missing {
-                            if price_impact > 0.03 {
-                                return Ok(warp::reply::json(&ApiResponse {
-                                    success: false,
-                                    message: format!(
-                                        "Impatto prezzo troppo alto ({:.2}%). Riduci importo o riprova",                                        price_impact * 100.0
-                                    ),
-                                    tx_signature: "".into(),
-                                    solscan_url: None,
-                                }));
-                            }
-                            selected = Some((lamports_in, price_impact, route));
-                            break;
-                        }
-                    }
-                    Err(e) => warn!("Quote SOL->{} mancante: {}", token, e),
-                }
-
-                lamports_in = lamports_in.saturating_mul(2);
-                if lamports_in > max_spendable {
-                    break;
-                }
-            }
-
-            let (lamports_in, _, route_label) = match selected {
-                Some(v) => v,
-                None => {
-                    return Ok(warp::reply::json(&ApiResponse {
-                        success: false,
-                        message: "Impossibile calcolare una conversione SOL -> stable sufficiente"
-                            .into(),
-                        tx_signature: "".into(),
-                        solscan_url: None,
-                    }));
-                }
-            };
-
-            let bh = match net.rpc.get_latest_blockhash().await {
-                Ok(hash) => hash,
-                Err(e) => {
-                    error!("❌ Blockhash error: {}", e);
-                    return Ok(warp::reply::json(&ApiResponse {
-                        success: false,
-                        message: "Errore rete".into(),
-                        tx_signature: "".into(),
-                        solscan_url: None,
-                    }));
-                }
-            };
-
-            let (signed_tx, _) = match prepare_best_stable_swap(
-                &payer,
-                SOL_MINT,
-                mint,
-                lamports_in,
-                slippage_bps,
-                bh,
-            )
-            .await
-            {
-                Ok(tx) => tx,
-                Err(e) => {
-                    error!("❌ Routing SOL->{} fallito: {}", token, e);
-                    return Ok(warp::reply::json(&ApiResponse {
-                        success: false,
-                        message: format!("Errore routing: {}", e),
-                        tx_signature: "".into(),
-                        solscan_url: None,
-                    }));
-                }
-            };
-
-            match net.send_versioned_transaction(&signed_tx).await {
-                Ok(sig) => {
-                    info!(
-                        "✅ Top-up SOL -> {} per prelievo ({}), TX {} via {}",
-                        token, req.amount, sig, route_label
-                    );
-                }
-                Err(e) => {
-                    error!("❌ Invio convert top-up fallito: {}", e);
-                    return Ok(warp::reply::json(&ApiResponse {
-                        success: false,
-                        message: format!("Errore invio convert: {}", e),
-                        tx_signature: "".into(),
-                        solscan_url: None,
-                    }));
-                }
-            }
-        }
-
-        // Invio stable on-chain
-        let dest_ata = get_associated_token_address(&dest_pk, &mint_pk);
-        let withdrawal_id = match db::record_withdrawal_request(
-            &pool,
-            &user_id,
-            amount_base_units,
-            &req.destination_address,
-        )
-        .await
-        {
-            Ok(id) => id,
-            Err(_) => {
-                return Ok(warp::reply::json(&ApiResponse {
-                    success: false,
-                    message: "Errore DB".into(),
-                    tx_signature: "".into(),
-                    solscan_url: None,
-                }));
-            }
-        };
-
-        let mut instructions = Vec::new();
-        if net.rpc.get_account(&dest_ata).await.is_err() {
-            let ix = spl_associated_token_account::instruction::create_associated_token_account(
-                &owner,
-                &dest_pk,
-                &mint_pk,
-                &spl_token::id(),
-            );
-            instructions.push(ix);
-        }
-
-        if let Ok(ix) = spl_token::instruction::transfer_checked(
-            &spl_token::id(),
-            &ata,
-            &mint_pk,
-            &dest_ata,
-            &owner,
-            &[],
-            amount_base_units,
-            decimals,
-        ) {
-            instructions.push(ComputeBudgetInstruction::set_compute_unit_price(50_000));
-            instructions.push(ComputeBudgetInstruction::set_compute_unit_limit(20_000));
-            instructions.push(ix);
-        } else {
-            let _ = db::mark_withdrawal_failed(&pool, withdrawal_id).await;
-            return Ok(warp::reply::json(&ApiResponse {
-                success: false,
-                message: "Errore creazione transfer".into(),
-                tx_signature: "".into(),
-                solscan_url: None,
-            }));
-        }
-
-        let bh = match net.rpc.get_latest_blockhash().await {
-            Ok(hash) => hash,
-            Err(_) => {
-                let _ = db::mark_withdrawal_failed(&pool, withdrawal_id).await;
-                return Ok(warp::reply::json(&ApiResponse {
-                    success: false,
-                    message: "Errore rete".into(),
-                    tx_signature: "".into(),
-                    solscan_url: None,
-                }));
-            }
-        };
-
-        let tx = Transaction::new_signed_with_payer(&instructions, Some(&owner), &[&payer], bh);
-
-        match net.send_transaction_fast(&tx).await {
-            Ok(sig) => {
-                let _ = db::confirm_withdrawal(&pool, withdrawal_id, &sig).await;
-                return Ok(warp::reply::json(&ApiResponse {
-                    success: true,
-                    message: format!(
-                        "Prelievo inviato: {} on-chain (solo indirizzi Solana)",
-                        token
-                    ),
-                    tx_signature: sig.clone(),
-                    solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
-                }));
-            }
-            Err(e) => {
-                let _ = db::mark_withdrawal_failed(&pool, withdrawal_id).await;
-                return Ok(warp::reply::json(&ApiResponse {
-                    success: false,
-                    message: format!("Errore invio: {}", e),
-                    tx_signature: "".into(),
-                    solscan_url: None,
-                }));
-            }
-        }
+    if req.amount <= 0.0 {
+        return Ok(warp::reply::json(&ApiResponse {
+            success: false,
+            message: "Importo non valido".into(),
+            tx_signature: "".into(),
+            solscan_url: None,
+        }));
     }
+
     let payer = match wallet_manager::get_decrypted_wallet(&pool, &user_id).await {
-        Ok(k) => k,
+        Ok(kp) => kp,
         Err(_) => {
             return Ok(warp::reply::json(&ApiResponse {
                 success: false,
@@ -1828,11 +1575,166 @@ async fn handle_withdraw(
             }));
         }
     };
+    let owner = payer.pubkey();
 
-    let bal = net.get_balance_fast(&payer.pubkey()).await;
-    let amount = (req.amount * LAMPORTS_PER_SOL as f64) as u64;
+    let dest = match Pubkey::from_str(req.destination_address.trim()) {
+        Ok(pk) => pk,
+        Err(_) => {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Indirizzo non valido: inserisci un address Solana".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+    };
 
-    if bal < (amount + 10_000) {
+    let mut withdrawal_lamports: u64;
+    let mut conversion_note: Option<String> = None;
+
+    if ["USDC", "USDT", "EURC"].contains(&token.as_str()) {
+        let mint = match token.as_str() {
+            "USDC" => USDC_MINT,
+            "USDT" => USDT_MINT,
+            _ => EURC_MINT,
+        };
+
+        let mint_pk = Pubkey::from_str(mint).unwrap();
+        let ata = get_associated_token_address(&owner, &mint_pk);
+        let (available, decimals) = match net.rpc.get_token_account_balance(&ata).await {
+            Ok(res) => {
+                let ui_amount = res.ui_amount.unwrap_or(0.0);
+                (ui_amount, res.decimals as u8)
+            }
+            Err(_) => (0.0, 6u8),
+        };
+
+        if req.amount > available {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: format!("Saldo insufficiente: hai {:.2} {}", available, token),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+
+        let unit_multiplier = 10u64.saturating_pow(decimals as u32) as f64;
+        let amount_base_units = (req.amount * unit_multiplier).round() as u64;
+
+        let slippage_bps = 120u16;
+        let (out_amount, price_impact, route_used) =
+            match get_stable_quote_with_fallback(mint, SOL_MINT, amount_base_units, slippage_bps)
+                .await
+            {
+                Ok(q) => q,
+                Err(e) => {
+                    error!("❌ Quote {} -> SOL fallita: {}", token, e);
+                    return Ok(warp::reply::json(&ApiResponse {
+                        success: false,
+                        message: format!("Quote non disponibile: {}", e),
+                        tx_signature: "".into(),
+                        solscan_url: None,
+                    }));
+                }
+            };
+
+        if out_amount == 0 {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: "Quote non valida, riprova con un importo maggiore".into(),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+
+        if price_impact > 0.03 {
+            return Ok(warp::reply::json(&ApiResponse {
+                success: false,
+                message: format!(
+                    "Impatto prezzo troppo alto ({:.2}%). Riduci importo o attendi più liquidità",
+                    price_impact * 100.0
+                ),
+                tx_signature: "".into(),
+                solscan_url: None,
+            }));
+        }
+
+        let bh = match net.rpc.get_latest_blockhash().await {
+            Ok(hash) => hash,
+            Err(e) => {
+                error!("❌ Blockhash error: {}", e);
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: "Errore rete".into(),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
+
+        let (signed_tx, route_label) = match prepare_best_stable_swap(
+            &payer,
+            mint,
+            SOL_MINT,
+            amount_base_units,
+            slippage_bps,
+            bh,
+        )
+        .await
+        {
+            Ok(tx) => tx,
+            Err(e) => {
+                error!("❌ Routing {} -> SOL fallito: {}", token, e);
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: format!("Errore routing: {}", e),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        };
+
+        match net.send_versioned_transaction(&signed_tx).await {
+            Ok(sig) => {
+                info!(
+                    "✅ Convert {} -> SOL per prelievo ({}) | {} | TX {}",
+                    token, req.amount, route_label, sig
+                );
+            }
+            Err(e) => {
+                error!("❌ Invio convert fallito: {}", e);
+                return Ok(warp::reply::json(&ApiResponse {
+                    success: false,
+                    message: format!("Errore invio convert: {}", e),
+                    tx_signature: "".into(),
+                    solscan_url: None,
+                }));
+            }
+        }
+
+        withdrawal_lamports = out_amount;
+        conversion_note = Some(format!(
+            "Convertiti {:.4} {} in {:.6} SOL via {} (quote: {})",
+            req.amount,
+            token,
+            out_amount as f64 / LAMPORTS_PER_SOL as f64,
+            route_used,
+            route_label
+        ));
+    } else if token != "SOL" {
+        return Ok(warp::reply::json(&ApiResponse {
+            success: false,
+            message: "Solo prelievi in SOL supportati (converti prima i token)".into(),
+            tx_signature: "".into(),
+            solscan_url: None,
+        }));
+    } else {
+        withdrawal_lamports = (req.amount * LAMPORTS_PER_SOL as f64) as u64;
+    }
+
+    let bal = net.get_balance_fast(&owner).await;
+
+    if bal < (withdrawal_lamports + 10_000) {
         return Ok(warp::reply::json(&ApiResponse {
             success: false,
             message: format!(
@@ -1844,22 +1746,10 @@ async fn handle_withdraw(
         }));
     }
 
-    let dest = match Pubkey::from_str(&req.destination_address) {
-        Ok(pk) => pk,
-        Err(_) => {
-            return Ok(warp::reply::json(&ApiResponse {
-                success: false,
-                message: "Indirizzo non valido".into(),
-                tx_signature: "".into(),
-                solscan_url: None,
-            }));
-        }
-    };
-
     let withdrawal_id = match db::record_withdrawal_request(
         &pool,
         &user_id,
-        amount,
+        withdrawal_lamports,
         &req.destination_address,
     )
     .await
@@ -1881,7 +1771,7 @@ async fn handle_withdraw(
     let instructions = vec![
         ComputeBudgetInstruction::set_compute_unit_price(50_000), // Priorità media
         ComputeBudgetInstruction::set_compute_unit_limit(5_000),  // Trasferimento semplice
-        system_instruction::transfer(&payer.pubkey(), &dest, amount),
+        system_instruction::transfer(&payer.pubkey(), &dest, withdrawal_lamports),
     ];
 
     let bh = match net.rpc.get_latest_blockhash().await {
@@ -1903,9 +1793,12 @@ async fn handle_withdraw(
     match net.send_transaction_fast(&tx).await {
         Ok(sig) => {
             let _ = db::confirm_withdrawal(&pool, withdrawal_id, &sig).await;
+            let note = conversion_note
+                .map(|n| format!(" {}", n))
+                .unwrap_or_else(|| "".into());
             Ok(warp::reply::json(&ApiResponse {
                 success: true,
-                message: "Prelievo Inviato!".into(),
+                message: format!("Prelievo SOL inviato!{}", note),
                 tx_signature: sig.clone(),
                 solscan_url: Some(format!("{}{}", SOLSCAN_TX_URL, sig)),
             }))
